@@ -17,6 +17,15 @@ python -m venv .venv
 
 Test: `.venv\Scripts\python -m pytest`
 
+## Konfigurasi (environment variable)
+
+| Variabel | Wajib | Keterangan |
+|---|---|---|
+| `GEMINI_API_KEY` | untuk embedding | API key dari https://aistudio.google.com/apikey |
+| `EMBEDDING_MODEL` | tidak | default `gemini-embedding-001` |
+
+Tanpa `GEMINI_API_KEY`, test live embedding otomatis di-skip; test lain tetap jalan.
+
 Dokumentasi interaktif otomatis: http://127.0.0.1:8000/docs
 
 ## Kontrak API
