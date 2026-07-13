@@ -1,23 +1,23 @@
 # Justifikasi Teknis: Zoom Generate Link & API Embedding Gratis
 
-**Status: FINAL (Day 4)** — siap dipresentasikan Jumat 17 Juli. Bahan pendukung
+**Status: FINAL (Day 4)** - siap dipresentasikan Jumat 17 Juli. Bahan pendukung
 untuk dua keputusan yang sudah terkunci, agar management memahami trade-off-nya.
 
 ## Keputusan 1: Video Interview via Zoom Generate Link (bukan Embedded SDK)
 
 **Apa keputusannya:** sistem membuat meeting Zoom lewat API (Server-to-Server
 OAuth), kandidat menerima `join_url` via email, interview berlangsung di
-aplikasi/klien Zoom — bukan video tertanam di halaman web kita.
+aplikasi/klien Zoom - bukan video tertanam di halaman web kita.
 
 **Mengapa:**
 
-1. **Integrasi jauh lebih sederhana** — buat meeting via API + kirim link via
+1. **Integrasi jauh lebih sederhana** - buat meeting via API + kirim link via
    email. Embedded SDK menuntut penanganan video di frontend, kompatibilitas
    browser/perangkat, dan beban maintenance yang tidak sebanding untuk tim
    dan timeline 5 minggu ini.
-2. **Kandidat sudah familiar dengan Zoom** — tidak ada friksi belajar aplikasi
+2. **Kandidat sudah familiar dengan Zoom** - tidak ada friksi belajar aplikasi
    interview baru; kualitas video/audio ditangani infrastruktur Zoom.
-3. **Risiko teknis rendah saat demo** — tidak ada dependensi pada stabilitas
+3. **Risiko teknis rendah saat demo** - tidak ada dependensi pada stabilitas
    video pipeline buatan sendiri.
 
 **Trade-off yang jujur: anti-cheat teknis TIDAK berlaku.** Pemantauan browser
@@ -29,7 +29,7 @@ web kita. Dengan link eksternal, kandidat berada di luar kendali halaman kita.
 | Batasan | Nilai | Dampak ke E-REQ |
 |---|---|---|
 | Durasi meeting ≥3 peserta | 40 menit | Interview panel (2+ pewawancara) terpotong; perlu dijadwalkan ≤40 menit atau upgrade |
-| Durasi meeting 1-lawan-1 | s.d. 30 jam | Interview recruiter–kandidat berdua saja praktis tanpa batas |
+| Durasi meeting 1-lawan-1 | s.d. 30 jam | Interview recruiter-kandidat berdua saja praktis tanpa batas |
 | Cloud recording | Tidak ada (hanya rekam lokal) | Fitur backlog auto-transcribe butuh tier berbayar, atau rekam lokal manual |
 | Peserta maksimum | 100 | Lebih dari cukup |
 
@@ -53,14 +53,14 @@ historis (alur A3.4) dan menggantikan API eksternal.
 
 **Mengapa:**
 
-1. **Biaya nol saat memvalidasi konsep** — belum keluar uang sebelum terbukti
+1. **Biaya nol saat memvalidasi konsep** - belum keluar uang sebelum terbukti
    pipeline screening bekerja untuk CV nyata.
-2. **Tidak terkunci ke satu vendor** — layer `EmbeddingProvider` swappable;
+2. **Tidak terkunci ke satu vendor** - layer `EmbeddingProvider` swappable;
    ganti provider = ganti konfigurasi, pipeline tidak berubah.
-3. **Jalur produksi sudah dirancang** — model hasil training tim sendiri masuk
+3. **Jalur produksi sudah dirancang** - model hasil training tim sendiri masuk
    lewat interface yang sama; tidak ada kerja ulang arsitektur.
 
-**Provider terpilih untuk testing: Google Gemini Embedding** — kuota gratis
+**Provider terpilih untuk testing: Google Gemini Embedding** - kuota gratis
 paling lega (1.500 request/hari tanpa kartu kredit), dukungan 100+ bahasa
 termasuk Indonesia, dokumentasi baik. Cadangan: Jina (1 juta token/bulan).
 

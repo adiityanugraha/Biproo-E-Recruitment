@@ -1,8 +1,8 @@
-# Kerangka KPI Final (Fase 0 Day 3 — siap presentasi 17 Juli)
+# Kerangka KPI Final (Fase 0 Day 3 - siap presentasi 17 Juli)
 
 Prinsip (Blueprint A8, "Impact by Design"): tiap perpindahan tahap tercatat
 otomatis di `candidate_stage_history` dengan timestamp, sehingga semua KPI
-dihitung dari data yang sudah ada — tidak ada pencatatan manual tambahan.
+dihitung dari data yang sudah ada - tidak ada pencatatan manual tambahan.
 
 | # | KPI | Definisi | Cara hitung | Sumber data |
 |---|-----|----------|-------------|-------------|
@@ -18,7 +18,7 @@ diestimasi bersama recruiter/tim DS dari proses saat ini) vs otomatis (detik,
 KPI #1). Ini sumber klaim "screening N× lebih cepat" di demo 14 Agustus.
 
 **Catatan:**
-- KPI #1–#5 otomatis terisi begitu pipeline jalan; angka pertama muncul di
+- KPI #1-#5 otomatis terisi begitu pipeline jalan; angka pertama muncul di
   Fase 1 dari data testing, angka produksi menyusul setelah dataset DS bersih
   (mitigasi risiko B4).
 - KPI #3 juga jadi alat pantau risiko "ekstraksi CV format aneh gagal massal":

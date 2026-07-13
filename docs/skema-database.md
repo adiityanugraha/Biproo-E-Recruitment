@@ -1,4 +1,4 @@
-# Desain Skema Tabel Inti (Fase 0 — belum dimigrasikan)
+# Desain Skema Tabel Inti (Fase 0 - belum dimigrasikan)
 
 Desain untuk SQL Server, mengikuti Blueprint A7. Baru dua tabel yang dirancang
 detail sesuai tugas Fase 0 Day 2; tabel lain (candidates, jobs, applications,
@@ -36,7 +36,7 @@ CREATE INDEX ix_screening_app ON screening_results(application_id, created_at);
 Catatan desain:
 
 - Satu application bisa punya **beberapa baris** (proses ulang setelah
-  `failed_extraction`) — riwayat tidak ditimpa, baris terbaru = hasil berlaku.
+  `failed_extraction`) - riwayat tidak ditimpa, baris terbaru = hasil berlaku.
 - `status` disimpan di sini (tidak ada di A7) supaya antrian proses ulang CI4
   cukup query `WHERE status = 'failed_extraction'` tanpa tabel tambahan.
 
@@ -81,12 +81,12 @@ Catatan desain:
   update/delete) + `DENY UPDATE, DELETE` pada user database aplikasi saat
   deploy.
 - KPI (A8) dihitung dari selisih `created_at` antar baris per
-  `application_id` — tidak butuh kolom tambahan.
+  `application_id` - tidak butuh kolom tambahan.
 - Index kedua (`stage, created_at`) untuk KPI throughput per tahap per hari.
 
 ## Titik Pencatatan Timestamp (Fase 0 Day 3)
 
-Aturan: **satu INSERT ke `stage_history` di setiap kejadian di bawah** — tidak
+Aturan: **satu INSERT ke `stage_history` di setiap kejadian di bawah** - tidak
 kurang (KPI bolong), tidak lebih (noise). Semua pencatatan dilakukan CI4;
 FastAPI tidak menulis DB (stateless).
 
@@ -112,7 +112,7 @@ Catatan:
 
 - `ai_verification` bisa punya beberapa siklus `retry_queued` → `passed`
   untuk CV yang diproses ulang; baris terakhir = status berlaku.
-- `gate_1/flagged` lalu keputusan recruiter menghasilkan **dua baris** — jejak
+- `gate_1/flagged` lalu keputusan recruiter menghasilkan **dua baris** - jejak
   human-in-the-loop terlihat di audit (siapa memutuskan, berapa lama review).
 - KPI #1 (waktu screening) = `ai_verification/entered` → `passed`;
   KPI #4/#5 = `upload_cv/entered` → `gate_1`/`gate_2` final.

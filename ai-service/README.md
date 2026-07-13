@@ -58,7 +58,7 @@ Response: `202 Accepted`
 
 Body tidak valid → `422` dengan detail field yang salah.
 
-### Callback (FastAPI → CI4) — dipakai mulai Fase 1
+### Callback (FastAPI → CI4) - dipakai mulai Fase 1
 
 `POST {callback_url}`
 
@@ -89,4 +89,4 @@ Cek progres job (untuk testing/debug internal, bukan bagian kontrak CI4):
 
 ### `GET /health`
 
-Balas `{ "status": "ok" }` — untuk pengecekan sederhana bahwa service hidup.
+Balas `{ "status": "ok" }` - untuk pengecekan sederhana bahwa service hidup.
