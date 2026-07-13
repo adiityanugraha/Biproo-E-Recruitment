@@ -83,3 +83,36 @@ Catatan desain:
 - KPI (A8) dihitung dari selisih `created_at` antar baris per
   `application_id` — tidak butuh kolom tambahan.
 - Index kedua (`stage, created_at`) untuk KPI throughput per tahap per hari.
+
+## Titik Pencatatan Timestamp (Fase 0 Day 3)
+
+Aturan: **satu INSERT ke `stage_history` di setiap kejadian di bawah** — tidak
+kurang (KPI bolong), tidak lebih (noise). Semua pencatatan dilakukan CI4;
+FastAPI tidak menulis DB (stateless).
+
+| Kejadian | stage | status | actor |
+|---|---|---|---|
+| Registrasi + CV tersimpan | `upload_cv` | `entered` | system |
+| CI4 kirim request ke FastAPI (dapat 202) | `ai_verification` | `entered` | system |
+| Callback diterima: skor sukses | `ai_verification` | `passed` | system |
+| Callback: `failed_extraction` (antri proses ulang) | `ai_verification` | `retry_queued` | system |
+| Kandidat mulai assessment | `online_assessment` | `entered` | system |
+| Hasil assessment masuk | `online_assessment` | `passed`/`failed` | system |
+| Evaluasi Gate 1: lolos/tidak otomatis | `gate_1` | `passed`/`failed` | system |
+| Evaluasi Gate 1: zona tengah | `gate_1` | `flagged` | system |
+| Recruiter memutuskan kandidat ber-flag | `gate_1` | `passed`/`failed` | recruiter |
+| Recruiter menjadwalkan interview (meeting dibuat) | `penjadwalan` | `entered` | recruiter |
+| Jadwal interview tiba / interview berlangsung | `interview_online` | `entered` | system |
+| Recruiter isi hasil interview | `interview_online` | `passed`/`failed` | recruiter |
+| Keputusan akhir Gate 2 (selalu recruiter) | `gate_2` | `passed`/`failed` | recruiter |
+| Kandidat masuk tahap berkas + kontrak | `berkas_kontrak` | `entered` | system |
+| Berkas lengkap / kontrak ditandatangani | `berkas_kontrak` | `passed` | recruiter |
+
+Catatan:
+
+- `ai_verification` bisa punya beberapa siklus `retry_queued` → `passed`
+  untuk CV yang diproses ulang; baris terakhir = status berlaku.
+- `gate_1/flagged` lalu keputusan recruiter menghasilkan **dua baris** — jejak
+  human-in-the-loop terlihat di audit (siapa memutuskan, berapa lama review).
+- KPI #1 (waktu screening) = `ai_verification/entered` → `passed`;
+  KPI #4/#5 = `upload_cv/entered` → `gate_1`/`gate_2` final.
