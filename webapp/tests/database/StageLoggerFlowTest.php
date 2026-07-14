@@ -1,0 +1,92 @@
+<?php
+
+use App\Libraries\EmailQueueWorker;
+use App\Libraries\StageLogger;
+use App\Models\EmailQueueModel;
+use App\Models\StageHistoryModel;
+use CodeIgniter\Test\CIUnitTestCase;
+use CodeIgniter\Test\DatabaseTestTrait;
+
+/**
+ * Uji Day 3 tugas 5: skenario lolos dan tidak lolos end-to-end -
+ * pencatatan stage_history memicu email, worker mengirim (dry-run).
+ *
+ * @internal
+ */
+final class StageLoggerFlowTest extends CIUnitTestCase
+{
+    use DatabaseTestTrait;
+
+    protected $migrate   = true;
+    protected $refresh   = true;
+    protected $namespace = 'App';
+
+    public function testRegistrasiMemicuEmailKonfirmasi(): void
+    {
+        (new StageLogger())->log(1, 'upload_cv', 'entered', 'system', null, [
+            'to' => 'kandidat@example.com', 'nama' => 'Budi', 'posisi' => 'Frontliner',
+        ]);
+
+        $this->seeInDatabase('candidate_stage_history', ['application_id' => 1, 'stage' => 'upload_cv']);
+        $this->seeInDatabase('email_queue', ['to_email' => 'kandidat@example.com', 'template' => 'konfirmasi_registrasi', 'status' => 'pending']);
+    }
+
+    public function testSkenarioLolosDanTidakLolosTerkirim(): void
+    {
+        $logger = new StageLogger();
+
+        // kandidat A lolos Gate 1, kandidat B tidak lolos
+        $logger->log(10, 'gate_1', 'passed', 'system', 'skor=0.81', ['to' => 'a@example.com', 'nama' => 'Ani', 'posisi' => 'Frontliner']);
+        $logger->log(11, 'gate_1', 'failed', 'system', 'skor=0.32', ['to' => 'b@example.com', 'nama' => 'Beni', 'posisi' => 'Frontliner']);
+
+        $result = (new EmailQueueWorker(dryRun: true))->process();
+
+        $this->assertSame(['sent' => 2, 'failed' => 0], $result);
+        $this->seeInDatabase('email_queue', ['to_email' => 'a@example.com', 'template' => 'hasil_gate', 'status' => 'sent']);
+        $this->seeInDatabase('email_queue', ['to_email' => 'b@example.com', 'template' => 'hasil_gate', 'status' => 'sent']);
+    }
+
+    public function testEventTanpaEmailTidakMengantriApapun(): void
+    {
+        // flagged = review internal, kandidat tidak dikirimi email
+        (new StageLogger())->log(20, 'gate_1', 'flagged', 'system', 'skor=0.6', [
+            'to' => 'c@example.com', 'nama' => 'Cici', 'posisi' => 'Frontliner',
+        ]);
+
+        $this->assertSame(0, (new EmailQueueModel())->where('to_email', 'c@example.com')->countAllResults());
+    }
+
+    public function testPayloadTidakBocorAntarEmailDalamSatuBatch(): void
+    {
+        $queue = new EmailQueueModel();
+        // email 1: payload lengkap; email 2: payload TANPA nama/posisi
+        $queue->insert(['to_email' => 'a@example.com', 'template' => 'hasil_gate',
+            'payload_json' => json_encode(['nama' => 'Ani', 'posisi' => 'Frontliner', 'status' => 'passed'])]);
+        $queue->insert(['to_email' => 'b@example.com', 'template' => 'hasil_gate',
+            'payload_json' => json_encode(['status' => 'failed'])]);
+
+        $worker = new class (dryRun: true) extends EmailQueueWorker {
+            public array $bodies = [];
+
+            protected function deliver(string $to, string $subject, string $body): void
+            {
+                $this->bodies[$to] = $body;
+            }
+        };
+        $worker->process();
+
+        // regresi: data kandidat A tidak boleh muncul di email kandidat B
+        $this->assertStringContainsString('Ani', $worker->bodies['a@example.com']);
+        $this->assertStringNotContainsString('Ani', $worker->bodies['b@example.com']);
+        $this->assertStringNotContainsString('Frontliner', $worker->bodies['b@example.com']);
+    }
+
+    public function testStageHistoryMenolakUpdateDanDelete(): void
+    {
+        $id = (new StageLogger())->log(30, 'upload_cv', 'entered');
+
+        $model = new StageHistoryModel();
+        $this->expectException(LogicException::class);
+        $model->update($id, ['status' => 'passed']);
+    }
+}

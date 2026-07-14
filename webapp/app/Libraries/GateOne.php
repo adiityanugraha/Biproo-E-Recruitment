@@ -42,7 +42,9 @@ class GateOne
             throw new InvalidArgumentException('threshold lower tidak boleh melebihi upper');
         }
 
-        $score = ($w['cv'] * $cvScore) + ($w['assessment'] * $assessmentScore);
+        // dibulatkan SEBELUM dibandingkan supaya keputusan konsisten dengan
+        // skor yang disimpan/ditampilkan (hindari 0.6999999... di boundary)
+        $score = round(($w['cv'] * $cvScore) + ($w['assessment'] * $assessmentScore), 4);
 
         // Tabel keputusan gate-logic.md: >= upper lolos, < lower gagal,
         // zona tengah (termasuk tepat di lower) soft-flag utk review manusia.
@@ -52,6 +54,6 @@ class GateOne
             default               => 'flagged',
         };
 
-        return ['decision' => $decision, 'score' => round($score, 4)];
+        return ['decision' => $decision, 'score' => $score];
     }
 }
