@@ -1,8 +1,11 @@
-# Skema Kondisi Gate 1 (Fase 1 revisi, Day 1)
+# Skema Kondisi Gate 1 & Gate 2 (Fase 1 revisi, Day 1-2)
 
-Sumber: Blueprint A4 (ditandai [ASUMSI, perlu validasi atasan]). Gate 2
-dirancang Day 2. Selama Fase 1, input skor CV memakai **skor dummy** dari
-skeleton FastAPI; logika di bawah tidak berubah saat skor nyata masuk (Fase 3).
+Sumber: Blueprint A4 (ditandai [ASUMSI, perlu validasi atasan]). Selama Fase 1,
+input skor CV memakai **skor dummy** dari skeleton FastAPI; logika di bawah
+tidak berubah saat skor nyata masuk (Fase 3).
+
+Implementasi Gate 1: `webapp/app/Libraries/GateOne.php` (fungsi murni,
+teruji 9 skenario di `tests/unit/GateOneTest.php`).
 
 ## Input
 
@@ -85,8 +88,53 @@ Idempotensi: sebelum menulis, cek belum ada baris `gate_1` final
 (`passed`/`failed`) untuk application tsb - evaluasi ulang tidak boleh
 menggandakan keputusan.
 
+---
+
+# Skema Kondisi Gate 2 (keputusan akhir)
+
+Prinsip beda dengan Gate 1: **sistem TIDAK pernah memutus otomatis di Gate 2**.
+Sistem hanya menghitung rekomendasi; keputusan akhir selalu recruiter
+(Blueprint A4: "Keputusan akhir selalu dikonfirmasi recruiter").
+
+## Input
+
+| Input | Sumber |
+|---|---|
+| Skor gabungan Gate 1 (CV + assessment) | hasil evaluasi Gate 1 |
+| Hasil interview | recruiter mengisi nilai/catatan setelah `interview_online` |
+
+## Rekomendasi Sistem
+
+```
+skor_akhir = (w_gate1 * skor_gate1) + (w_interview * skor_interview)
+rekomendasi = skor_akhir >= threshold_rekomendasi ? 'hire' : 'no-hire'
+```
+
+Default [ASUMSI]: `w_gate1 = 0.4`, `w_interview = 0.6` (interview lebih berat
+karena sinyal terbaru dan paling kaya), `threshold_rekomendasi = 0.7`.
+Konfigurasi per posisi via `jobs.bobot_json` / `threshold_json` key `gate2`.
+
+## Alur Keputusan
+
+| Kejadian | Baris stage_history | Email |
+|---|---|---|
+| Interview selesai, skor akhir dihitung | (tidak ada baris; rekomendasi tampil di dashboard) | tidak ada |
+| Recruiter approve (hire) | `gate_2 / passed / recruiter` | tidak ada (lanjut proses berkas, di luar email inti) |
+| Recruiter reject | `gate_2 / failed / recruiter` | `hasil_gate` (tidak lolos) otomatis |
+
+Catatan:
+
+- Rekomendasi sistem disimpan sebagai `note` pada baris `gate_2` (mis.
+  "rekomendasi sistem: hire, skor 0.82") supaya selisih rekomendasi vs
+  keputusan manusia bisa diaudit belakangan.
+- Tidak ada zona flagged di Gate 2 - semua keputusan memang manual, flag tidak
+  bermakna.
+- Setelah `gate_2 / passed`, kandidat masuk `berkas_kontrak / entered` (system).
+
 ## Yang Perlu Validasi Atasan
 
-1. Bobot gabungan CV vs assessment (default 50/50).
-2. Angka threshold placeholder 0.75 / 0.45.
-3. Apakah kandidat ber-flag perlu diberi tahu (saat ini: tidak, murni internal).
+1. Bobot gabungan Gate 1: CV vs assessment (default 50/50).
+2. Angka threshold Gate 1 placeholder 0.75 / 0.45.
+3. Apakah kandidat ber-flag Gate 1 perlu diberi tahu (saat ini: tidak, murni internal).
+4. Bobot Gate 2: gate1 vs interview (default 40/60) + threshold rekomendasi 0.7.
+5. Bentuk penilaian interview oleh recruiter: skala angka atau rubrik (mempengaruhi normalisasi).
