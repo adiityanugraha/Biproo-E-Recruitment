@@ -1,6 +1,7 @@
 <?php
 
 use App\Libraries\EmailQueueWorker;
+use App\Libraries\GateOne;
 use App\Libraries\StageLogger;
 use App\Models\EmailQueueModel;
 use App\Models\StageHistoryModel;
@@ -54,6 +55,45 @@ final class StageLoggerFlowTest extends CIUnitTestCase
         ]);
 
         $this->assertSame(0, (new EmailQueueModel())->where('to_email', 'c@example.com')->countAllResults());
+    }
+
+    public function testAlurSatuKandidatRegistrasiSampaiPenjadwalan(): void
+    {
+        // Kriteria selesai minggu 2: satu kandidat berjalan registrasi ->
+        // keputusan Gate 1 (skor dummy), email terkirim di tiap perubahan status.
+        $logger = new StageLogger();
+        $appId  = 50;
+        $email  = ['to' => 'dina@example.com', 'nama' => 'Dina', 'posisi' => 'Frontliner'];
+
+        $logger->log($appId, 'upload_cv', 'entered', 'system', null, $email);
+        $logger->log($appId, 'ai_verification', 'entered');
+        $logger->log($appId, 'ai_verification', 'passed', 'system', 'skor_cv=0.82');
+        $logger->log($appId, 'online_assessment', 'entered');
+        $logger->log($appId, 'online_assessment', 'passed', 'system', 'nilai=0.70');
+
+        $gate = GateOne::evaluate(0.82, 0.70); // dummy score utk minggu 2
+        $logger->log($appId, 'gate_1', $gate['decision'], 'system', "skor_gabungan={$gate['score']}", $email);
+
+        $logger->log($appId, 'penjadwalan', 'entered', 'recruiter', null,
+            $email + ['jadwal' => 'Senin, 27 Juli 2026 10:00 WIB', 'join_url' => 'https://zoom.us/j/123']);
+
+        // riwayat lengkap & berurutan
+        $rows = (new StageHistoryModel())->where('application_id', $appId)->orderBy('id')->findAll();
+        $this->assertSame(
+            ['upload_cv', 'ai_verification', 'ai_verification', 'online_assessment', 'online_assessment', 'gate_1', 'penjadwalan'],
+            array_column($rows, 'stage')
+        );
+        $this->assertSame('passed', $gate['decision']);
+
+        // 3 email terpicu (konfirmasi, hasil gate, undangan) dan semuanya terkirim
+        $sent = (new EmailQueueWorker(dryRun: true))->process();
+        $this->assertSame(['sent' => 3, 'failed' => 0], $sent);
+
+        $templates = array_column(
+            (new EmailQueueModel())->where('to_email', 'dina@example.com')->orderBy('id')->findAll(),
+            'template'
+        );
+        $this->assertSame(['konfirmasi_registrasi', 'hasil_gate', 'undangan_interview'], $templates);
     }
 
     public function testPayloadTidakBocorAntarEmailDalamSatuBatch(): void

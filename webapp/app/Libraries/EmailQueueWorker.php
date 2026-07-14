@@ -10,9 +10,10 @@ use Throwable;
  * Kegagalan SMTP tidak menghambat alur utama - baris gagal dicoba ulang
  * sampai MAX_ATTEMPTS lalu ditandai failed.
  *
- * Dry-run: bila SMTP belum dikonfigurasi (email.SMTPHost kosong), email
+ * Dry-run: bila kredensial SMTP belum diisi (email.SMTPUser kosong), email
  * dirender lalu dicatat ke log, baris tetap ditandai sent - supaya alur
- * bisa diuji end-to-end tanpa server email.
+ * bisa diuji end-to-end tanpa server email. Cek SMTPUser, bukan SMTPHost:
+ * SMTPHost punya nilai default (smtp.gmail.com) meski kredensial belum diisi.
  */
 class EmailQueueWorker
 {
@@ -29,7 +30,7 @@ class EmailQueueWorker
 
     public function __construct(?bool $dryRun = null)
     {
-        $this->dryRun = $dryRun ?? (env('email.SMTPHost', '') === '');
+        $this->dryRun = $dryRun ?? (env('email.SMTPUser', '') === '');
     }
 
     /**
