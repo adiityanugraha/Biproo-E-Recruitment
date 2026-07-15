@@ -25,6 +25,7 @@ class Filters extends BaseFilters
      * or [filter_name => [classname1, classname2, ...]]
      */
     public array $aliases = [
+        'candidateauth' => \App\Filters\CandidateAuth::class,
         'csrf'          => CSRF::class,
         'toolbar'       => DebugToolbar::class,
         'honeypot'      => Honeypot::class,
@@ -73,7 +74,9 @@ class Filters extends BaseFilters
     public array $globals = [
         'before' => [
             // 'honeypot',
-            // 'csrf',
+            // CSRF aktif utk semua form (Blueprint Fase 2); dimatikan di env
+            // testing karena feature test tidak membawa token
+            ...(ENVIRONMENT === 'testing' ? [] : ['csrf']),
             // 'invalidchars',
         ],
         'after' => [
