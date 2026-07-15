@@ -11,7 +11,7 @@
     <?php foreach ($riwayat as $r): ?>
       <tr>
         <td><?= esc(Lamaran::STAGE_LABEL[$r['stage']] ?? $r['stage']) ?></td>
-        <td><?= esc(Lamaran::STATUS_LABEL[$r['status']] ?? $r['status']) ?></td>
+        <td><?= badge_status($r['status']) ?></td>
         <td><small><?= esc($r['note']) ?></small></td>
         <td><small><?= esc($r['actor']) ?></small></td>
         <td style="color:#666"><small><?= esc(substr($r['created_at'], 0, 16)) ?></small></td>

@@ -13,3 +13,23 @@
  *
  * @see: https://codeigniter.com/user_guide/extending/common.html
  */
+
+if (! function_exists('badge_status')) {
+    /** Badge status berwarna (tema BIPROO) utk status stage_history. */
+    function badge_status(?string $status): string
+    {
+        if ($status === null || $status === '' || $status === '-') {
+            return '<span class="badge badge-netral">-</span>';
+        }
+
+        $label = \App\Controllers\Lamaran::STATUS_LABEL[$status] ?? $status;
+        $kelas = match ($status) {
+            'passed'  => 'badge-lolos',
+            'failed'  => 'badge-gagal',
+            'flagged' => 'badge-flag',
+            default   => 'badge-netral',
+        };
+
+        return '<span class="badge ' . $kelas . '">' . esc($label) . '</span>';
+    }
+}

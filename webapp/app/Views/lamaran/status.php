@@ -19,7 +19,7 @@
     <?php foreach ($app['riwayat'] as $r): ?>
       <tr>
         <td><?= esc(Lamaran::STAGE_LABEL[$r['stage']] ?? $r['stage']) ?></td>
-        <td><?= esc(Lamaran::STATUS_LABEL[$r['status']] ?? $r['status']) ?></td>
+        <td><?= badge_status($r['status']) ?></td>
         <td style="color:#666"><?= esc(substr($r['created_at'], 0, 16)) ?></td>
       </tr>
     <?php endforeach ?>
