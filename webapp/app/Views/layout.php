@@ -42,6 +42,11 @@
     <a href="<?= site_url('lamar') ?>" style="margin-right:14px">Lamar</a>
     <span style="font-size:14px;margin-right:14px"><?= esc(session('candidate_nama')) ?></span>
     <a href="<?= site_url('logout') ?>">Keluar</a>
+  <?php elseif (session('recruiter_id')): ?>
+    <a href="<?= site_url('recruiter') ?>" style="margin-right:14px">Dashboard</a>
+    <a href="<?= site_url('recruiter/lowongan') ?>" style="margin-right:14px">Lowongan</a>
+    <span style="font-size:14px;margin-right:14px"><?= esc(session('recruiter_nama')) ?> (Recruiter)</span>
+    <a href="<?= site_url('recruiter/logout') ?>">Keluar</a>
   <?php endif ?>
 </header>
 <main>

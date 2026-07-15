@@ -16,3 +16,12 @@ $routes->group('', ['filter' => 'candidateauth'], static function ($routes) {
     $routes->get('assessment/(:num)', 'Lamaran::assessment/$1');
     $routes->post('assessment/(:num)', 'Lamaran::jawabAssessment/$1');
 });
+
+$routes->match(['GET', 'POST'], 'recruiter/login', 'Recruiter::login');
+$routes->get('recruiter/logout', 'Recruiter::logout');
+$routes->group('recruiter', ['filter' => 'recruiterauth'], static function ($routes) {
+    $routes->get('', 'Recruiter::index');
+    $routes->match(['GET', 'POST'], 'lowongan', 'Recruiter::lowongan');
+    $routes->get('kandidat/(:num)', 'Recruiter::kandidat/$1');
+    $routes->match(['GET', 'POST'], 'review/(:num)', 'Recruiter::review/$1');
+});
