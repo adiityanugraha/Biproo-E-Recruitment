@@ -38,6 +38,8 @@
   <div class="logo"><span class="b">B</span><span class="d">D</span></div>
   <h1>E-REQ BIPROO</h1>
   <?php if (session('candidate_id')): ?>
+    <a href="<?= site_url('status') ?>" style="margin-right:14px">Status</a>
+    <a href="<?= site_url('lamar') ?>" style="margin-right:14px">Lamar</a>
     <span style="font-size:14px;margin-right:14px"><?= esc(session('candidate_nama')) ?></span>
     <a href="<?= site_url('logout') ?>">Keluar</a>
   <?php endif ?>

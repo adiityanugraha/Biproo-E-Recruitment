@@ -2,16 +2,37 @@
 
 namespace App\Controllers;
 
+use App\Libraries\GateOne;
 use App\Libraries\StageLogger;
 use App\Models\ApplicationModel;
 use App\Models\CandidateModel;
 use App\Models\JobModel;
+use App\Models\StageHistoryModel;
 
 class Lamaran extends BaseController
 {
     private const MIME_SAH = [
         'application/pdf',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    ];
+
+    public const STAGE_LABEL = [
+        'upload_cv'         => 'CV Terkirim',
+        'ai_verification'   => 'Screening CV (AI)',
+        'online_assessment' => 'Assessment',
+        'gate_1'            => 'Keputusan Tahap 1',
+        'penjadwalan'       => 'Penjadwalan Interview',
+        'interview_online'  => 'Interview',
+        'gate_2'            => 'Keputusan Akhir',
+        'berkas_kontrak'    => 'Berkas & Kontrak',
+    ];
+
+    public const STATUS_LABEL = [
+        'entered'      => 'berjalan',
+        'passed'       => 'lolos',
+        'failed'       => 'tidak lolos',
+        'flagged'      => 'menunggu review recruiter',
+        'retry_queued' => 'diproses ulang',
     ];
 
     public function index()
@@ -82,5 +103,84 @@ class Lamaran extends BaseController
         ]);
 
         return redirect()->to('/lamar')->with('sukses', 'Lamaran terkirim! CV Anda sedang diproses - pantau email Anda.');
+    }
+
+    /** Portal status: timeline tiap lamaran dari candidate_stage_history. */
+    public function status()
+    {
+        $apps = (new ApplicationModel())
+            ->select('applications.id, applications.created_at, jobs.judul')
+            ->join('jobs', 'jobs.id = applications.job_id')
+            ->where('candidate_id', session('candidate_id'))
+            ->orderBy('applications.id')
+            ->findAll();
+
+        $history = new StageHistoryModel();
+        foreach ($apps as &$app) {
+            $app['riwayat'] = $history->where('application_id', $app['id'])->orderBy('id')->findAll();
+            // assessment bisa dikerjakan bila gate_1 belum diputus utk lamaran ini
+            $app['bisa_assessment'] = ! in_array('gate_1', array_column($app['riwayat'], 'stage'), true);
+        }
+
+        return view('lamaran/status', ['apps' => $apps]);
+    }
+
+    /** Assessment placeholder: satu pertanyaan ya/tidak (arahan atasan - bukan tes asli). */
+    public function assessment(int $appId)
+    {
+        $app = $this->lamaranMilikSendiri($appId);
+        if ($app === null) {
+            return redirect()->to('/status')->with('error', 'Lamaran tidak ditemukan.');
+        }
+
+        return view('lamaran/assessment', ['app' => $app]);
+    }
+
+    public function jawabAssessment(int $appId)
+    {
+        $app = $this->lamaranMilikSendiri($appId);
+        if ($app === null) {
+            return redirect()->to('/status')->with('error', 'Lamaran tidak ditemukan.');
+        }
+
+        $history = new StageHistoryModel();
+        if ($history->where(['application_id' => $appId, 'stage' => 'gate_1'])->countAllResults() > 0) {
+            return redirect()->to('/status')->with('error', 'Assessment lamaran ini sudah dikerjakan.');
+        }
+
+        $nilai    = $this->request->getPost('jawaban') === 'ya' ? 1.0 : 0.0;
+        $logger   = new StageLogger();
+        $kandidat = (new CandidateModel())->find(session('candidate_id'));
+        $email    = ['to' => $kandidat['email'], 'nama' => $kandidat['nama'], 'posisi' => $app['judul']];
+
+        // ponytail: skor CV dummy acak 0.30-0.90 sampai pipeline nyata minggu 5 -
+        // acak (bukan konstan) supaya zona flagged muncul utk review recruiter Day 3
+        $skorCv = mt_rand(30, 90) / 100;
+        $logger->log($appId, 'ai_verification', 'entered');
+        $logger->log($appId, 'ai_verification', 'passed', 'system', "skor_cv={$skorCv} (dummy)");
+        $logger->log($appId, 'online_assessment', 'entered');
+        $logger->log($appId, 'online_assessment', $nilai >= 1.0 ? 'passed' : 'failed', 'system', "nilai={$nilai}");
+
+        // konfigurasi gate per posisi dari jobs.bobot_json/threshold_json (docs/gate-logic.md)
+        $bobot     = json_decode((string) $app['bobot_json'], true) ?? [];
+        $threshold = json_decode((string) $app['threshold_json'], true) ?? [];
+        $gate      = GateOne::evaluate($skorCv, $nilai, [
+            'weights'   => $bobot['gate1'] ?? [],
+            'threshold' => $threshold['gate1'] ?? [],
+        ]);
+
+        $logger->log($appId, 'gate_1', $gate['decision'], 'system', "skor_gabungan={$gate['score']}", $email);
+
+        return redirect()->to('/status')->with('sukses', 'Assessment terkirim - lihat status terbaru di bawah.');
+    }
+
+    /** @return array|null lamaran + judul + config gate, hanya milik kandidat yang login */
+    private function lamaranMilikSendiri(int $appId): ?array
+    {
+        return (new ApplicationModel())
+            ->select('applications.id, jobs.judul, jobs.bobot_json, jobs.threshold_json')
+            ->join('jobs', 'jobs.id = applications.job_id')
+            ->where(['applications.id' => $appId, 'candidate_id' => session('candidate_id')])
+            ->first();
     }
 }
