@@ -121,6 +121,21 @@ final class StageLoggerFlowTest extends CIUnitTestCase
         $this->assertStringNotContainsString('Frontliner', $worker->bodies['b@example.com']);
     }
 
+    public function testFilterToEmailTidakMenyeretAntrianLain(): void
+    {
+        $queue = new EmailQueueModel();
+        $queue->insert(['to_email' => 'demo@example.com', 'template' => 'hasil_gate',
+            'payload_json' => json_encode(['status' => 'passed'])]);
+        $queue->insert(['to_email' => 'kandidat-nyata@example.com', 'template' => 'hasil_gate',
+            'payload_json' => json_encode(['status' => 'passed'])]);
+
+        $result = (new EmailQueueWorker(dryRun: true))->process(20, 'demo@example.com');
+
+        // hanya email demo terkirim; antrian kandidat nyata tidak tersentuh
+        $this->assertSame(['sent' => 1, 'failed' => 0], $result);
+        $this->seeInDatabase('email_queue', ['to_email' => 'kandidat-nyata@example.com', 'status' => 'pending']);
+    }
+
     public function testStageHistoryMenolakUpdateDanDelete(): void
     {
         $id = (new StageLogger())->log(30, 'upload_cv', 'entered');

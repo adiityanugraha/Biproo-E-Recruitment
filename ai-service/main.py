@@ -1,7 +1,6 @@
 import asyncio
 import os
 from contextlib import asynccontextmanager
-from typing import Literal
 from uuid import uuid4
 
 import httpx
@@ -50,21 +49,8 @@ class ScreeningRequest(BaseModel):
 class ScreeningAccepted(BaseModel):
     screening_job_id: str
 
-
-class Scores(BaseModel):
-    overall: float
-    skill: float
-    pendidikan: float
-    pengalaman: float
-
-
-class ScreeningCallback(BaseModel):
-    """Payload yang FastAPI POST-kan ke callback_url milik CI4 (dipakai mulai Fase 1)."""
-    screening_job_id: str
-    status: Literal["success", "failed_extraction", "failed_provider"]
-    scores: Scores | None = None
-    extracted_fields: dict | None = None
-    flags: list[str] = []
+# Model callback (Scores, ScreeningCallback) ditulis saat wiring minggu 5;
+# kontraknya terdokumentasi di README.
 
 
 # --- Pemrosesan background (Fase 0 Day 3: embedding terpanggil, ekstraksi CV menyusul Fase 1) ---

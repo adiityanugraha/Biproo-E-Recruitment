@@ -38,14 +38,21 @@ class EmailQueueWorker
      * ganda. Upgrade bila terjadi: claim baris via UPDATE status='sending'
      * WHERE status='pending' sebelum kirim.
      *
+     * @param string|null $toEmail hanya proses baris utk alamat ini
+     *                             (dipakai ereq:demo agar tidak menyeret antrian kandidat nyata)
+     *
      * @return array{sent: int, failed: int}
      */
-    public function process(int $limit = 20): array
+    public function process(int $limit = 20, ?string $toEmail = null): array
     {
         $model  = new EmailQueueModel();
         $result = ['sent' => 0, 'failed' => 0];
 
-        $pending = $model->where('status', 'pending')->orderBy('created_at')->findAll($limit);
+        $builder = $model->where('status', 'pending');
+        if ($toEmail !== null) {
+            $builder->where('to_email', $toEmail);
+        }
+        $pending = $builder->orderBy('created_at')->findAll($limit);
 
         foreach ($pending as $row) {
             $attempts = $row['attempts'] + 1;

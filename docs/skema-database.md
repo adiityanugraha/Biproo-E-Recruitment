@@ -1,8 +1,25 @@
-# Desain Skema Tabel Inti (Fase 0 - belum dimigrasikan)
+# Desain Skema Tabel Inti
 
-Desain untuk SQL Server, mengikuti Blueprint A7. Baru dua tabel yang dirancang
-detail sesuai tugas Fase 0 Day 2; tabel lain (candidates, jobs, applications,
-interviews, email_queue) menyusul saat modulnya dibangun.
+Desain untuk SQL Server, mengikuti Blueprint A7. Sumber kebenaran skema =
+CI4 Migrations di `webapp/app/Database/Migrations/` (sudah dijalankan).
+Tabel lain (candidates, jobs, applications, interviews) menyusul di minggu
+UI/Zoom saat modulnya dibangun.
+
+## Langkah Deploy Produksi (SQL Server, di luar migrations)
+
+Dijalankan manual sekali saat deploy - fitur khusus SQL Server yang tidak
+portable lewat CI4 forge:
+
+```sql
+-- tegakkan append-only stage_history di level DB (sesuaikan nama user)
+DENY UPDATE, DELETE ON candidate_stage_history TO [ereq_app_user];
+
+-- filtered index utk antrian proses ulang & antrian email
+CREATE INDEX ix_screening_retry ON screening_results(status)
+    WHERE status = 'failed_extraction';
+CREATE INDEX ix_email_pending ON email_queue(status, created_at)
+    WHERE status = 'pending';
+```
 
 ## screening_results
 
