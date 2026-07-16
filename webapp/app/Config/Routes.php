@@ -10,6 +10,7 @@ $routes->match(['GET', 'POST'], 'login', 'Auth::login');
 $routes->get('logout', 'Auth::logout');
 
 $routes->group('', ['filter' => 'candidateauth'], static function ($routes) {
+    $routes->get('dashboard', 'Lamaran::dashboard');
     $routes->get('lamar', 'Lamaran::index');
     $routes->post('lamar', 'Lamaran::kirim');
     $routes->get('status', 'Lamaran::status');

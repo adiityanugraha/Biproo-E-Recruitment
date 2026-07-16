@@ -35,23 +35,41 @@ class Recruiter extends BaseController
         return redirect()->to('/recruiter/login');
     }
 
-    /** Dashboard: daftar lowongan + jumlah pelamar + jumlah menunggu review. */
+    /** Dashboard: KPI ringkas + daftar lowongan + jumlah pelamar/menunggu review. */
     public function index()
     {
-        $jobs = (new JobModel())->orderBy('judul')->findAll();
-        $apps = new ApplicationModel();
+        $jobs    = (new JobModel())->orderBy('judul')->findAll();
+        $apps    = new ApplicationModel();
+        $history = new StageHistoryModel();
 
+        $totalFlagged = 0;
         foreach ($jobs as &$job) {
             $job['jumlah_pelamar'] = $apps->where('job_id', $job['id'])->countAllResults();
             $job['jumlah_flagged'] = 0;
             foreach ($apps->where('job_id', $job['id'])->findAll() as $app) {
                 if ($this->statusGate1($app['id']) === 'flagged') {
                     $job['jumlah_flagged']++;
+                    $totalFlagged++;
                 }
             }
         }
+        unset($job);
 
-        return view('recruiter/dashboard', ['jobs' => $jobs]);
+        $totalPelamar = $apps->countAllResults();
+        // distinct application dengan gate_1 lolos
+        $lolos = $history->where(['stage' => 'gate_1', 'status' => 'passed'])
+            ->select('application_id')->distinct()->countAllResults();
+
+        return view('recruiter/dashboard', [
+            'jobs' => $jobs,
+            'kpi'  => [
+                ['v' => count($jobs), 't' => 'Total Lowongan'],
+                ['v' => $totalPelamar, 't' => 'Total Pelamar'],
+                ['v' => $totalFlagged, 't' => 'Menunggu Review'],
+                ['v' => $lolos, 't' => 'Lolos Gate 1'],
+                ['v' => ($totalPelamar > 0 ? round($lolos / $totalPelamar * 100) : 0) . '%', 't' => 'Fulfill Rate'],
+            ],
+        ]);
     }
 
     /** Manajemen lowongan/FPK: form tambah + daftar. */

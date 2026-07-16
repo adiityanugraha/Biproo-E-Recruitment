@@ -26,7 +26,7 @@ class Auth extends BaseController
 
             session()->set(['candidate_id' => $id, 'candidate_nama' => $this->request->getPost('nama')]);
 
-            return redirect()->to('/lamar')->with('sukses', 'Akun berhasil dibuat - selamat datang!');
+            return redirect()->to('/dashboard')->with('sukses', 'Akun berhasil dibuat - selamat datang!');
         }
 
         return view('auth/daftar');
@@ -45,7 +45,7 @@ class Auth extends BaseController
 
             session()->set(['candidate_id' => $kandidat['id'], 'candidate_nama' => $kandidat['nama']]);
 
-            return redirect()->to('/lamar');
+            return redirect()->to('/dashboard');
         }
 
         return view('auth/login');

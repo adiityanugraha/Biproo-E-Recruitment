@@ -35,6 +35,85 @@ class Lamaran extends BaseController
         'retry_queued' => 'diproses ulang',
     ];
 
+    /** Definisi stepper (stage nyata dipetakan ke dua kolom ala BIPROO). */
+    private const STEPPER = [
+        'assessment' => [
+            ['upload_cv', 'Upload CV', '📄'],
+            ['ai_verification', 'Verifikasi CV (AI)', '🤖'],
+            ['online_assessment', 'Assessment', '📝'],
+            ['gate_1', 'Keputusan Tahap 1', '🎯'],
+        ],
+        'selection' => [
+            ['penjadwalan', 'Penjadwalan Interview', '📅'],
+            ['interview_online', 'Interview', '🎥'],
+            ['gate_2', 'Keputusan Akhir', '✅'],
+            ['berkas_kontrak', 'Berkas & Kontrak', '📁'],
+        ],
+    ];
+
+    public function dashboard()
+    {
+        $apps = (new ApplicationModel())
+            ->select('applications.id, jobs.judul')
+            ->join('jobs', 'jobs.id = applications.job_id')
+            ->where('candidate_id', session('candidate_id'))
+            ->orderBy('applications.id', 'DESC')
+            ->findAll();
+
+        $pilih = (int) ($this->request->getGet('app') ?? 0);
+        $aktif = null;
+        foreach ($apps as $a) {
+            if ($a['id'] === $pilih) {
+                $aktif = $a;
+            }
+        }
+        $aktif ??= $apps[0] ?? null;
+
+        // status terkini per stage (urut ASC -> baris terakhir menang)
+        $statusMap = [];
+        if ($aktif !== null) {
+            foreach ((new StageHistoryModel())->where('application_id', $aktif['id'])->orderBy('id')->findAll() as $r) {
+                $statusMap[$r['stage']] = $r['status'];
+            }
+        }
+        // urutan global 8 tahap -> tahap sebelum tahap terkini dianggap done
+        $urutan   = array_column(array_merge(self::STEPPER['assessment'], self::STEPPER['selection']), 0);
+        $maxIdx   = -1;
+        foreach ($urutan as $i => $stage) {
+            if (isset($statusMap[$stage])) {
+                $maxIdx = $i;
+            }
+        }
+        // halaman tujuan per tahap; null = belum ada halaman (modal "segera hadir")
+        $appId    = $aktif['id'] ?? 0;
+        $urlStage = [
+            'upload_cv'         => site_url('lamar'),
+            'ai_verification'   => site_url('status'),
+            'online_assessment' => site_url('assessment/' . $appId),
+            'gate_1'            => site_url('status'),
+        ];
+        $build = static function (array $list) use ($statusMap, $urutan, $maxIdx, $urlStage): array {
+            return array_map(static function (array $s) use ($statusMap, $urutan, $maxIdx, $urlStage): array {
+                [$stage, $label, $icon] = $s;
+                $i   = array_search($stage, $urutan, true);
+                $st  = ! isset($statusMap[$stage]) ? ($i > $maxIdx ? 'locked' : 'done')
+                    : ($statusMap[$stage] === 'failed' ? 'failed'
+                    : ($statusMap[$stage] === 'passed' || $i < $maxIdx ? 'done' : 'current'));
+                $url = $urlStage[$stage] ?? null;
+
+                return compact('label', 'icon', 'st', 'url');
+            }, $list);
+        };
+
+        return view('lamaran/dashboard', [
+            'apps'            => $apps,
+            'aktif'           => $aktif,
+            'jumlahLamaran'   => count($apps),
+            'assessmentSteps' => $build(self::STEPPER['assessment']),
+            'selectionSteps'  => $build(self::STEPPER['selection']),
+        ]);
+    }
+
     public function index()
     {
         return view('lamaran/form', [
@@ -131,6 +210,10 @@ class Lamaran extends BaseController
         $app = $this->lamaranMilikSendiri($appId);
         if ($app === null) {
             return redirect()->to('/status')->with('error', 'Lamaran tidak ditemukan.');
+        }
+        // sudah dinilai -> arahkan ke status, bukan tampilkan form lagi
+        if ((new StageHistoryModel())->where(['application_id' => $appId, 'stage' => 'gate_1'])->countAllResults() > 0) {
+            return redirect()->to('/status');
         }
 
         return view('lamaran/assessment', ['app' => $app]);
