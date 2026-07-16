@@ -4,7 +4,7 @@ if (session('recruiter_id')) {
     $brand = 'BIPROO';
     $menu  = [
         ['Dashboard', site_url('recruiter'), '🏠', url_is('recruiter') || url_is('recruiter/kandidat*') || url_is('recruiter/review*'), false],
-        ['Lowongan (FPK)', site_url('recruiter/lowongan'), '📢', url_is('recruiter/lowongan'), false],
+        ['FPK', site_url('recruiter/report'), '📄', url_is('recruiter/report'), false],
         ['Notification', null, '🔔', false, true],
         ['Message', null, '✉️', false, true],
     ];
@@ -104,8 +104,8 @@ $inisial = strtoupper(mb_substr((string) $nama, 0, 1));
   .stat .t { font-size: 13px; color: #888; } .stat .v { font-size: 17px; font-weight: 700; margin: 4px 0 10px; }
   .stat .btn { display: inline-block; padding: 7px 18px; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer; color: #fff; }
 
-  /* KPI recruiter */
-  .kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 18px; }
+  /* KPI recruiter (auto-fit: membungkus, tidak memaksa lebar) */
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 18px; }
   .kpi { background: linear-gradient(160deg, #FEEFC3, #FBD97A); border: 1px solid #F3B94A; border-radius: 14px; padding: 14px; text-align: center; }
   .kpi .v { font-size: 24px; font-weight: 700; } .kpi .t { font-size: 11px; font-weight: 600; color: #8a6d1e; margin-top: 2px; }
 
@@ -137,7 +137,9 @@ $inisial = strtoupper(mb_substr((string) $nama, 0, 1));
   .step.failed .dot { background: #E23B4E; } .step.failed .card { background: #FDECEC; }
   .step.locked .card { opacity: .65; } .step.locked .ic { background: #e6e8ee; filter: grayscale(1); }
 
-  .dash { display: grid; grid-template-columns: 1fr 300px; gap: 18px; align-items: start; }
+  /* minmax(0,1fr) supaya kolom kiri BISA menyusut (hindari overflow horizontal) */
+  .dash { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start; }
+  .dash > div { min-width: 0; }
   .wide-btn { display: block; width: 100%; text-align: center; background: linear-gradient(90deg, #FBD97A, #F5B301);
               color: #5a3d00; border-radius: 12px; padding: 15px; font-weight: 700; cursor: pointer; }
 

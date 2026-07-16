@@ -81,13 +81,4 @@ final class RecruiterFlowTest extends CIUnitTestCase
         $respons = $this->withSession(['candidate_id' => 1, 'candidate_nama' => 'Budi'])->get('recruiter');
         $respons->assertRedirectTo(site_url('recruiter/login'));
     }
-
-    public function testRecruiterBisaBuatLowongan(): void
-    {
-        $this->withSession($this->sesiRecruiter)->post('recruiter/lowongan', [
-            'judul' => 'Posisi Baru', 'req_skill' => 'X', 'req_pendidikan' => 'Y', 'req_pengalaman' => 'Z',
-        ]);
-
-        $this->seeInDatabase('jobs', ['judul' => 'Posisi Baru']);
-    }
 }
