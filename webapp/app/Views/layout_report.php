@@ -17,9 +17,6 @@
           background: linear-gradient(90deg, #FBA919, #F7941D); box-shadow: 0 2px 10px rgba(247,148,29,.35); color: #fff; }
   .rtop .ham { font-size: 22px; cursor: pointer; }
   .rtop .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
-  .rtop .logo { display: flex; }
-  .rtop .logo span { width: 28px; height: 28px; border-radius: 50%; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; }
-  .rtop .logo .b { background: #2F6FED; } .rtop .logo .d { background: #E23B4E; margin-left: -7px; }
   .rtop .dates { display: flex; align-items: center; gap: 8px; font-size: 13px; }
   .rtop .dates input { border: none; border-radius: 8px; padding: 7px 10px; font-size: 13px; font-family: inherit; }
   .rtop .dates button { margin: 0; padding: 7px 16px; border: none; border-radius: 8px; background: #fff; color: #2F6FED; font-weight: 700; font-size: 13px; cursor: pointer; }
@@ -56,7 +53,7 @@
 <header class="rtop">
   <a href="<?= site_url('recruiter') ?>" class="ham" title="Kembali ke dashboard">☰</a>
   <a href="<?= site_url('recruiter') ?>" class="brand" style="color:#fff">
-    <span class="logo"><span class="b">B</span><span class="d">D</span></span> Report
+    Report
   </a>
   <div class="dates">
     <span>Start Date:</span><input type="date" value="2026-01-01">

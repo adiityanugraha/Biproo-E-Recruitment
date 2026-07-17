@@ -47,11 +47,6 @@ $inisial = strtoupper(mb_substr((string) $nama, 0, 1));
             height: 60px; padding: 0 22px; background: linear-gradient(90deg, #FBA919, #F7941D);
             box-shadow: 0 2px 10px rgba(247,148,29,.35); color: #fff; }
   .brand { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 18px; }
-  .logo { display: flex; }
-  .logo span { width: 30px; height: 30px; border-radius: 50%; color: #fff; display: flex; align-items: center;
-               justify-content: center; font-weight: 700; font-size: 15px; box-shadow: 0 2px 6px rgba(0,0,0,.2); }
-  .logo .b { background: #2F6FED; }
-  .logo .d { background: #E23B4E; margin-left: -8px; }
   .user { display: flex; align-items: center; gap: 10px; font-size: 14px; }
   .avatar { width: 34px; height: 34px; border-radius: 50%; background: #fff; color: #F7941D; display: flex;
             align-items: center; justify-content: center; font-weight: 700; border: 2px solid rgba(255,255,255,.6); }
@@ -158,7 +153,6 @@ $inisial = strtoupper(mb_substr((string) $nama, 0, 1));
 <body>
 <header class="topbar">
   <div class="brand">
-    <span class="logo"><span class="b">B</span><span class="d">D</span></span>
     <span><?= esc($brand) ?></span>
   </div>
   <div class="user">

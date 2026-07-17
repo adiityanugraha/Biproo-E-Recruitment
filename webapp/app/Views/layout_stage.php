@@ -15,8 +15,6 @@
           background: linear-gradient(90deg, #FBA919, #F7941D); box-shadow: 0 2px 10px rgba(247,148,29,.35); color: #fff; }
   .rtop .ham { font-size: 22px; }
   .rtop .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; color: #fff; }
-  .rtop .logo span { width: 26px; height: 26px; border-radius: 50%; color: #fff; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; }
-  .rtop .logo .b { background: #2F6FED; } .rtop .logo .d { background: #E23B4E; margin-left: -7px; }
   .rtop .rows { display: flex; align-items: center; gap: 6px; font-size: 13px; }
   .rtop .rows select { border: none; border-radius: 8px; padding: 6px 8px; font-family: inherit; }
   .rtop .sp { flex: 1; }
@@ -52,7 +50,7 @@
 <body>
 <header class="rtop">
   <a href="<?= site_url('recruiter') ?>" class="ham" style="color:#fff">☰</a>
-  <a href="<?= site_url('recruiter') ?>" class="brand"><span class="logo"><span class="b">B</span><span class="d">D</span></span> <?= esc($stageTitle) ?></a>
+  <a href="<?= site_url('recruiter') ?>" class="brand"><?= esc($stageTitle) ?></a>
   <span class="rows">Rows <select onchange="segera('Ubah Jumlah Baris')"><option>200</option><option>50</option></select></span>
   <span class="sp"></span>
   <div class="user"><span class="avatar"><?= esc(strtoupper(mb_substr((string) session('recruiter_nama'), 0, 1)) ?: 'R') ?></span>

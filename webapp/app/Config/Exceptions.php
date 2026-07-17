@@ -2,7 +2,9 @@
 
 namespace Config;
 
+use App\Libraries\ServiceDownHandler;
 use CodeIgniter\Config\BaseConfig;
+use CodeIgniter\Database\Exceptions\DatabaseException;
 use CodeIgniter\Debug\ExceptionHandler;
 use CodeIgniter\Debug\ExceptionHandlerInterface;
 use Psr\Log\LogLevel;
@@ -101,6 +103,14 @@ class Exceptions extends BaseConfig
      */
     public function handler(int $statusCode, Throwable $exception): ExceptionHandlerInterface
     {
+        // Hanya kegagalan KONEKSI (mis. SQL Server mati) yang dapat halaman ramah;
+        // error query lain tetap ke handler default supaya bug tidak tersamar.
+        // ponytail: deteksi via wording bawaan CI4; bila CI4 mengubah pesannya, cek ulang.
+        if ($exception instanceof DatabaseException
+            && str_contains($exception->getMessage(), 'Unable to connect')) {
+            return new ServiceDownHandler();
+        }
+
         return new ExceptionHandler($this);
     }
 }
