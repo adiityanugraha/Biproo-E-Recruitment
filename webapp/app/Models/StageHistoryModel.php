@@ -30,4 +30,29 @@ class StageHistoryModel extends Model
     {
         throw new LogicException('candidate_stage_history append-only: DELETE tidak diizinkan');
     }
+
+    /** Status terkini sebuah (application, stage): baris terakhir yang berlaku. */
+    public function latestStatus(int $applicationId, string $stage): ?string
+    {
+        $row = $this->where(['application_id' => $applicationId, 'stage' => $stage])
+            ->orderBy('id', 'DESC')->first();
+
+        return $row['status'] ?? null;
+    }
+
+    /**
+     * Peta stage => status terkini untuk satu lamaran.
+     * Urut ASC lalu ditimpa -> baris terakhir per stage yang menang.
+     *
+     * @return array<string, string>
+     */
+    public function latestStatusMap(int $applicationId): array
+    {
+        $map = [];
+        foreach ($this->where('application_id', $applicationId)->orderBy('id')->findAll() as $r) {
+            $map[$r['stage']] = $r['status'];
+        }
+
+        return $map;
+    }
 }

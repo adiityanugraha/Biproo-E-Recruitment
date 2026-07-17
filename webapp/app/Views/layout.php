@@ -138,12 +138,6 @@ $inisial = strtoupper(mb_substr((string) $nama, 0, 1));
   .wide-btn { display: block; width: 100%; text-align: center; background: linear-gradient(90deg, #FBD97A, #F5B301);
               color: #5a3d00; border-radius: 12px; padding: 15px; font-weight: 700; cursor: pointer; }
 
-  /* modal segera hadir */
-  #segeraModal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 100; }
-  #segeraModal .box { background: #fff; border-radius: 16px; padding: 30px; max-width: 340px; text-align: center; }
-  #segeraModal .ic { font-size: 40px; } #segeraModal h3 { margin: 10px 0 6px; }
-  #segeraModal p { color: #666; font-size: 14px; margin: 0 0 4px; }
-
   @media (max-width: 900px) { .dash { grid-template-columns: 1fr; } }
   @media (max-width: 780px) { .shell { flex-direction: column; } .sidebar { width: 100%; position: static; }
                               .kpis { grid-template-columns: repeat(2, 1fr); } .stats { grid-template-columns: 1fr; } }
@@ -195,17 +189,6 @@ $inisial = strtoupper(mb_substr((string) $nama, 0, 1));
   </main>
 </div>
 
-<div id="segeraModal" onclick="if(event.target===this)tutupSegera()">
-  <div class="box">
-    <div class="ic">🚧</div>
-    <h3 id="segeraNama">Fitur ini</h3>
-    <p>Segera hadir - fitur ini masih dalam pengembangan.</p>
-    <button onclick="tutupSegera()">Mengerti</button>
-  </div>
-</div>
-<script>
-  function segera(nama){ document.getElementById('segeraNama').textContent = nama || 'Fitur ini'; document.getElementById('segeraModal').style.display = 'flex'; }
-  function tutupSegera(){ document.getElementById('segeraModal').style.display = 'none'; }
-</script>
+<?= $this->include('partials/segera_modal') ?>
 </body>
 </html>

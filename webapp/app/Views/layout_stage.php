@@ -41,9 +41,6 @@
   .pager span { padding: 5px 9px; border: 1px solid #e2e6ee; border-radius: 6px; margin-right: 4px; font-size: 12px; cursor: pointer; }
   .pager .now { background: #F7941D; color: #fff; border-color: #F7941D; }
 
-  #segeraModal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 100; }
-  #segeraModal .box { background: #fff; border-radius: 16px; padding: 30px; max-width: 340px; text-align: center; }
-  #segeraModal .ic { font-size: 40px; } #segeraModal h3 { margin: 10px 0 6px; } #segeraModal p { color: #666; font-size: 14px; }
   @media (max-width: 820px) { .rshell { flex-direction: column; } .rside { width: 100%; } }
 </style>
 </head>
@@ -76,13 +73,6 @@
   <main class="rcontent"><?= $this->renderSection('isi') ?></main>
 </div>
 
-<div id="segeraModal" onclick="if(event.target===this)tutupSegera()">
-  <div class="box"><div class="ic">🚧</div><h3 id="segeraNama">Fitur ini</h3>
-    <p>Segera hadir - fitur ini masih dalam pengembangan.</p><button style="background:linear-gradient(90deg,#FBA919,#F7941D);color:#fff;padding:10px 20px" onclick="tutupSegera()">Mengerti</button></div>
-</div>
-<script>
-  function segera(n){ document.getElementById('segeraNama').textContent = n || 'Fitur ini'; document.getElementById('segeraModal').style.display = 'flex'; }
-  function tutupSegera(){ document.getElementById('segeraModal').style.display = 'none'; }
-</script>
+<?= $this->include('partials/segera_modal') ?>
 </body>
 </html>

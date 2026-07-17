@@ -102,7 +102,7 @@
           <span style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#FBA919,#F7941D);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700">B</span>
           <div><b style="font-size:13px">Admin Biproo</b> <span style="color:#2F6FED">✔</span><br><small style="color:#999"><?= date('d M, Y') ?></small></div>
         </div>
-        <p style="font-size:13px;color:#444;line-height:1.6;margin-top:10px">Semangat menjalani setiap tahap seleksi! Persiapkan dirimu dengan baik, tetap tenang, dan tunjukkan versi terbaik dari dirimu. 🚀</p>
+        <p style="font-size:13px;color:#444;line-height:1.6;margin-top:10px">Semangat menjalani setiap tahap seleksi! Persiapkan dirimu dengan baik, tetap tenang, dan tunjukkan versi terbaik dari dirimu.</p>
         <div style="display:flex;gap:16px;font-size:13px;color:#666;border-top:1px solid #f0f0f0;padding-top:10px;cursor:pointer">
           <span onclick="segera('Feed')">👍 <b>1.253</b></span><span onclick="segera('Feed')">↗ <b>323</b></span>
         </div>

@@ -298,11 +298,7 @@ class Recruiter extends BaseController
     /** Status gate_1 terkini sebuah lamaran (baris terakhir yang berlaku). */
     private function statusGate1(int $appId): ?string
     {
-        $row = (new StageHistoryModel())
-            ->where(['application_id' => $appId, 'stage' => 'gate_1'])
-            ->orderBy('id', 'DESC')->first();
-
-        return $row['status'] ?? null;
+        return (new StageHistoryModel())->latestStatus($appId, 'gate_1');
     }
 
     private function lamaranDetail(int $appId): ?array

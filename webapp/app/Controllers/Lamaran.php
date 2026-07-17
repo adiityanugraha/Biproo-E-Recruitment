@@ -69,13 +69,8 @@ class Lamaran extends BaseController
         }
         $aktif ??= $apps[0] ?? null;
 
-        // status terkini per stage (urut ASC -> baris terakhir menang)
-        $statusMap = [];
-        if ($aktif !== null) {
-            foreach ((new StageHistoryModel())->where('application_id', $aktif['id'])->orderBy('id')->findAll() as $r) {
-                $statusMap[$r['stage']] = $r['status'];
-            }
-        }
+        // status terkini per stage (baris terakhir per stage yang menang)
+        $statusMap = $aktif !== null ? (new StageHistoryModel())->latestStatusMap($aktif['id']) : [];
         // urutan global 8 tahap -> tahap sebelum tahap terkini dianggap done
         $urutan   = array_column(array_merge(self::STEPPER['assessment'], self::STEPPER['selection']), 0);
         $maxIdx   = -1;
