@@ -18,6 +18,7 @@ class StageLogger
         'upload_cv:entered'   => 'konfirmasi_registrasi',
         'gate_1:passed'       => 'hasil_gate',
         'gate_1:failed'       => 'hasil_gate',
+        'gate_2:passed'       => 'hasil_gate',
         'gate_2:failed'       => 'hasil_gate',
         'penjadwalan:entered' => 'undangan_interview',
     ];

@@ -30,5 +30,6 @@ $routes->group('recruiter', ['filter' => 'recruiterauth'], static function ($rou
     $routes->get('kandidat', 'Recruiter::kandidat');
     $routes->post('interview/acc/(:num)', 'Recruiter::accInterview/$1');
     $routes->post('interview/tolak/(:num)', 'Recruiter::tolakInterview/$1');
+    $routes->post('interview/putus/(:num)', 'Recruiter::putusInterview/$1');
     $routes->match(['GET', 'POST'], 'review/(:num)', 'Recruiter::review/$1');
 });

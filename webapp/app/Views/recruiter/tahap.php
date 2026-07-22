@@ -27,6 +27,23 @@
               </form>
             <?php elseif ($stage === 'interview_online' && $status === 'passed' && ! empty($a['join_url'])): ?>
               <a href="<?= esc($a['join_url'], 'attr') ?>" target="_blank" rel="noopener"><button class="btn-view" style="background:#2F6FED;color:#fff">🎥 Link Zoom</button></a>
+            <?php elseif ($stage === 'interview_online' && $status === 'completed'): ?>
+              <?php if ($a['gate2'] === 'passed'): ?>
+                <span style="color:#1d6b3d;font-weight:700">✅ Lolos</span>
+              <?php elseif ($a['gate2'] === 'failed'): ?>
+                <span style="color:#a12734;font-weight:700">❌ Tidak Lolos</span>
+              <?php else: ?>
+                <form method="post" action="<?= site_url('recruiter/interview/putus/' . $a['id']) ?>" style="margin:6px 0 0">
+                  <?= csrf_field() ?>
+                  <div style="font-size:11px;color:#666">Skor interview: <b id="sv<?= $a['id'] ?>">70</b></div>
+                  <input type="range" name="skor" min="0" max="100" value="70" style="width:130px"
+                         oninput="document.getElementById('sv<?= $a['id'] ?>').textContent=this.value">
+                  <div style="margin-top:4px">
+                    <button class="btn-view" style="background:#2F6FED;color:#fff">OK</button>
+                    <div style="font-size:10px;color:#999;margin-top:2px">hasil dihitung dari skor interview + skor CV</div>
+                  </div>
+                </form>
+              <?php endif ?>
             <?php endif ?>
           </td>
           <td><button class="btn-view" style="background:#DCE9FF;color:#2F6FED" onclick="segera('Lihat File CV')">CV</button></td>

@@ -61,8 +61,12 @@
     $tabs = [
         'progress' => ['On Progress', '🔄', $base],
         'passed'   => ['Passed', '✅', $base . '?status=passed'],
-        'failed'   => ['Failed', '❌', $base . '?status=failed'],
     ];
+    // tab Completed (keputusan Gate 2) hanya relevan di Interview HRD
+    if (($stage ?? '') === 'interview_online') {
+        $tabs['completed'] = ['Completed', '🏁', $base . '?status=completed'];
+    }
+    $tabs['failed'] = ['Failed', '❌', $base . '?status=failed'];
     foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
       <a href="<?= $url ?>" class="<?= $status === $k ? 'on' : '' ?>">
         <span class="l"><span><?= $ic ?></span><span><?= $lbl ?></span></span><span><?= $status === $k ? '»' : '' ?></span></a>

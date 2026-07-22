@@ -2,6 +2,7 @@
 
 namespace App\Controllers;
 
+use App\Libraries\GateTwo;
 use App\Libraries\StageLogger;
 use App\Libraries\ZoomException;
 use App\Models\ApplicationModel;
@@ -9,6 +10,7 @@ use App\Models\EmailQueueModel;
 use App\Models\InterviewModel;
 use App\Models\JobModel;
 use App\Models\StageHistoryModel;
+use CodeIgniter\Database\RawSql;
 use DateTime;
 
 class Recruiter extends BaseController
@@ -199,15 +201,26 @@ class Recruiter extends BaseController
         }
 
         $req    = $this->request->getGet('status');
-        $status = in_array($req, ['passed', 'failed'], true) ? $req : 'progress';
+        $status = in_array($req, ['passed', 'failed', 'completed'], true) ? $req : 'progress';
 
         $ivMap = [];
         if ($stage === 'interview_online') {
-            // Interview HRD memetakan tab ke status ajuan interview:
-            //   On Progress = requested (menunggu acc), Passed = approved (sudah dijadwal),
-            //   Failed = rejected (ditolak). Simpan baris penuh utk jadwal + link Zoom.
-            $tabIv = ['progress' => 'requested', 'passed' => 'approved', 'failed' => 'rejected'][$status];
-            foreach ((new InterviewModel())->where('status', $tabIv)->findAll() as $iv) {
+            // Tab Interview HRD berdasar status ajuan + waktu:
+            //   On Progress = requested (menunggu acc)
+            //   Passed      = approved (ajuan sudah di-acc)
+            //   Completed   = approved & jadwal SUDAH lewat (siap dinilai Gate 2)
+            //   Failed      = rejected (ditolak)
+            $q = new InterviewModel();
+            if ($status === 'completed') {
+                // bandingkan dgn jam DB (CURRENT_TIMESTAMP), bukan date() PHP (UTC) -
+                // scheduled_at disimpan dalam jam lokal mesin, sama dgn jam DB. Pakai
+                // CURRENT_TIMESTAMP (portabel SQLSRV + SQLite test), bukan GETDATE.
+                $rows = $q->where('status', 'approved')->where(new RawSql('scheduled_at <= CURRENT_TIMESTAMP'))->findAll();
+            } else {
+                $ivStatus = ['progress' => 'requested', 'passed' => 'approved', 'failed' => 'rejected'][$status];
+                $rows     = $q->where('status', $ivStatus)->findAll();
+            }
+            foreach ($rows as $iv) {
                 $ivMap[$iv['application_id']] = $iv;
             }
             $ids = array_keys($ivMap);
@@ -233,9 +246,13 @@ class Recruiter extends BaseController
             ->whereIn('applications.id', $ids)
             ->orderBy('applications.id')
             ->findAll();
+        $sh = new StageHistoryModel();
         foreach ($daftar as &$a) {
             $a['jadwal']   = $ivMap[$a['id']]['scheduled_at'] ?? null; // waktu jadwal (interview_online)
             $a['join_url'] = $ivMap[$a['id']]['join_url'] ?? null;     // link Zoom (tab Passed)
+            // tab Completed: keputusan Gate 2 (null = belum diputus -> tampilkan slider)
+            $a['gate2'] = ($stage === 'interview_online' && $status === 'completed')
+                ? $sh->latestStatus($a['id'], 'gate_2') : null;
         }
         unset($a);
 
@@ -351,6 +368,61 @@ class Recruiter extends BaseController
         ]);
 
         return redirect()->to($kembali)->with('sukses', 'Ajuan jadwal ditolak, kandidat dikabari via email.');
+    }
+
+    /**
+     * Keputusan akhir (Gate 2) di tab Completed: recruiter beri skor interview
+     * (slider) + putuskan Lolos/Tidak. Selalu manual - sistem hanya merekomendasi.
+     */
+    public function putusInterview(int $appId)
+    {
+        $app = $this->lamaranDetail($appId);
+        if ($app === null) {
+            return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
+        }
+        $kembali = '/recruiter/tahap/interview_online?status=completed';
+
+        // approved & jadwal sudah lewat (dibandingkan di SQL supaya konsisten timezone)
+        $iv = (new InterviewModel())
+            ->where('application_id', $appId)
+            ->where('status', 'approved')
+            ->where(new RawSql('scheduled_at <= CURRENT_TIMESTAMP'))
+            ->orderBy('id', 'DESC')
+            ->first();
+        if ($iv === null) {
+            return redirect()->to($kembali)->with('error', 'Interview belum bisa dinilai (jadwal belum terlewat).');
+        }
+        if ((new StageHistoryModel())->latestStatus($appId, 'gate_2') !== null) {
+            return redirect()->to($kembali)->with('error', 'Kandidat ini sudah diputuskan.');
+        }
+
+        $skor = max(0, min(100, (int) $this->request->getPost('skor')));
+        // keputusan DIKALKULASI: GateTwo gabungkan skor interview + skor gate1 (memuat skor CV)
+        $rec    = GateTwo::recommend($this->skorGate1($appId), $skor / 100);
+        $lolos  = $rec['recommendation'] === 'hire';
+        $logger = new StageLogger();
+        $actor  = 'recruiter:' . session('recruiter_nama');
+        $email  = ['to' => $app['email'], 'nama' => $app['nama'], 'posisi' => $app['judul']];
+
+        $logger->log($appId, 'interview_online', 'passed', $actor, "skor_interview={$skor}");
+        $logger->log($appId, 'gate_2', $lolos ? 'passed' : 'failed', $actor, "skor_interview={$skor}, skor_akhir={$rec['score']}", $email);
+        if ($lolos) {
+            $logger->log($appId, 'berkas_kontrak', 'entered', $actor);
+        }
+
+        return redirect()->to($kembali)->with('sukses', 'Skor tersimpan. Keputusan akhir: ' . ($lolos ? 'LOLOS' : 'TIDAK LOLOS') . ' - kandidat dikabari via email.');
+    }
+
+    /** Skor gabungan Gate 1 dari catatan (untuk rekomendasi Gate 2); default bila tak tercatat. */
+    private function skorGate1(int $appId): float
+    {
+        foreach ((new StageHistoryModel())->where(['application_id' => $appId, 'stage' => 'gate_1'])->findAll() as $r) {
+            if (preg_match('/skor_gabungan=([0-9.]+)/', (string) $r['note'], $m)) {
+                return (float) $m[1];
+            }
+        }
+
+        return 0.7; // gate_1 diputus manual tanpa skor -> pakai default wajar
     }
 
     /** Format jadwal ramah Bahasa Indonesia untuk email undangan. */

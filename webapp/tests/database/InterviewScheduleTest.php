@@ -93,6 +93,51 @@ final class InterviewScheduleTest extends CIUnitTestCase
         $this->seeInDatabase('email_queue', ['to_email' => 'sinta@example.com', 'template' => 'undangan_interview']);
     }
 
+    /** interview yang sudah di-acc & jadwalnya lewat (siap dinilai di tab Completed). */
+    private function pastApprovedInterview(int $aid): void
+    {
+        (new InterviewModel())->insert([
+            'application_id' => $aid,
+            'status'         => 'approved',
+            'scheduled_at'   => '2020-01-01 10:00:00',
+            'meeting_id'     => '111',
+            'join_url'       => 'https://zoom.us/j/111',
+        ]);
+    }
+
+    public function testTabCompletedTampilkanInterviewLewatWaktu(): void
+    {
+        [$cid, $aid] = $this->fixture('passed');
+        $this->pastApprovedInterview($aid);
+
+        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=completed')->assertSee('Sinta');
+    }
+
+    public function testSkorTinggiDihitungLolosCatatGate2BerkasDanEmail(): void
+    {
+        [$cid, $aid] = $this->fixture('passed');
+        $this->pastApprovedInterview($aid);
+
+        // skor 90 (+ gate1 default 0.7) -> gabungan di atas ambang -> LOLOS otomatis
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '90']);
+
+        $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'passed']);
+        $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'berkas_kontrak', 'status' => 'entered']);
+        $this->seeInDatabase('email_queue', ['to_email' => 'sinta@example.com', 'template' => 'hasil_gate']);
+    }
+
+    public function testSkorRendahDihitungTidakLolos(): void
+    {
+        [$cid, $aid] = $this->fixture('passed');
+        $this->pastApprovedInterview($aid);
+
+        // skor 20 -> gabungan di bawah ambang -> TIDAK LOLOS otomatis
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '20']);
+
+        $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'failed']);
+        $this->dontSeeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'berkas_kontrak']);
+    }
+
     public function testTabPassedTampilkanApprovedDenganLinkZoom(): void
     {
         $this->fakeZoom();
