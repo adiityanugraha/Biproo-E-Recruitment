@@ -16,6 +16,7 @@ $routes->group('', ['filter' => 'candidateauth'], static function ($routes) {
     $routes->get('status', 'Lamaran::status');
     $routes->get('assessment/(:num)', 'Lamaran::assessment/$1');
     $routes->post('assessment/(:num)', 'Lamaran::jawabAssessment/$1');
+    $routes->post('chat/ask', 'Chat::ask');
 });
 
 $routes->match(['GET', 'POST'], 'recruiter/login', 'Recruiter::login');

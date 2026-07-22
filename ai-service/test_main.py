@@ -89,3 +89,59 @@ def test_unknown_job_returns_404():
 def test_health():
     with TestClient(app) as client:
         assert client.get("/health").json() == {"status": "ok"}
+
+
+# --- Chatbot /chat ---
+
+class FakeChatProvider:
+    def __init__(self, answer="Lamaranmu di tahap Assessment."):
+        self.answer = answer
+        self.last = None
+
+    def generate(self, system, history, question):
+        self.last = {"system": system, "history": history, "question": question}
+        return self.answer
+
+
+def test_chat_returns_grounded_answer():
+    app.state.chat_provider = FakeChatProvider("Kamu di tahap Screening CV (AI).")
+    with TestClient(app) as client:
+        resp = client.post("/chat", json={
+            "question": "sampai tahap mana lamaran saya?",
+            "context": 'Lamaran "Backend": Screening CV (AI): berjalan',
+        })
+        assert resp.status_code == 200
+        assert resp.json()["answer"] == "Kamu di tahap Screening CV (AI)."
+        # konteks status benar-benar masuk ke system prompt (bukti grounding)
+        assert "Screening CV" in app.state.chat_provider.last["system"]
+
+
+def test_chat_forwards_history():
+    fake = FakeChatProvider()
+    app.state.chat_provider = fake
+    with TestClient(app) as client:
+        client.post("/chat", json={
+            "question": "kenapa?",
+            "context": "x",
+            "history": [{"role": "user", "text": "halo"}, {"role": "model", "text": "hai"}],
+        })
+        assert fake.last["history"] == [
+            {"role": "user", "text": "halo"},
+            {"role": "model", "text": "hai"},
+        ]
+
+
+def test_chat_rejects_empty_question():
+    app.state.chat_provider = FakeChatProvider()
+    with TestClient(app) as client:
+        assert client.post("/chat", json={"question": "   ", "context": "x"}).status_code == 400
+
+
+def test_chat_llm_failure_returns_502():
+    class Boom:
+        def generate(self, *a):
+            raise RuntimeError("api down")
+
+    app.state.chat_provider = Boom()
+    with TestClient(app) as client:
+        assert client.post("/chat", json={"question": "halo", "context": "x"}).status_code == 502

@@ -7,6 +7,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, HttpUrl
 
+from chat import get_chat_provider
 from embeddings import get_provider
 
 RETRY_ATTEMPTS = 4
@@ -106,6 +107,53 @@ def get_screening(job_id: str) -> dict:
         raise HTTPException(404, "screening_job_id tidak dikenal")
     job = jobs[job_id]
     return {k: v for k, v in job.items() if k != "texts"}
+
+
+# --- Chatbot status kandidat (Fase 3 Day 3) ---
+# Sinkron (bukan 202/callback): user menunggu jawaban. Grounding ketat - LLM
+# hanya boleh menjawab dari konteks status yang dikirim CI4, tidak mengarang.
+
+class ChatTurn(BaseModel):
+    role: str  # 'user' | 'model'
+    text: str
+
+
+class ChatRequest(BaseModel):
+    question: str
+    context: str  # data status kandidat, dirakit CI4 dari candidate_stage_history
+    history: list[ChatTurn] = []
+
+
+class ChatReply(BaseModel):
+    answer: str
+
+
+SYSTEM_TEMPLATE = (
+    "Kamu asisten status lamaran E-REQ BIPROO. Jawab HANYA berdasarkan DATA STATUS "
+    "kandidat di bawah, dalam Bahasa Indonesia yang ramah dan ringkas. Bila pertanyaan "
+    "tidak bisa dijawab dari data itu (di luar topik lamaran, atau menanyakan data "
+    "kandidat lain), tolak dengan sopan dan sarankan menghubungi tim rekrutmen. Jangan "
+    "mengarang tahap, tanggal, skor, atau keputusan yang tidak ada di data.\n\n"
+    "=== DATA STATUS KANDIDAT ===\n{context}\n=== AKHIR DATA ==="
+)
+
+
+@app.post("/chat", response_model=ChatReply)
+def chat(req: ChatRequest) -> ChatReply:
+    if not req.question.strip():
+        raise HTTPException(400, "pertanyaan kosong")
+
+    provider = getattr(app.state, "chat_provider", None) or get_chat_provider()
+    system = SYSTEM_TEMPLATE.format(context=req.context)
+    history = [{"role": t.role, "text": t.text} for t in req.history]
+
+    try:
+        answer = provider.generate(system, history, req.question)
+    except Exception as e:
+        # LLM/provider gagal setelah dipanggil -> 502, CI4 tampilkan pesan ramah
+        raise HTTPException(502, f"LLM gagal: {e}")
+
+    return ChatReply(answer=answer)
 
 
 @app.get("/health")

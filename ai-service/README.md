@@ -22,8 +22,9 @@ Test: `.venv\Scripts\python -m pytest`
 
 | Variabel | Wajib | Keterangan |
 |---|---|---|
-| `GEMINI_API_KEY` | untuk embedding | API key dari https://aistudio.google.com/apikey |
+| `GEMINI_API_KEY` | untuk embedding & chat | API key dari https://aistudio.google.com/apikey |
 | `EMBEDDING_MODEL` | tidak | default `gemini-embedding-001` |
+| `GENERATION_MODEL` | tidak | model chatbot, default `gemini-2.5-flash` |
 | `RETRY_BASE_DELAY` | tidak | detik backoff dasar retry provider, default `2` (deret 2-4-8) |
 
 Tanpa `GEMINI_API_KEY`, test live embedding otomatis di-skip; test lain tetap jalan.
@@ -86,6 +87,33 @@ Body tidak valid → `422` dengan detail field yang salah.
 
 Cek progres job (untuk testing/debug internal, bukan bagian kontrak CI4):
 `{ "status": "queued|processing|done|failed_provider", "attempts": n, ... }`
+
+### `POST /chat` (CI4 → FastAPI) - chatbot status kandidat (Fase 3)
+
+Sinkron (bukan 202/callback): user menunggu jawaban. CI4 merakit `context`
+dari `candidate_stage_history` milik kandidat yang login; FastAPI menambah
+system prompt grounding ketat lalu memanggil Gemini generateContent.
+
+Request body:
+
+```json
+{
+  "question": "sampai tahap mana lamaran saya?",
+  "context": "Lamaran \"Backend Developer\":\n  - CV Terkirim: berjalan\n  ...",
+  "history": [
+    { "role": "user",  "text": "..." },
+    { "role": "model", "text": "..." }
+  ]
+}
+```
+
+Response: `200 OK` → `{ "answer": "..." }`
+
+- `question` kosong → `400`.
+- Provider LLM gagal setelah dipanggil → `502` (CI4 menampilkan pesan ramah).
+- Grounding ketat: LLM diinstruksikan menjawab HANYA dari `context`; di luar
+  topik/data kandidat lain ditolak sopan. `context` hanya berisi lamaran milik
+  kandidat yang login (dirakit CI4), jadi tak ada kebocoran antar-kandidat.
 
 ### `GET /health`
 

@@ -189,6 +189,7 @@ $inisial = strtoupper(mb_substr((string) $nama, 0, 1));
   </main>
 </div>
 
+<?php if (! session('recruiter_id')): ?><?= $this->include('partials/chat_widget') ?><?php endif ?>
 <?= $this->include('partials/segera_modal') ?>
 </body>
 </html>
