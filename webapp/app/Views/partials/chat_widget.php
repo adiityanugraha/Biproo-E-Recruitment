@@ -5,8 +5,9 @@
 ?>
 <style>
   #ereqChatBtn { position: fixed; right: 22px; bottom: 22px; z-index: 90; width: 58px; height: 58px; border-radius: 50%;
-    border: none; cursor: pointer; font-size: 25px; color: #fff; background: linear-gradient(135deg, #FBA919, #F7941D);
-    box-shadow: 0 6px 18px rgba(247,148,29,.45); }
+    border: none; cursor: pointer; font-size: 25px; line-height: 1; padding: 0; color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #FBA919, #F7941D); box-shadow: 0 6px 18px rgba(247,148,29,.45); }
   #ereqChat { position: fixed; right: 22px; bottom: 90px; z-index: 91; width: 340px; max-width: calc(100vw - 44px);
     height: 460px; max-height: calc(100vh - 130px); background: #fff; border-radius: 16px; display: none; flex-direction: column;
     overflow: hidden; box-shadow: 0 12px 40px rgba(0,0,0,.22); }

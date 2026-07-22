@@ -43,8 +43,15 @@ class GeminiChatProvider:
             json={
                 "system_instruction": {"parts": [{"text": system}]},
                 "contents": contents,
-                # suhu rendah: jawaban patuh ke data status, bukan mengarang
-                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 600},
+                "generationConfig": {
+                    # suhu rendah: jawaban patuh ke data status, bukan mengarang
+                    "temperature": 0.2,
+                    "maxOutputTokens": 600,
+                    # matikan "thinking" 2.5-flash: chatbot lookup status tak butuh
+                    # reasoning panjang; cegah budget output habis dipakai thinking
+                    # (jawaban terpotong/kosong) + pangkas latency & biaya
+                    "thinkingConfig": {"thinkingBudget": 0},
+                },
             },
         )
         resp.raise_for_status()

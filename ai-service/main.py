@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from uuid import uuid4
@@ -150,8 +151,10 @@ def chat(req: ChatRequest) -> ChatReply:
     try:
         answer = provider.generate(system, history, req.question)
     except Exception as e:
-        # LLM/provider gagal setelah dipanggil -> 502, CI4 tampilkan pesan ramah
-        raise HTTPException(502, f"LLM gagal: {e}")
+        # JANGAN echo str(e): pesan httpx memuat URL Gemini + ?key=API_KEY.
+        # Log sisi server, balas detail generik. CI4 tampilkan pesan ramah.
+        logging.getLogger("uvicorn.error").error("chat LLM gagal: %s", e)
+        raise HTTPException(502, "LLM gagal")
 
     return ChatReply(answer=answer)
 

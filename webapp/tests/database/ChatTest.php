@@ -60,4 +60,20 @@ final class ChatTest extends CIUnitTestCase
         $res->assertStatus(400);
         $res->assertJSONFragment(['error' => 'Pertanyaan kosong.']);
     }
+
+    public function testAskSaatAiServiceMatiBalas503Ramah(): void
+    {
+        $cid = $this->fixture();
+        // arahkan client ke port mati -> connection refused -> AiServiceException
+        $cfg                 = config('AiService');
+        $cfg->baseURL        = 'http://127.0.0.1:59999';
+        $cfg->connectTimeout = 1;
+        $cfg->timeout        = 1;
+
+        $res = $this->withSession(['candidate_id' => $cid, 'candidate_nama' => 'Budi'])
+            ->post('chat/ask', ['question' => 'sampai tahap mana?']);
+
+        $res->assertStatus(503);
+        $res->assertJSONFragment(['error' => 'Asisten sedang tidak tersedia. Coba lagi sebentar lagi ya.']);
+    }
 }
