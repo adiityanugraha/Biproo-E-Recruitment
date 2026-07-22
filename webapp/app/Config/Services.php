@@ -19,14 +19,13 @@ use CodeIgniter\Config\BaseService;
  */
 class Services extends BaseService
 {
-    /*
-     * public static function example($getShared = true)
-     * {
-     *     if ($getShared) {
-     *         return static::getSharedInstance('example');
-     *     }
-     *
-     *     return new \CodeIgniter\Example();
-     * }
-     */
+    /** Client Zoom - lewat service() supaya bisa di-inject mock saat test. */
+    public static function zoomService($getShared = true)
+    {
+        if ($getShared) {
+            return static::getSharedInstance('zoomService');
+        }
+
+        return new \App\Libraries\ZoomService();
+    }
 }

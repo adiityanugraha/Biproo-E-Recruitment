@@ -26,5 +26,6 @@ $routes->group('recruiter', ['filter' => 'recruiterauth'], static function ($rou
     $routes->get('report', 'Recruiter::report');
     $routes->get('tahap/(:segment)', 'Recruiter::tahap/$1');
     $routes->get('kandidat/(:num)', 'Recruiter::kandidat/$1');
+    $routes->post('jadwalkan/(:num)', 'Recruiter::jadwalkan/$1');
     $routes->match(['GET', 'POST'], 'review/(:num)', 'Recruiter::review/$1');
 });

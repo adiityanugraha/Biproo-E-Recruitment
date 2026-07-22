@@ -3,9 +3,12 @@
 namespace App\Controllers;
 
 use App\Libraries\StageLogger;
+use App\Libraries\ZoomException;
 use App\Models\ApplicationModel;
+use App\Models\InterviewModel;
 use App\Models\JobModel;
 use App\Models\StageHistoryModel;
+use DateTime;
 
 class Recruiter extends BaseController
 {
@@ -253,7 +256,8 @@ class Recruiter extends BaseController
             ->where('job_id', $jobId)
             ->orderBy('applications.id')
             ->findAll();
-        $history = new StageHistoryModel();
+        $history   = new StageHistoryModel();
+        $interview = new InterviewModel();
 
         foreach ($daftar as &$app) {
             $terakhir            = $history->where('application_id', $app['id'])->orderBy('id', 'DESC')->first();
@@ -262,9 +266,73 @@ class Recruiter extends BaseController
             $gate1               = $history->where(['application_id' => $app['id'], 'stage' => 'gate_1'])->orderBy('id', 'DESC')->first();
             $app['gate1']        = $gate1['status'] ?? null;
             $app['skor']         = $gate1['note'] ?? '';
+            // interview: sudah terjadwal? boleh dijadwalkan bila lolos Gate 1 & belum ada
+            $app['interview']    = $interview->where('application_id', $app['id'])->orderBy('id', 'DESC')->first();
+            $app['bisa_jadwal']  = $app['gate1'] === 'passed' && $app['interview'] === null;
         }
 
         return view('recruiter/kandidat', ['job' => $job, 'daftar' => $daftar]);
+    }
+
+    /** Jadwalkan interview: buat meeting Zoom -> simpan interviews -> log penjadwalan + email undangan. */
+    public function jadwalkan(int $appId)
+    {
+        $app = $this->lamaranDetail($appId);
+        if ($app === null) {
+            return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
+        }
+        $kembali = '/recruiter/kandidat/' . $app['job_id'];
+
+        if ($this->statusGate1($appId) !== 'passed') {
+            return redirect()->to($kembali)->with('error', 'Interview hanya untuk kandidat yang lolos Gate 1.');
+        }
+        $interview = new InterviewModel();
+        if ($interview->where('application_id', $appId)->countAllResults() > 0) {
+            return redirect()->to($kembali)->with('error', 'Interview kandidat ini sudah dijadwalkan.');
+        }
+
+        $jadwal = (string) $this->request->getPost('jadwal');
+        $dt     = DateTime::createFromFormat('Y-m-d\TH:i', $jadwal) ?: DateTime::createFromFormat('Y-m-d\TH:i:s', $jadwal);
+        if ($dt === false) {
+            return redirect()->to($kembali)->with('error', 'Jadwal tidak valid.');
+        }
+
+        try {
+            $meeting = service('zoomService')->createMeeting(
+                'Interview - ' . $app['nama'] . ' - ' . $app['judul'],
+                $dt->format('Y-m-d\TH:i:s'),
+            );
+        } catch (ZoomException $e) {
+            log_message('error', 'Zoom createMeeting gagal: {m}', ['m' => $e->getMessage()]);
+
+            return redirect()->to($kembali)->with('error', 'Gagal membuat meeting Zoom. Coba lagi sebentar.');
+        }
+
+        $interview->insert([
+            'application_id' => $appId,
+            'meeting_id'     => $meeting['meeting_id'],
+            'join_url'       => $meeting['join_url'],
+            'start_url'      => $meeting['start_url'],
+            'scheduled_at'   => $dt->format('Y-m-d H:i:s'),
+        ]);
+
+        (new StageLogger())->log($appId, 'penjadwalan', 'entered', 'recruiter:' . session('recruiter_nama'), 'interview dijadwalkan', [
+            'to'       => $app['email'],
+            'nama'     => $app['nama'],
+            'posisi'   => $app['judul'],
+            'jadwal'   => $this->jadwalIndo($dt),
+            'join_url' => $meeting['join_url'],
+        ]);
+
+        return redirect()->to($kembali)->with('sukses', 'Interview dijadwalkan, undangan dikirim ke ' . $app['email'] . '.');
+    }
+
+    /** Format jadwal ramah Bahasa Indonesia untuk email undangan. */
+    private function jadwalIndo(DateTime $dt): string
+    {
+        $bulan = [1 => 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+
+        return $dt->format('j') . ' ' . $bulan[(int) $dt->format('n')] . ' ' . $dt->format('Y') . ', ' . $dt->format('H:i') . ' WIB';
     }
 
     /** Review kandidat ber-flag: riwayat lengkap + keputusan approve/reject. */
