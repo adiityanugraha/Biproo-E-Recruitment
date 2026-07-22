@@ -14,10 +14,30 @@
         <tr>
           <td><?= $i + 1 ?></td>
           <td><input type="checkbox" style="width:auto" onclick="segera('Pilih Kandidat')"></td>
-          <td><a href="<?= site_url('recruiter/review/' . $a['id']) ?>"><button class="btn-view">View</button></a></td>
+          <td style="white-space:nowrap">
+            <a href="<?= site_url('recruiter/review/' . $a['id']) ?>"><button class="btn-view">View</button></a>
+            <?php if ($stage === 'interview_online' && $status === 'progress'): ?>
+              <form method="post" action="<?= site_url('recruiter/interview/acc/' . $a['id']) ?>" style="display:inline;margin:0">
+                <?= csrf_field() ?><input type="hidden" name="kembali" value="interview_hrd">
+                <button class="btn-view" style="background:#2E9E5B;color:#fff">Acc</button>
+              </form>
+              <form method="post" action="<?= site_url('recruiter/interview/tolak/' . $a['id']) ?>" style="display:inline;margin:0">
+                <?= csrf_field() ?><input type="hidden" name="kembali" value="interview_hrd">
+                <button class="btn-view" style="background:#E23B4E;color:#fff">Tolak</button>
+              </form>
+            <?php elseif ($stage === 'interview_online' && $status === 'passed' && ! empty($a['join_url'])): ?>
+              <a href="<?= esc($a['join_url'], 'attr') ?>" target="_blank" rel="noopener"><button class="btn-view" style="background:#2F6FED;color:#fff">🎥 Link Zoom</button></a>
+            <?php endif ?>
+          </td>
           <td><button class="btn-view" style="background:#DCE9FF;color:#2F6FED" onclick="segera('Lihat File CV')">CV</button></td>
           <td><button class="btn-view" style="background:#f0f0f0;color:#888" onclick="segera('Summary')">-</button></td>
-          <td style="color:#bbb">-</td>
+          <td>
+            <?php if (! empty($a['jadwal'])): ?>
+              <small>📅 <?= esc(date('d M Y H:i', strtotime($a['jadwal']))) ?></small>
+            <?php else: ?>
+              <span style="color:#bbb">-</span>
+            <?php endif ?>
+          </td>
           <td><span class="avatar-s"><?= esc(strtoupper(mb_substr($a['nama'], 0, 1))) ?></span></td>
           <td><?= esc($a['nama']) ?></td>
           <td><?= esc($a['email']) ?></td>

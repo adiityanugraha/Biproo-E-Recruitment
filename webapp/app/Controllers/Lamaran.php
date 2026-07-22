@@ -6,8 +6,10 @@ use App\Libraries\GateOne;
 use App\Libraries\StageLogger;
 use App\Models\ApplicationModel;
 use App\Models\CandidateModel;
+use App\Models\InterviewModel;
 use App\Models\JobModel;
 use App\Models\StageHistoryModel;
+use DateTime;
 
 class Lamaran extends BaseController
 {
@@ -79,6 +81,9 @@ class Lamaran extends BaseController
                 $maxIdx = $i;
             }
         }
+        // begitu lolos Gate 1, tahap Penjadwalan Interview terbuka -> halaman pengajuan jadwal
+        $gate1Passed = ($statusMap['gate_1'] ?? null) === 'passed';
+
         // halaman tujuan per tahap; null = belum ada halaman (modal "segera hadir")
         $appId    = $aktif['id'] ?? 0;
         $urlStage = [
@@ -86,14 +91,19 @@ class Lamaran extends BaseController
             'ai_verification'   => site_url('status'),
             'online_assessment' => site_url('assessment/' . $appId),
             'gate_1'            => site_url('status'),
+            'penjadwalan'       => $gate1Passed ? site_url('jadwal') : null,
         ];
-        $build = static function (array $list) use ($statusMap, $urutan, $maxIdx, $urlStage): array {
-            return array_map(static function (array $s) use ($statusMap, $urutan, $maxIdx, $urlStage): array {
+        $build = static function (array $list) use ($statusMap, $urutan, $maxIdx, $urlStage, $gate1Passed): array {
+            return array_map(static function (array $s) use ($statusMap, $urutan, $maxIdx, $urlStage, $gate1Passed): array {
                 [$stage, $label, $icon] = $s;
                 $i   = array_search($stage, $urutan, true);
                 $st  = ! isset($statusMap[$stage]) ? ($i > $maxIdx ? 'locked' : 'done')
                     : ($statusMap[$stage] === 'failed' ? 'failed'
                     : ($statusMap[$stage] === 'passed' || $i < $maxIdx ? 'done' : 'current'));
+                // Penjadwalan Interview: jangan terkunci begitu lolos Gate 1 (agar bisa diklik ke /jadwal)
+                if ($stage === 'penjadwalan' && $gate1Passed && ! isset($statusMap['penjadwalan'])) {
+                    $st = 'current';
+                }
                 $url = $urlStage[$stage] ?? null;
 
                 return compact('label', 'icon', 'st', 'url');
@@ -197,6 +207,68 @@ class Lamaran extends BaseController
         }
 
         return view('lamaran/status', ['apps' => $apps]);
+    }
+
+    /**
+     * Halaman pendaftaran jadwal interview - hanya lamaran yang lolos Gate 1.
+     * Di sini kandidat mengajukan jadwal + melihat keterangan diterima/ditolak.
+     */
+    public function jadwalInterview()
+    {
+        $apps = (new ApplicationModel())
+            ->select('applications.id, jobs.judul')
+            ->join('jobs', 'jobs.id = applications.job_id')
+            ->where('candidate_id', session('candidate_id'))
+            ->orderBy('applications.id')
+            ->findAll();
+
+        $history   = new StageHistoryModel();
+        $interview = new InterviewModel();
+        $lolos     = [];
+        foreach ($apps as $app) {
+            if ($history->latestStatus($app['id'], 'gate_1') === 'passed') {
+                $app['interview'] = $interview->forApplication($app['id']);
+                $lolos[]          = $app;
+            }
+        }
+
+        return view('lamaran/jadwal', ['apps' => $lolos]);
+    }
+
+    /** Kandidat mengajukan jadwal interview (setelah lolos Gate 1). Recruiter yang meng-acc. */
+    public function ajukanInterview(int $appId)
+    {
+        if ($this->lamaranMilikSendiri($appId) === null) {
+            return redirect()->to('/jadwal')->with('error', 'Lamaran tidak ditemukan.');
+        }
+        if ((new StageHistoryModel())->latestStatus($appId, 'gate_1') !== 'passed') {
+            return redirect()->to('/jadwal')->with('error', 'Ajukan interview hanya setelah lolos Tahap 1.');
+        }
+
+        $interview = new InterviewModel();
+        $iv        = $interview->forApplication($appId);
+        if ($iv !== null && in_array($iv['status'], ['requested', 'approved'], true)) {
+            return redirect()->to('/jadwal')->with('error', 'Sudah ada ajuan/jadwal interview untuk lamaran ini.');
+        }
+
+        $jadwal = (string) $this->request->getPost('jadwal');
+        $dt     = DateTime::createFromFormat('Y-m-d\TH:i', $jadwal) ?: DateTime::createFromFormat('Y-m-d\TH:i:s', $jadwal);
+        if ($dt === false) {
+            return redirect()->to('/jadwal')->with('error', 'Jadwal tidak valid.');
+        }
+        if ($dt <= new DateTime('+1 hour')) {
+            return redirect()->to('/jadwal')->with('error', 'Pilih jadwal minimal 1 jam ke depan.');
+        }
+
+        $data = ['application_id' => $appId, 'status' => 'requested', 'scheduled_at' => $dt->format('Y-m-d H:i:s')];
+        if ($iv !== null) {
+            // sebelumnya rejected -> ajukan ulang: pakai baris sama, bersihkan meeting lama
+            $interview->update($iv['id'], $data + ['meeting_id' => null, 'join_url' => null, 'start_url' => null]);
+        } else {
+            $interview->insert($data);
+        }
+
+        return redirect()->to('/jadwal')->with('sukses', 'Ajuan jadwal interview terkirim, menunggu persetujuan recruiter.');
     }
 
     /** Assessment placeholder: satu pertanyaan ya/tidak (arahan atasan - bukan tes asli). */

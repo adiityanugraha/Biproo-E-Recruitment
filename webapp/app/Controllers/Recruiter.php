@@ -5,6 +5,7 @@ namespace App\Controllers;
 use App\Libraries\StageLogger;
 use App\Libraries\ZoomException;
 use App\Models\ApplicationModel;
+use App\Models\EmailQueueModel;
 use App\Models\InterviewModel;
 use App\Models\JobModel;
 use App\Models\StageHistoryModel;
@@ -57,18 +58,7 @@ class Recruiter extends BaseController
         $lolos        = $history->where(['stage' => 'gate_1', 'status' => 'passed'])
             ->select('application_id')->distinct()->countAllResults();
 
-        $posId = (int) ($this->request->getGet('pos') ?? 0);
-        $pos   = null;
-        foreach ($jobs as $j) {
-            if ($j['id'] === $posId) {
-                $pos = $j;
-            }
-        }
-        $pos ??= $jobs[0] ?? null;
-
         return view('recruiter/dashboard', [
-            'jobs' => $jobs,
-            'pos'  => $pos,
             // label mengikuti BIPROO; angka campuran real + dummy (metrik SLA belum dilacak)
             'kpi'  => [
                 ['v' => 0, 't' => 'Outstanding > 14'],
@@ -211,16 +201,28 @@ class Recruiter extends BaseController
         $req    = $this->request->getGet('status');
         $status = in_array($req, ['passed', 'failed'], true) ? $req : 'progress';
 
-        // status terkini tiap application pada tahap ini
-        $latest = [];
-        foreach ((new StageHistoryModel())->where('stage', $stage)->orderBy('id')->findAll() as $r) {
-            $latest[$r['application_id']] = $r['status'];
-        }
-        $ids = [];
-        foreach ($latest as $appId => $st) {
-            $bucket = $st === 'passed' ? 'passed' : ($st === 'failed' ? 'failed' : 'progress');
-            if ($bucket === $status) {
-                $ids[] = $appId;
+        $ivMap = [];
+        if ($stage === 'interview_online') {
+            // Interview HRD memetakan tab ke status ajuan interview:
+            //   On Progress = requested (menunggu acc), Passed = approved (sudah dijadwal),
+            //   Failed = rejected (ditolak). Simpan baris penuh utk jadwal + link Zoom.
+            $tabIv = ['progress' => 'requested', 'passed' => 'approved', 'failed' => 'rejected'][$status];
+            foreach ((new InterviewModel())->where('status', $tabIv)->findAll() as $iv) {
+                $ivMap[$iv['application_id']] = $iv;
+            }
+            $ids = array_keys($ivMap);
+        } else {
+            // status terkini tiap application pada tahap ini (dari stage_history)
+            $latest = [];
+            foreach ((new StageHistoryModel())->where('stage', $stage)->orderBy('id')->findAll() as $r) {
+                $latest[$r['application_id']] = $r['status'];
+            }
+            $ids = [];
+            foreach ($latest as $appId => $st) {
+                $bucket = $st === 'passed' ? 'passed' : ($st === 'failed' ? 'failed' : 'progress');
+                if ($bucket === $status) {
+                    $ids[] = $appId;
+                }
             }
         }
 
@@ -231,6 +233,11 @@ class Recruiter extends BaseController
             ->whereIn('applications.id', $ids)
             ->orderBy('applications.id')
             ->findAll();
+        foreach ($daftar as &$a) {
+            $a['jadwal']   = $ivMap[$a['id']]['scheduled_at'] ?? null; // waktu jadwal (interview_online)
+            $a['join_url'] = $ivMap[$a['id']]['join_url'] ?? null;     // link Zoom (tab Passed)
+        }
+        unset($a);
 
         return view('recruiter/tahap', [
             'stage'      => $stage,
@@ -240,20 +247,15 @@ class Recruiter extends BaseController
         ]);
     }
 
-    /** Daftar kandidat satu lowongan: stage terkini + skor + flag. */
-    public function kandidat(int $jobId)
+    /** Daftar SEMUA kandidat lintas posisi: stage terkini + skor + flag + label posisi. */
+    public function kandidat()
     {
-        $job = (new JobModel())->find($jobId);
-        if ($job === null) {
-            return redirect()->to('/recruiter')->with('error', 'Lowongan tidak ditemukan.');
-        }
-
         // ponytail: N+1 query riwayat per pelamar - cukup utk volume KP;
         // ganti window function ROW_NUMBER() bila pelamar ribuan
         $daftar  = (new ApplicationModel())
-            ->select('applications.id, candidates.nama, candidates.email, applications.created_at')
+            ->select('applications.id, candidates.nama, candidates.email, jobs.judul AS posisi, applications.created_at')
             ->join('candidates', 'candidates.id = applications.candidate_id')
-            ->where('job_id', $jobId)
+            ->join('jobs', 'jobs.id = applications.job_id')
             ->orderBy('applications.id')
             ->findAll();
         $history   = new StageHistoryModel();
@@ -266,37 +268,30 @@ class Recruiter extends BaseController
             $gate1               = $history->where(['application_id' => $app['id'], 'stage' => 'gate_1'])->orderBy('id', 'DESC')->first();
             $app['gate1']        = $gate1['status'] ?? null;
             $app['skor']         = $gate1['note'] ?? '';
-            // interview: sudah terjadwal? boleh dijadwalkan bila lolos Gate 1 & belum ada
-            $app['interview']    = $interview->where('application_id', $app['id'])->orderBy('id', 'DESC')->first();
-            $app['bisa_jadwal']  = $app['gate1'] === 'passed' && $app['interview'] === null;
+            // ajuan/jadwal interview terkini (kandidat yang mengajukan, recruiter meng-acc)
+            $app['interview']    = $interview->forApplication($app['id']);
         }
 
-        return view('recruiter/kandidat', ['job' => $job, 'daftar' => $daftar]);
+        return view('recruiter/kandidat', ['daftar' => $daftar]);
     }
 
-    /** Jadwalkan interview: buat meeting Zoom -> simpan interviews -> log penjadwalan + email undangan. */
-    public function jadwalkan(int $appId)
+    /** Recruiter meng-ACC ajuan jadwal kandidat: buat meeting Zoom -> approved -> log + email undangan. */
+    public function accInterview(int $appId)
     {
         $app = $this->lamaranDetail($appId);
         if ($app === null) {
             return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
         }
-        $kembali = '/recruiter/kandidat/' . $app['job_id'];
-
-        if ($this->statusGate1($appId) !== 'passed') {
-            return redirect()->to($kembali)->with('error', 'Interview hanya untuk kandidat yang lolos Gate 1.');
-        }
+        $kembali   = $this->request->getPost('kembali') === 'interview_hrd'
+            ? '/recruiter/tahap/interview_online'
+            : '/recruiter/kandidat';
         $interview = new InterviewModel();
-        if ($interview->where('application_id', $appId)->countAllResults() > 0) {
-            return redirect()->to($kembali)->with('error', 'Interview kandidat ini sudah dijadwalkan.');
+        $iv        = $interview->forApplication($appId);
+        if ($iv === null || $iv['status'] !== 'requested') {
+            return redirect()->to($kembali)->with('error', 'Tidak ada ajuan interview yang menunggu persetujuan.');
         }
 
-        $jadwal = (string) $this->request->getPost('jadwal');
-        $dt     = DateTime::createFromFormat('Y-m-d\TH:i', $jadwal) ?: DateTime::createFromFormat('Y-m-d\TH:i:s', $jadwal);
-        if ($dt === false) {
-            return redirect()->to($kembali)->with('error', 'Jadwal tidak valid.');
-        }
-
+        $dt = new DateTime($iv['scheduled_at']);
         try {
             $meeting = service('zoomService')->createMeeting(
                 'Interview - ' . $app['nama'] . ' - ' . $app['judul'],
@@ -308,15 +303,14 @@ class Recruiter extends BaseController
             return redirect()->to($kembali)->with('error', 'Gagal membuat meeting Zoom. Coba lagi sebentar.');
         }
 
-        $interview->insert([
-            'application_id' => $appId,
-            'meeting_id'     => $meeting['meeting_id'],
-            'join_url'       => $meeting['join_url'],
-            'start_url'      => $meeting['start_url'],
-            'scheduled_at'   => $dt->format('Y-m-d H:i:s'),
+        $interview->update($iv['id'], [
+            'status'     => 'approved',
+            'meeting_id' => $meeting['meeting_id'],
+            'join_url'   => $meeting['join_url'],
+            'start_url'  => $meeting['start_url'],
         ]);
 
-        (new StageLogger())->log($appId, 'penjadwalan', 'entered', 'recruiter:' . session('recruiter_nama'), 'interview dijadwalkan', [
+        (new StageLogger())->log($appId, 'penjadwalan', 'entered', 'recruiter:' . session('recruiter_nama'), 'ajuan interview disetujui', [
             'to'       => $app['email'],
             'nama'     => $app['nama'],
             'posisi'   => $app['judul'],
@@ -324,7 +318,39 @@ class Recruiter extends BaseController
             'join_url' => $meeting['join_url'],
         ]);
 
-        return redirect()->to($kembali)->with('sukses', 'Interview dijadwalkan, undangan dikirim ke ' . $app['email'] . '.');
+        return redirect()->to($kembali)->with('sukses', 'Ajuan disetujui, undangan interview dikirim ke ' . $app['email'] . '.');
+    }
+
+    /** Recruiter menolak ajuan jadwal: kandidat boleh mengajukan jadwal lain. */
+    public function tolakInterview(int $appId)
+    {
+        $app = $this->lamaranDetail($appId);
+        if ($app === null) {
+            return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
+        }
+        $kembali   = $this->request->getPost('kembali') === 'interview_hrd'
+            ? '/recruiter/tahap/interview_online'
+            : '/recruiter/kandidat';
+        $interview = new InterviewModel();
+        $iv        = $interview->forApplication($appId);
+        if ($iv === null || $iv['status'] !== 'requested') {
+            return redirect()->to($kembali)->with('error', 'Tidak ada ajuan interview yang menunggu.');
+        }
+
+        $interview->update($iv['id'], ['status' => 'rejected']);
+
+        // kabari kandidat lewat email (reject bukan transisi stage, jadi antre langsung)
+        (new EmailQueueModel())->insert([
+            'to_email'     => $app['email'],
+            'template'     => 'jadwal_ditolak',
+            'payload_json' => json_encode([
+                'nama'   => $app['nama'],
+                'posisi' => $app['judul'],
+                'jadwal' => $this->jadwalIndo(new DateTime($iv['scheduled_at'])),
+            ]),
+        ]);
+
+        return redirect()->to($kembali)->with('sukses', 'Ajuan jadwal ditolak, kandidat dikabari via email.');
     }
 
     /** Format jadwal ramah Bahasa Indonesia untuk email undangan. */
@@ -352,7 +378,7 @@ class Recruiter extends BaseController
             (new StageLogger())->log($appId, 'gate_1', $keputusan, 'recruiter:' . session('recruiter_nama'),
                 'review manual zona abu-abu', ['to' => $app['email'], 'nama' => $app['nama'], 'posisi' => $app['judul']]);
 
-            return redirect()->to('/recruiter/kandidat/' . $app['job_id'])
+            return redirect()->to('/recruiter/kandidat')
                 ->with('sukses', 'Keputusan tersimpan: kandidat ' . ($keputusan === 'passed' ? 'diloloskan' : 'tidak diloloskan') . '.');
         }
 

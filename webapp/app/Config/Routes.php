@@ -14,8 +14,10 @@ $routes->group('', ['filter' => 'candidateauth'], static function ($routes) {
     $routes->get('lamar', 'Lamaran::index');
     $routes->post('lamar', 'Lamaran::kirim');
     $routes->get('status', 'Lamaran::status');
+    $routes->get('jadwal', 'Lamaran::jadwalInterview');
     $routes->get('assessment/(:num)', 'Lamaran::assessment/$1');
     $routes->post('assessment/(:num)', 'Lamaran::jawabAssessment/$1');
+    $routes->post('interview/ajukan/(:num)', 'Lamaran::ajukanInterview/$1');
     $routes->post('chat/ask', 'Chat::ask');
 });
 
@@ -25,7 +27,8 @@ $routes->group('recruiter', ['filter' => 'recruiterauth'], static function ($rou
     $routes->get('', 'Recruiter::index');
     $routes->get('report', 'Recruiter::report');
     $routes->get('tahap/(:segment)', 'Recruiter::tahap/$1');
-    $routes->get('kandidat/(:num)', 'Recruiter::kandidat/$1');
-    $routes->post('jadwalkan/(:num)', 'Recruiter::jadwalkan/$1');
+    $routes->get('kandidat', 'Recruiter::kandidat');
+    $routes->post('interview/acc/(:num)', 'Recruiter::accInterview/$1');
+    $routes->post('interview/tolak/(:num)', 'Recruiter::tolakInterview/$1');
     $routes->match(['GET', 'POST'], 'review/(:num)', 'Recruiter::review/$1');
 });

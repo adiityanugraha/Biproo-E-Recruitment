@@ -28,31 +28,43 @@ final class InterviewModelTest extends CIUnitTestCase
         return (int) (new ApplicationModel())->insert(['candidate_id' => $cid, 'job_id' => $jid, 'cv_path' => 'uploads/cv/x.pdf']);
     }
 
-    public function testSimpanDanBacaInterview(): void
+    public function testSimpanDanBacaInterviewApproved(): void
     {
         $m   = new InterviewModel();
         $app = $this->appId();
         $id  = $m->insert([
             'application_id' => $app,
+            'status'         => 'approved',
+            'scheduled_at'   => '2026-08-10 10:00:00',
             'meeting_id'     => '87654321099',
             'join_url'       => 'https://zoom.us/j/87654321099?pwd=abc',
             'start_url'      => 'https://zoom.us/s/87654321099?zak=' . str_repeat('t', 400),
-            'scheduled_at'   => '2026-08-10 10:00:00',
         ]);
 
         $this->assertIsInt($id);
         $row = $m->find($id);
+        $this->assertSame('approved', $row['status']);
         $this->assertSame('87654321099', $row['meeting_id']);
-        $this->assertStringStartsWith('https://zoom.us/j/', $row['join_url']);
         $this->assertNull($row['recording_url']); // menyusul saat auto-record aktif
+    }
+
+    public function testAjuanRequestedBolehTanpaMeeting(): void
+    {
+        $m   = new InterviewModel();
+        $app = $this->appId();
+        // ajuan awal kandidat: belum ada meeting_id/join_url (di-acc dulu)
+        $id = $m->insert(['application_id' => $app, 'status' => 'requested', 'scheduled_at' => '2026-08-10 10:00:00']);
+
+        $this->assertIsInt($id);
+        $this->assertNull($m->find($id)['meeting_id']);
     }
 
     public function testFieldWajibDivalidasi(): void
     {
         $m = new InterviewModel();
-        // tanpa meeting_id & join_url -> insert gagal
+        // tanpa status & scheduled_at -> insert gagal
         $this->assertFalse($m->insert(['application_id' => $this->appId()]));
-        $this->assertArrayHasKey('meeting_id', $m->errors());
-        $this->assertArrayHasKey('join_url', $m->errors());
+        $this->assertArrayHasKey('status', $m->errors());
+        $this->assertArrayHasKey('scheduled_at', $m->errors());
     }
 }

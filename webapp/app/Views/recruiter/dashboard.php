@@ -66,21 +66,7 @@
     </div>
 
     <div class="kartu">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
-        <span style="color:#F7941D;font-weight:700">—</span>
-        <span style="font-weight:600;font-size:14px">Selected Position:</span>
-        <?php if ($pos !== null): ?>
-          <select style="width:auto" onchange="location.href='<?= site_url('recruiter') ?>?pos='+this.value">
-            <?php foreach ($jobs as $j): ?>
-              <option value="<?= $j['id'] ?>" <?= $j['id'] === $pos['id'] ? 'selected' : '' ?>><?= esc($j['judul']) ?></option>
-            <?php endforeach ?>
-          </select>
-          <a href="<?= site_url('recruiter/kandidat/' . $pos['id']) ?>" style="color:#2F6FED;font-weight:600;font-size:13px">Lihat Kandidat →</a>
-        <?php else: ?>
-          <b style="color:#888">Belum ada lowongan</b>
-        <?php endif ?>
-      </div>
-
+      <h2 style="margin-bottom:16px">Alur Proses Rekrutmen</h2>
       <?php
       $stepCard = static function (string $label, string $icon, ?string $url): string {
           $isi = '<span class="ic">' . $icon . '</span><span class="nm">' . esc($label) . '</span>';

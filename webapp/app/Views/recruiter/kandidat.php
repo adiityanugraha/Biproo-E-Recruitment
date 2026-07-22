@@ -3,29 +3,35 @@
 <?= $this->section('isi') ?>
 
 <div class="kartu">
-  <h2>Kandidat - <?= esc($job['judul']) ?></h2>
+  <h2>Semua Kandidat</h2>
   <?php if ($daftar === []): ?>
     <p>Belum ada pelamar.</p>
   <?php else: ?>
     <table>
-      <tr><th>Nama</th><th>Tahap Terkini</th><th>Skor</th><th>Gate 1</th><th>Interview</th><th></th></tr>
+      <tr><th>Nama</th><th>Posisi</th><th>Tahap Terkini</th><th>Skor</th><th>Gate 1</th><th>Interview</th><th></th></tr>
       <?php foreach ($daftar as $a): ?>
         <tr>
           <td><?= esc($a['nama']) ?><br><small style="color:#666"><?= esc($a['email']) ?></small></td>
+          <td><span class="badge badge-netral"><?= esc($a['posisi']) ?></span></td>
           <td><?= esc(Lamaran::STAGE_LABEL[$a['stage_akhir']] ?? $a['stage_akhir']) ?>
               <?= badge_status($a['status_akhir']) ?></td>
           <td><small><?= esc($a['skor']) ?></small></td>
           <td><?= badge_status($a['gate1']) ?></td>
           <td>
-            <?php if ($a['interview']): ?>
-              <small>📅 <?= esc(date('d M Y H:i', strtotime($a['interview']['scheduled_at']))) ?></small><br>
-              <a href="<?= esc($a['interview']['join_url'], 'attr') ?>" target="_blank" rel="noopener" style="color:#2F6FED">Link Zoom</a>
-            <?php elseif ($a['bisa_jadwal']): ?>
-              <form method="post" action="<?= site_url('recruiter/jadwalkan/' . $a['id']) ?>" style="display:flex;gap:6px;align-items:center;margin:0">
-                <?= csrf_field() ?>
-                <input type="datetime-local" name="jadwal" required style="width:auto;padding:6px;font-size:12px;margin:0">
-                <button style="margin:0;padding:6px 12px;font-size:12px">Jadwalkan</button>
+            <?php $iv = $a['interview']; ?>
+            <?php if ($iv && $iv['status'] === 'approved'): ?>
+              <small>📅 <?= esc(date('d M Y H:i', strtotime($iv['scheduled_at']))) ?></small><br>
+              <a href="<?= esc($iv['join_url'], 'attr') ?>" target="_blank" rel="noopener" style="color:#2F6FED">Link Zoom</a>
+            <?php elseif ($iv && $iv['status'] === 'requested'): ?>
+              <small>Ajuan: <?= esc(date('d M Y H:i', strtotime($iv['scheduled_at']))) ?></small><br>
+              <form method="post" action="<?= site_url('recruiter/interview/acc/' . $a['id']) ?>" style="display:inline;margin:0">
+                <?= csrf_field() ?><button style="margin:2px 0;padding:5px 12px;font-size:12px;background:#2E9E5B">Acc</button>
               </form>
+              <form method="post" action="<?= site_url('recruiter/interview/tolak/' . $a['id']) ?>" style="display:inline;margin:0">
+                <?= csrf_field() ?><button style="margin:2px 0;padding:5px 12px;font-size:12px;background:#E23B4E">Tolak</button>
+              </form>
+            <?php elseif ($a['gate1'] === 'passed'): ?>
+              <small style="color:#999">menunggu ajuan kandidat</small>
             <?php else: ?>
               <small style="color:#999">-</small>
             <?php endif ?>

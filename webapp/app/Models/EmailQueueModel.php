@@ -11,6 +11,6 @@ class EmailQueueModel extends Model
 
     protected $validationRules = [
         'to_email' => 'required|valid_email',
-        'template' => 'required|in_list[konfirmasi_registrasi,undangan_interview,hasil_gate,pengingat_h1]',
+        'template' => 'required|in_list[konfirmasi_registrasi,undangan_interview,hasil_gate,pengingat_h1,jadwal_ditolak]',
     ];
 }
