@@ -8,6 +8,7 @@ use App\Models\ApplicationModel;
 use App\Models\CandidateModel;
 use App\Models\InterviewModel;
 use App\Models\JobModel;
+use App\Models\ScreeningResultModel;
 use App\Models\StageHistoryModel;
 use DateTime;
 
@@ -340,17 +341,26 @@ class Lamaran extends BaseController
         // acak (bukan konstan) supaya zona flagged muncul utk review recruiter Day 3
         $skorCv = mt_rand(30, 90) / 100;
         $logger->log($appId, 'ai_verification', 'entered');
+
+        // Skor CV berlabuh di screening_results (Blueprint A7), bukan cuma di teks
+        // note. Note tetap ditulis untuk dibaca manusia di halaman review; yang
+        // dibaca kode adalah kolomnya. Fase 4 mengganti sumber angka ini dengan
+        // callback ai-service - kolomnya sudah sama, pembacanya tidak berubah.
+        (new ScreeningResultModel())->insert([
+            'application_id'   => $appId,
+            'screening_job_id' => 'dummy-' . bin2hex(random_bytes(8)),
+            'status'           => 'success',
+            'score_overall'    => $skorCv,
+            'provider'         => 'dummy',
+            'model_version'    => 'dummy-mt_rand',
+        ]);
+
         $logger->log($appId, 'ai_verification', 'passed', 'system', "skor_cv={$skorCv} (dummy)");
         $logger->log($appId, 'online_assessment', 'entered');
         $logger->log($appId, 'online_assessment', $nilai >= 1.0 ? 'passed' : 'failed', 'system', "nilai={$nilai}");
 
         // konfigurasi gate per posisi dari jobs.bobot_json/threshold_json (docs/gate-logic.md)
-        $bobot     = json_decode((string) $app['bobot_json'], true) ?? [];
-        $threshold = json_decode((string) $app['threshold_json'], true) ?? [];
-        $gate      = GateOne::evaluate($skorCv, $nilai, [
-            'weights'   => $bobot['gate1'] ?? [],
-            'threshold' => $threshold['gate1'] ?? [],
-        ]);
+        $gate = GateOne::evaluate($skorCv, $nilai, GateOne::configFromJob($app['bobot_json'], $app['threshold_json']));
 
         $logger->log($appId, 'gate_1', $gate['decision'], 'system', "skor_gabungan={$gate['score']}", $email);
 

@@ -20,6 +20,25 @@ class GateOne
     ];
 
     /**
+     * Rakit config Gate 1 dari kolom jobs.bobot_json / jobs.threshold_json.
+     * Toleran: kolom null atau JSON rusak jatuh ke DEFAULTS lewat evaluate().
+     *
+     * Satu tempat untuk dua pemakai: saat Gate 1 diputus (Lamaran) dan saat
+     * skornya dihitung ulang untuk rekomendasi Gate 2 (Recruiter). Keduanya
+     * wajib memakai config yang sama, kalau tidak skornya bisa berbeda.
+     */
+    public static function configFromJob(?string $bobotJson, ?string $thresholdJson): array
+    {
+        $bobot     = json_decode((string) $bobotJson, true) ?? [];
+        $threshold = json_decode((string) $thresholdJson, true) ?? [];
+
+        return [
+            'weights'   => $bobot['gate1'] ?? [],
+            'threshold' => $threshold['gate1'] ?? [],
+        ];
+    }
+
+    /**
      * @param float $cvScore         skor screening CV, 0.0 - 1.0
      * @param float $assessmentScore skor assessment ternormalkan, 0.0 - 1.0
      * @param array $config          override per posisi dari jobs.bobot_json/threshold_json,

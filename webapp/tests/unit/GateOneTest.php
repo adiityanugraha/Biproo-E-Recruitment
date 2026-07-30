@@ -69,4 +69,27 @@ final class GateOneTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
         GateOne::evaluate(0.5, 0.5, ['threshold' => ['upper' => 0.4, 'lower' => 0.6]]);
     }
+
+    public function testConfigFromJobMembacaKunciGate1(): void
+    {
+        $c = GateOne::configFromJob(
+            '{"gate1":{"cv":0.7,"assessment":0.3}}',
+            '{"gate1":{"upper":0.8,"lower":0.5}}',
+        );
+
+        $this->assertSame(['cv' => 0.7, 'assessment' => 0.3], $c['weights']);
+        $this->assertSame(['upper' => 0.8, 'lower' => 0.5], $c['threshold']);
+    }
+
+    /** Kolom null / JSON rusak tidak boleh melempar - biarkan DEFAULTS berlaku. */
+    public function testConfigFromJobTahanNullDanJsonRusak(): void
+    {
+        foreach ([[null, null], ['', ''], ['{bukan json', '[]']] as [$b, $t]) {
+            $c = GateOne::configFromJob($b, $t);
+            $this->assertSame([], $c['weights']);
+            $this->assertSame([], $c['threshold']);
+            // hasil akhirnya tetap sama dengan memanggil tanpa config
+            $this->assertSame(GateOne::evaluate(0.8, 0.8), GateOne::evaluate(0.8, 0.8, $c));
+        }
+    }
 }

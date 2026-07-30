@@ -2,6 +2,7 @@
 
 namespace App\Controllers;
 
+use App\Libraries\GateOne;
 use App\Libraries\GateTwo;
 use App\Libraries\StageLogger;
 use App\Libraries\ZoomException;
@@ -9,12 +10,20 @@ use App\Models\ApplicationModel;
 use App\Models\EmailQueueModel;
 use App\Models\InterviewModel;
 use App\Models\JobModel;
+use App\Models\ScreeningResultModel;
 use App\Models\StageHistoryModel;
 use CodeIgniter\Database\RawSql;
 use DateTime;
 
 class Recruiter extends BaseController
 {
+    /**
+     * Dipakai bila lamaran tidak punya hasil screening sama sekali, mis. gate_1
+     * diputus lewat jalur lain atau data seed. Angka netral di zona flagged,
+     * bukan hasil perhitungan - sengaja konservatif.
+     */
+    private const SKOR_GATE1_DEFAULT = 0.7;
+
     public function login()
     {
         if ($this->request->is('post')) {
@@ -400,7 +409,7 @@ class Recruiter extends BaseController
 
         $skor = max(0, min(100, (int) $this->request->getPost('skor')));
         // keputusan DIKALKULASI: GateTwo gabungkan skor interview + skor gate1 (memuat skor CV)
-        $rec    = GateTwo::recommend($this->skorGate1($appId), $skor / 100);
+        $rec    = GateTwo::recommend($this->skorGate1($app), $skor / 100);
         $lolos  = $rec['recommendation'] === 'hire';
         $logger = new StageLogger();
         $actor  = 'recruiter:' . session('recruiter_nama');
@@ -415,16 +424,29 @@ class Recruiter extends BaseController
         return redirect()->to($kembali)->with('sukses', 'Skor tersimpan. Keputusan akhir: ' . ($lolos ? 'LOLOS' : 'TIDAK LOLOS') . ' - kandidat dikabari via email.');
     }
 
-    /** Skor gabungan Gate 1 dari catatan (untuk rekomendasi Gate 2); default bila tak tercatat. */
-    private function skorGate1(int $appId): float
+    /**
+     * Skor gabungan Gate 1, dipakai GateTwo untuk merekomendasikan keputusan akhir.
+     *
+     * Dihitung ulang dari sumber terstruktur: skor CV di screening_results dan
+     * hasil assessment di stage_history.status. GateOne fungsi murni, jadi input
+     * yang sama menghasilkan angka yang sama persis dengan saat Gate 1 diputus.
+     * Sebelumnya angka ini ditarik dari kolom note pakai regex - satu perubahan
+     * kata di kalimat catatan cukup untuk membuatnya jatuh ke nilai default.
+     */
+    private function skorGate1(array $app): float
     {
-        foreach ((new StageHistoryModel())->where(['application_id' => $appId, 'stage' => 'gate_1'])->findAll() as $r) {
-            if (preg_match('/skor_gabungan=([0-9.]+)/', (string) $r['note'], $m)) {
-                return (float) $m[1];
-            }
+        $sr = (new ScreeningResultModel())->latestFor((int) $app['id']);
+        if ($sr === null || $sr['score_overall'] === null) {
+            return self::SKOR_GATE1_DEFAULT;
         }
 
-        return 0.7; // gate_1 diputus manual tanpa skor -> pakai default wajar
+        $nilai = (new StageHistoryModel())->latestStatus((int) $app['id'], 'online_assessment') === 'passed' ? 1.0 : 0.0;
+
+        return GateOne::evaluate(
+            (float) $sr['score_overall'],
+            $nilai,
+            GateOne::configFromJob($app['bobot_json'] ?? null, $app['threshold_json'] ?? null),
+        )['score'];
     }
 
     /** Format jadwal ramah Bahasa Indonesia untuk email undangan. */
@@ -472,7 +494,7 @@ class Recruiter extends BaseController
     private function lamaranDetail(int $appId): ?array
     {
         return (new ApplicationModel())
-            ->select('applications.id, applications.job_id, candidates.nama, candidates.email, jobs.judul')
+            ->select('applications.id, applications.job_id, candidates.nama, candidates.email, jobs.judul, jobs.bobot_json, jobs.threshold_json')
             ->join('candidates', 'candidates.id = applications.candidate_id')
             ->join('jobs', 'jobs.id = applications.job_id')
             ->where('applications.id', $appId)
