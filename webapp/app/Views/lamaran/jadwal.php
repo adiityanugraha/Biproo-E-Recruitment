@@ -22,9 +22,14 @@
       <div style="padding:14px;background:#F3FBF5;border:1px solid #2E9E5B;border-radius:10px">
         <b style="color:#1d6b3d">✅ Ajuan diterima - Interview dijadwalkan</b>
         <p style="margin:8px 0 0">🗓️ <b><?= esc(date('d M Y, H:i', strtotime($iv['scheduled_at']))) ?> WIB</b></p>
-        <a href="<?= esc($iv['join_url'], 'attr') ?>" target="_blank" rel="noopener">
-          <button type="button" style="margin-top:12px">Gabung via Zoom</button>
-        </a>
+        <?php if ($app['link_aktif']): ?>
+          <a href="<?= site_url('interview/masuk/' . $app['id']) ?>" target="_blank" rel="noopener">
+            <button type="button" style="margin-top:12px">Gabung via Zoom</button>
+          </a>
+        <?php else: ?>
+          <p style="margin:10px 0 0;font-size:13px;color:#666">Link Zoom aktif mulai 15 menit sebelum jadwal,
+            dan tidak bisa dipakai lagi 1 jam setelah jadwal berakhir.</p>
+        <?php endif ?>
       </div>
 
     <?php elseif ($iv && $iv['status'] === 'requested'): ?>

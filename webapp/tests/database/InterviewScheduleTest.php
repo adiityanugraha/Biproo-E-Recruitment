@@ -4,6 +4,7 @@ use App\Libraries\StageLogger;
 use App\Libraries\ZoomService;
 use App\Models\ApplicationModel;
 use App\Models\CandidateModel;
+use App\Models\EmailQueueModel;
 use App\Models\InterviewModel;
 use App\Models\JobModel;
 use CodeIgniter\Config\Services;
@@ -219,5 +220,76 @@ final class InterviewScheduleTest extends CIUnitTestCase
         $this->withSession($this->sesiKandidat($cid))->post("interview/ajukan/{$aid}", ['jadwal' => '2027-02-20T14:00']);
         $this->assertSame(1, (new InterviewModel())->where('application_id', $aid)->countAllResults());
         $this->seeInDatabase('interviews', ['application_id' => $aid, 'status' => 'requested']);
+    }
+
+    /** interview approved dengan jadwal relatif ke sekarang, untuk uji gerbang link. */
+    private function approvedInterviewPada(int $aid, string $offset): void
+    {
+        (new InterviewModel())->insert([
+            'application_id' => $aid,
+            'status'         => 'approved',
+            'scheduled_at'   => (new DateTime($offset))->format('Y-m-d H:i:s'),
+            'meeting_id'     => '222',
+            'join_url'       => 'https://zoom.us/j/222',
+        ]);
+    }
+
+    public function testLinkDalamJendelaRedirectKeZoom(): void
+    {
+        [$cid, $aid] = $this->fixture('passed');
+        $this->approvedInterviewPada($aid, 'now');
+
+        $this->withSession($this->sesiKandidat($cid))->get("interview/masuk/{$aid}")
+            ->assertRedirectTo('https://zoom.us/j/222');
+    }
+
+    public function testLinkSetelahJendelaTutupTampilKedaluwarsaTanpaBocorkanUrlZoom(): void
+    {
+        [$cid, $aid] = $this->fixture('passed');
+        $this->approvedInterviewPada($aid, '-3 hours');
+
+        $res = $this->withSession($this->sesiKandidat($cid))->get("interview/masuk/{$aid}");
+
+        $res->assertStatus(200);
+        $res->assertSee('kedaluwarsa');
+        $res->assertDontSee('zoom.us'); // URL Zoom asli tidak pernah sampai ke browser
+    }
+
+    public function testLinkSebelumJendelaBukaBelumBisaDipakai(): void
+    {
+        [$cid, $aid] = $this->fixture('passed');
+        $this->approvedInterviewPada($aid, '+2 days');
+
+        $res = $this->withSession($this->sesiKandidat($cid))->get("interview/masuk/{$aid}");
+
+        $res->assertStatus(200);
+        $res->assertSee('Belum waktunya');
+        $res->assertDontSee('zoom.us');
+    }
+
+    public function testKandidatLainTidakBisaPakaiLinkOrang(): void
+    {
+        [$cid, $aid] = $this->fixture('passed');
+        $this->approvedInterviewPada($aid, 'now');
+        $lain = (new CandidateModel())->insert(['nama' => 'Budi', 'email' => 'budi@example.com', 'password_hash' => 'x']);
+
+        $this->withSession($this->sesiKandidat((int) $lain))->get("interview/masuk/{$aid}")
+            ->assertRedirectTo(site_url('jadwal'));
+    }
+
+    public function testUndanganEmailMemuatGerbangBukanUrlZoomMentah(): void
+    {
+        $this->fakeZoom();
+        [$cid, $aid] = $this->fixture('passed');
+        $this->withSession($this->sesiKandidat($cid))->post("interview/ajukan/{$aid}", ['jadwal' => self::JADWAL]);
+
+        $this->withSession($this->sesiRec)->post("recruiter/interview/acc/{$aid}");
+
+        $baris   = (new EmailQueueModel())->where('template', 'undangan_interview')->first();
+        $payload = json_decode($baris['payload_json'], true);
+        $this->assertStringContainsString("interview/masuk/{$aid}", $payload['join_url']);
+        $this->assertStringNotContainsString('zoom.us', $payload['join_url']);
+        // join_url asli tetap tersimpan di DB untuk dipakai redirect
+        $this->seeInDatabase('interviews', ['application_id' => $aid, 'join_url' => 'https://zoom.us/j/99999999999']);
     }
 }

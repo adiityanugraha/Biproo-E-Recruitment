@@ -227,8 +227,11 @@ class Lamaran extends BaseController
         $lolos     = [];
         foreach ($apps as $app) {
             if ($history->latestStatus($app['id'], 'gate_1') === 'passed') {
-                $app['interview'] = $interview->forApplication($app['id']);
-                $lolos[]          = $app;
+                $iv                = $interview->forApplication($app['id']);
+                $app['interview']  = $iv;
+                $app['link_aktif'] = $iv !== null && $iv['status'] === 'approved'
+                    && InterviewModel::linkAktif($iv['scheduled_at']);
+                $lolos[] = $app;
             }
         }
 
@@ -269,6 +272,36 @@ class Lamaran extends BaseController
         }
 
         return redirect()->to('/jadwal')->with('sukses', 'Ajuan jadwal interview terkirim, menunggu persetujuan recruiter.');
+    }
+
+    /**
+     * Gerbang link Zoom kandidat: cek jendela waktu lalu redirect ke Zoom.
+     * Email undangan/pengingat dan portal memuat URL ini, bukan join_url mentah,
+     * supaya link yang diteruskan ke orang lain tidak berguna di luar jendela
+     * interview. Batas jendela ada di InterviewModel::linkAktif().
+     */
+    public function masukInterview(int $appId)
+    {
+        $app = $this->lamaranMilikSendiri($appId);
+        if ($app === null) {
+            return redirect()->to('/jadwal')->with('error', 'Lamaran tidak ditemukan.');
+        }
+
+        $iv = (new InterviewModel())->forApplication($appId);
+        if ($iv === null || $iv['status'] !== 'approved' || empty($iv['join_url'])) {
+            return redirect()->to('/jadwal')->with('error', 'Belum ada jadwal interview yang disetujui untuk lamaran ini.');
+        }
+
+        if (! InterviewModel::linkAktif($iv['scheduled_at'])) {
+            return view('lamaran/link_kedaluwarsa', [
+                'judul'     => $app['judul'],
+                'jadwal'    => $iv['scheduled_at'],
+                'belum'     => new DateTime() < new DateTime($iv['scheduled_at']),
+                'bukaMenit' => InterviewModel::BUKA_MENIT,
+            ]);
+        }
+
+        return redirect()->to($iv['join_url']);
     }
 
     /** Assessment placeholder: satu pertanyaan ya/tidak (arahan atasan - bukan tes asli). */

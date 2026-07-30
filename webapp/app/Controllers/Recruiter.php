@@ -332,7 +332,9 @@ class Recruiter extends BaseController
             'nama'     => $app['nama'],
             'posisi'   => $app['judul'],
             'jadwal'   => $this->jadwalIndo($dt),
-            'join_url' => $meeting['join_url'],
+            // gerbang aplikasi, bukan join_url mentah: link yang diteruskan ke orang
+            // lain tidak berguna di luar jendela interview (Lamaran::masukInterview)
+            'join_url' => site_url("interview/masuk/{$appId}"),
         ]);
 
         return redirect()->to($kembali)->with('sukses', 'Ajuan disetujui, undangan interview dikirim ke ' . $app['email'] . '.');

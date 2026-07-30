@@ -18,6 +18,7 @@ $routes->group('', ['filter' => 'candidateauth'], static function ($routes) {
     $routes->get('assessment/(:num)', 'Lamaran::assessment/$1');
     $routes->post('assessment/(:num)', 'Lamaran::jawabAssessment/$1');
     $routes->post('interview/ajukan/(:num)', 'Lamaran::ajukanInterview/$1');
+    $routes->get('interview/masuk/(:num)', 'Lamaran::masukInterview/$1');
     $routes->post('chat/ask', 'Chat::ask');
 });
 
