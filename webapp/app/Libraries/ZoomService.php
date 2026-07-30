@@ -4,7 +4,6 @@ namespace App\Libraries;
 
 use CodeIgniter\HTTP\CURLRequest;
 use Config\Zoom as ZoomConfig;
-use Throwable;
 
 /**
  * Client Zoom Server-to-Server OAuth (Fase 3 Day 1): ambil access token lalu
@@ -84,35 +83,15 @@ class ZoomService
     }
 
     /**
-     * Satu pintu HTTP: timeout, http_errors off (cek status manual), semua
-     * kegagalan -> ZoomException.
-     *
      * @param array<string, mixed> $options
      *
      * @return array<string, mixed>
      */
     private function send(string $method, string $url, array $options): array
     {
-        try {
-            $res = $this->http->{$method}($url, $options + [
-                'connect_timeout' => $this->cfg->connectTimeout,
-                'timeout'         => $this->cfg->timeout,
-                'http_errors'     => false,
-            ]);
-        } catch (Throwable $e) {
-            throw new ZoomException('Zoom tidak dapat dihubungi: ' . $e->getMessage(), 0, $e);
-        }
-
-        $code = $res->getStatusCode();
-        if ($code < 200 || $code >= 300) {
-            throw new ZoomException("Zoom membalas status {$code}");
-        }
-
-        $data = json_decode((string) $res->getBody(), true);
-        if (! is_array($data)) {
-            throw new ZoomException('Zoom membalas body non-JSON');
-        }
-
-        return $data;
+        return JsonHttp::request($this->http, $method, $url, $options + [
+            'connect_timeout' => $this->cfg->connectTimeout,
+            'timeout'         => $this->cfg->timeout,
+        ], 'Zoom', ZoomException::class);
     }
 }

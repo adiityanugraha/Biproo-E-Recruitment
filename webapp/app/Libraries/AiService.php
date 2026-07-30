@@ -4,7 +4,6 @@ namespace App\Libraries;
 
 use CodeIgniter\HTTP\CURLRequest;
 use Config\AiService as AiServiceConfig;
-use Throwable;
 
 /**
  * Client tahan-gagal ke microservice AI (FastAPI). Semua kegagalan transport -
@@ -39,28 +38,10 @@ class AiService
      */
     public function post(string $path, array $payload): array
     {
-        try {
-            $res = $this->http->post($this->baseURL . '/' . ltrim($path, '/'), [
-                'json'            => $payload,
-                'connect_timeout' => $this->connectTimeout,
-                'timeout'         => $this->timeout,
-                'http_errors'     => false, // status >=400 tidak melempar; kita cek manual di bawah
-            ]);
-        } catch (Throwable $e) {
-            // cURL error: connection refused (service mati), DNS, timeout, dll
-            throw new AiServiceException('ai-service tidak dapat dihubungi: ' . $e->getMessage(), 0, $e);
-        }
-
-        $code = $res->getStatusCode();
-        if ($code < 200 || $code >= 300) {
-            throw new AiServiceException("ai-service membalas status {$code}");
-        }
-
-        $data = json_decode((string) $res->getBody(), true);
-        if (! is_array($data)) {
-            throw new AiServiceException('ai-service membalas body non-JSON');
-        }
-
-        return $data;
+        return JsonHttp::request($this->http, 'post', $this->baseURL . '/' . ltrim($path, '/'), [
+            'json'            => $payload,
+            'connect_timeout' => $this->connectTimeout,
+            'timeout'         => $this->timeout,
+        ], 'ai-service', AiServiceException::class);
     }
 }
