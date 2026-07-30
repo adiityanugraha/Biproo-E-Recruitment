@@ -28,4 +28,14 @@ class Services extends BaseService
 
         return new \App\Libraries\ZoomService();
     }
+
+    /** Client ai-service - pola sama dengan zoomService. */
+    public static function aiService($getShared = true)
+    {
+        if ($getShared) {
+            return static::getSharedInstance('aiService');
+        }
+
+        return new \App\Libraries\AiService();
+    }
 }

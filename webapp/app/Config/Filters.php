@@ -76,8 +76,10 @@ class Filters extends BaseFilters
         'before' => [
             // 'honeypot',
             // CSRF aktif utk semua form (Blueprint Fase 2); dimatikan di env
-            // testing karena feature test tidak membawa token
-            ...(ENVIRONMENT === 'testing' ? [] : ['csrf']),
+            // testing karena feature test tidak membawa token.
+            // screening/callback dikecualikan: request server-ke-server dari
+            // ai-service (tanpa sesi browser), dijaga token X-Token sendiri.
+            ...(ENVIRONMENT === 'testing' ? [] : ['csrf' => ['except' => ['screening/callback']]]),
             // 'invalidchars',
         ],
         'after' => [

@@ -2,6 +2,7 @@
 
 namespace App\Controllers;
 
+use App\Libraries\AiServiceException;
 use App\Libraries\GateOne;
 use App\Libraries\StageLogger;
 use App\Models\ApplicationModel;
@@ -187,6 +188,26 @@ class Lamaran extends BaseController
             'posisi' => $job['judul'],
         ]);
 
+        // Kirim job screening ke ai-service (kontrak A3.1; wiring Fase 4 Day 1).
+        // Tahan-gagal: ai-service mati TIDAK boleh menggagalkan lamaran - job
+        // hilang tercatat di log dan bisa dipicu ulang nanti.
+        try {
+            service('aiService')->post('/screening', [
+                'job_id_internal' => (int) $appId,
+                'cv_file_url'     => site_url("internal/cv/{$appId}"),
+                'job_requirement' => [
+                    'skill'      => (string) $job['req_skill'],
+                    'pendidikan' => (string) $job['req_pendidikan'],
+                    'pengalaman' => (string) $job['req_pengalaman'],
+                    'deskripsi'  => (string) ($job['deskripsi'] ?? ''),
+                ],
+                'callback_url'   => site_url('screening/callback'),
+                'callback_token' => config('AiService')->sharedToken,
+            ]);
+        } catch (AiServiceException $e) {
+            log_message('warning', 'screening tidak terkirim utk lamaran {id}: {m}', ['id' => $appId, 'm' => $e->getMessage()]);
+        }
+
         return redirect()->to('/lamar')->with('sukses', 'Lamaran terkirim! CV Anda sedang diproses - pantau email Anda.');
     }
 
@@ -339,23 +360,28 @@ class Lamaran extends BaseController
 
         // ponytail: skor CV dummy acak 0.30-0.90 sampai pipeline nyata minggu 5 -
         // acak (bukan konstan) supaya zona flagged muncul utk review recruiter Day 3
-        $skorCv = mt_rand(30, 90) / 100;
+        // Skor CV: hasil screening nyata dari callback ai-service bila skornya
+        // sudah terisi (Day 3+); selama belum, dummy acak - tetap ditulis ke
+        // screening_results (Blueprint A7) supaya pembaca skor cuma satu jalur.
+        $sr = (new ScreeningResultModel())->latestFor($appId);
+        if ($sr !== null && $sr['score_overall'] !== null) {
+            $skorCv     = (float) $sr['score_overall'];
+            $noteSkorCv = "skor_cv={$skorCv}";
+        } else {
+            $skorCv     = mt_rand(30, 90) / 100;
+            $noteSkorCv = "skor_cv={$skorCv} (dummy)";
+            (new ScreeningResultModel())->insert([
+                'application_id'   => $appId,
+                'screening_job_id' => 'dummy-' . bin2hex(random_bytes(8)),
+                'status'           => 'success',
+                'score_overall'    => $skorCv,
+                'provider'         => 'dummy',
+                'model_version'    => 'dummy-mt_rand',
+            ]);
+        }
+
         $logger->log($appId, 'ai_verification', 'entered');
-
-        // Skor CV berlabuh di screening_results (Blueprint A7), bukan cuma di teks
-        // note. Note tetap ditulis untuk dibaca manusia di halaman review; yang
-        // dibaca kode adalah kolomnya. Fase 4 mengganti sumber angka ini dengan
-        // callback ai-service - kolomnya sudah sama, pembacanya tidak berubah.
-        (new ScreeningResultModel())->insert([
-            'application_id'   => $appId,
-            'screening_job_id' => 'dummy-' . bin2hex(random_bytes(8)),
-            'status'           => 'success',
-            'score_overall'    => $skorCv,
-            'provider'         => 'dummy',
-            'model_version'    => 'dummy-mt_rand',
-        ]);
-
-        $logger->log($appId, 'ai_verification', 'passed', 'system', "skor_cv={$skorCv} (dummy)");
+        $logger->log($appId, 'ai_verification', 'passed', 'system', $noteSkorCv);
         $logger->log($appId, 'online_assessment', 'entered');
         $logger->log($appId, 'online_assessment', $nilai >= 1.0 ? 'passed' : 'failed', 'system', "nilai={$nilai}");
 

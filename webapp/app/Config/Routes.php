@@ -9,6 +9,10 @@ $routes->match(['GET', 'POST'], 'daftar', 'Auth::daftar');
 $routes->match(['GET', 'POST'], 'login', 'Auth::login');
 $routes->get('logout', 'Auth::logout');
 
+// jalur internal ai-service (tanpa sesi; dijaga token X-Token, lihat Screening.php)
+$routes->get('internal/cv/(:num)', 'Screening::cvFile/$1');
+$routes->post('screening/callback', 'Screening::callback');
+
 $routes->group('', ['filter' => 'candidateauth'], static function ($routes) {
     $routes->get('dashboard', 'Lamaran::dashboard');
     $routes->get('lamar', 'Lamaran::index');

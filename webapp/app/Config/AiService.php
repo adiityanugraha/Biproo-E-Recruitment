@@ -16,4 +16,8 @@ class AiService extends BaseConfig
     // longgar karena respons LLM/embedding bisa lambat
     public int $connectTimeout = 3;
     public int $timeout        = 20;
+
+    // Token bersama untuk jalur internal (unduh CV + callback screening).
+    // Kosong = jalur internal MATI (fail-closed). Isi via .env: aiservice.sharedToken
+    public string $sharedToken = '';
 }
