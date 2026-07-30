@@ -11,6 +11,7 @@ from pydantic import BaseModel, HttpUrl
 from chat import get_chat_provider
 from embeddings import get_provider
 from extract import ekstrak_bytes
+from ocr import ocr_lengkapi
 
 RETRY_ATTEMPTS = 4
 RETRY_BASE_DELAY = float(os.environ.get("RETRY_BASE_DELAY", "2"))
@@ -127,8 +128,11 @@ async def process_jobs():
             await _callback(job_id)
             continue
 
-        # 2. ekstraksi layout-aware (A3.2a); gagal -> antrian ulang, bukan dibuang
+        # 2. ekstraksi layout-aware (A3.2a lapis 1); yang tak terbaca lanjut ke
+        #    fallback OCR (lapis 2) - halaman scan di CV mixed ikut terisi
         hasil = await asyncio.to_thread(ekstrak_bytes, data)
+        if not hasil.utuh:
+            hasil = await asyncio.to_thread(ocr_lengkapi, data, hasil)
         job["extracted"] = {
             "metode": hasil.metode,
             "n_karakter": hasil.n_karakter,

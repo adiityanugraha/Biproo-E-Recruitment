@@ -14,10 +14,18 @@ KALIMAT = "Pengalaman kerja sebagai Backend Developer di PT Contoh Sejahtera"
 
 
 def _halaman_teks(doc):
+    """Teks harus melebihi MIN_KARAKTER (200) SETELAH OCR - CV nyata selalu lebih panjang."""
+    baris = [
+        KALIMAT,
+        "Bertanggung jawab membangun REST API menggunakan PHP dan",
+        "SQL Server, menangani deployment serta monitoring aplikasi.",
+        "Pendidikan S1 Teknik Informatika Universitas Contoh 2015-2019",
+        "Skill utama PHP SQL Server Python Git Linux dan REST API",
+        "Pernah memimpin tim kecil beranggotakan tiga programmer junior.",
+    ]
     page = doc.new_page()
-    page.insert_text((72, 90), KALIMAT, fontsize=14)
-    page.insert_text((72, 115), "Pendidikan S1 Teknik Informatika Universitas Contoh", fontsize=14)
-    page.insert_text((72, 140), "Skill utama PHP SQL Server dan Python untuk backend", fontsize=14)
+    for i, t in enumerate(baris):
+        page.insert_text((72, 90 + 25 * i), t, fontsize=14)
     return page
 
 
