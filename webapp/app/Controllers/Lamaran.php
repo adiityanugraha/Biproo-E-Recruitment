@@ -362,17 +362,27 @@ class Lamaran extends BaseController
         // hanya bila callback belum mendarat / belum bisa dinilai, supaya alur
         // demo tidak terhenti. Keduanya tercatat di screening_results (A7)
         // sehingga pembaca skor tetap satu jalur.
-        [$skorCv, $noteSkorCv] = $this->skorCv($appId);
+        [$skorCv, $noteSkorCv, $skorNyata] = $this->skorCv($appId);
 
-        $logger->log($appId, 'ai_verification', 'entered');
-        $logger->log($appId, 'ai_verification', 'passed', 'system', $noteSkorCv);
+        // Callback screening biasanya sudah mencatat tahap ini (Screening::callback).
+        // Hanya dicatat di sini bila belum ada, supaya riwayat tidak dobel.
+        if ($history->latestStatus($appId, 'ai_verification') === null) {
+            $logger->log($appId, 'ai_verification', 'entered');
+            $logger->log($appId, 'ai_verification', 'passed', 'system', $noteSkorCv);
+        }
         $logger->log($appId, 'online_assessment', 'entered');
         $logger->log($appId, 'online_assessment', $nilai >= 1.0 ? 'passed' : 'failed', 'system', "nilai={$nilai}");
 
         // konfigurasi gate per posisi dari jobs.bobot_json/threshold_json (docs/gate-logic.md)
         $gate = GateOne::evaluate($skorCv, $nilai, GateOne::configFromJob($app['bobot_json'], $app['threshold_json']));
 
-        $logger->log($appId, 'gate_1', $gate['decision'], 'system', "skor_gabungan={$gate['score']}", $email);
+        // Tanpa skor CV nyata, keputusan otomatis dipaksa flagged: angka dummy tidak
+        // boleh meloloskan atau menggugurkan siapa pun. Menggugurkan kandidat karena
+        // datanya tak terbaca adalah bug yang menjatuhkan 1.839 orang di pipeline DS.
+        $keputusan = $skorNyata ? $gate['decision'] : 'flagged';
+        $catatan   = "skor_gabungan={$gate['score']}" . ($skorNyata ? '' : ' (skor CV belum nyata - wajib review)');
+
+        $logger->log($appId, 'gate_1', $keputusan, 'system', $catatan, $email);
 
         return redirect()->to('/status')->with('sukses', 'Assessment terkirim - lihat status terbaru di bawah.');
     }
@@ -380,7 +390,7 @@ class Lamaran extends BaseController
     /**
      * Skor CV untuk Gate 1: hasil screening nyata bila sudah ada, dummy bila belum.
      *
-     * @return array{0: float, 1: string} [skor 0..1, catatan riwayat]
+     * @return array{0: float, 1: string, 2: bool} [skor 0..1, catatan riwayat, nyata?]
      */
     private function skorCv(int $appId): array
     {
@@ -388,7 +398,7 @@ class Lamaran extends BaseController
         if ($sr !== null && $sr['score_overall'] !== null) {
             $skor = (float) $sr['score_overall'];
 
-            return [$skor, "skor_cv={$skor} (ai-service, {$sr['model_version']})"];
+            return [$skor, "skor_cv={$skor} (ai-service, {$sr['model_version']})", true];
         }
 
         // Belum ada skor nyata: bisa karena callback belum tiba, ekstraksi gagal,
@@ -404,7 +414,7 @@ class Lamaran extends BaseController
             'model_version'    => 'dummy-mt_rand',
         ]);
 
-        return [$skor, "skor_cv={$skor} (dummy - skor screening belum tersedia)"];
+        return [$skor, "skor_cv={$skor} (dummy - skor screening belum tersedia)", false];
     }
 
     /** @return array|null lamaran + judul + config gate, hanya milik kandidat yang login */

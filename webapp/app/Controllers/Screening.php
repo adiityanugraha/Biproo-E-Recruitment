@@ -5,6 +5,7 @@ namespace App\Controllers;
 use App\Libraries\StageLogger;
 use App\Models\ApplicationModel;
 use App\Models\ScreeningResultModel;
+use App\Models\StageHistoryModel;
 
 /**
  * Jalur internal CI4 <-> ai-service (Fase 4 Day 1, kontrak A3.1).
@@ -21,6 +22,9 @@ class Screening extends BaseController
 {
     /** @var list<string> status callback yang sah (kontrak A3.1 + model) */
     private const STATUS_SAH = ['success', 'failed_extraction', 'failed_provider'];
+
+    /** Versi pipeline screening, ikut tersimpan sebagai audit trail (A3.4). */
+    private const MODEL_VERSION = 'fase4-embedding-cosine-v1';
 
     private function tokenSah(): bool
     {
@@ -73,16 +77,31 @@ class Screening extends BaseController
             'extracted_json'   => json_encode($b['extracted_fields'] ?? [], JSON_UNESCAPED_UNICODE),
             'flags_json'       => json_encode($b['flags'] ?? [], JSON_UNESCAPED_UNICODE),
             'provider'         => 'ai-service',
-            'model_version'    => 'fase4-day1-wiring',
+            'model_version'    => self::MODEL_VERSION,
         ]);
 
-        // Gagal ekstraksi -> tercatat di riwayat sebagai "diproses ulang", kandidat
-        // TIDAK digugurkan (A3.2: antrian proses ulang; pelajaran bug umur-nan DS).
-        // Sukses: baris screening_results cukup - alur stage tetap digerakkan
-        // assessment sampai skor nyata tersedia (Day 3).
+        // Hasil screening masuk candidate_stage_history saat callback tiba, bukan
+        // menunggu kandidat mengerjakan assessment. Tanpa ini ada balapan: kandidat
+        // yang langsung mengerjakan assessment beberapa detik setelah upload akan
+        // dinilai memakai skor dummy walaupun skor nyata menyusul sesaat kemudian.
+        $logger = new StageLogger();
+        $sudah  = (new StageHistoryModel())->latestStatus($appId, 'ai_verification') !== null;
+
         if ($status !== 'success') {
+            // Gagal ekstraksi -> "diproses ulang", kandidat TIDAK digugurkan
+            // (A3.2 antrian proses ulang; pelajaran bug umur-nan tim DS).
             $catatan = (string) (($b['extracted_fields']['catatan'] ?? '') ?: $status);
-            (new StageLogger())->log($appId, 'ai_verification', 'retry_queued', 'system', $catatan);
+            $logger->log($appId, 'ai_verification', 'retry_queued', 'system', $catatan);
+        } elseif (! $sudah) {
+            $skor = $scores['overall'] ?? null;
+            if ($skor === null) {
+                // Terekstrak, tapi tak ada bidang yang bisa dinilai -> minta mata
+                // manusia, bukan diberi angka karangan.
+                $logger->log($appId, 'ai_verification', 'flagged', 'system', 'screening selesai tanpa skor: ' . implode(', ', (array) ($b['flags'] ?? [])));
+            } else {
+                $logger->log($appId, 'ai_verification', 'entered', 'system');
+                $logger->log($appId, 'ai_verification', 'passed', 'system', 'skor_cv=' . $skor . ' (ai-service, ' . self::MODEL_VERSION . ')');
+            }
         }
 
         return $this->response->setJSON(['ok' => true]);

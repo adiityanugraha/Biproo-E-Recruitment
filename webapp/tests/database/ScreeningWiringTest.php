@@ -4,6 +4,7 @@ use App\Models\ApplicationModel;
 use App\Models\CandidateModel;
 use App\Models\JobModel;
 use App\Models\ScreeningResultModel;
+use App\Models\StageHistoryModel;
 use CodeIgniter\Test\CIUnitTestCase;
 use CodeIgniter\Test\DatabaseTestTrait;
 use CodeIgniter\Test\FeatureTestTrait;
@@ -74,8 +75,28 @@ final class ScreeningWiringTest extends CIUnitTestCase
         $this->assertSame('success', $sr['status']);
         $this->assertSame('ai-service', $sr['provider']);
         $this->assertStringContainsString('text-layer', $sr['extracted_json']);
-        // sukses tidak menyentuh alur stage (masih digerakkan assessment sampai Day 3)
-        $this->dontSeeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'ai_verification']);
+        // sukses TANPA skor (bidang tak bisa dinilai) -> minta mata manusia,
+        // bukan diberi angka karangan
+        $this->seeInDatabase('candidate_stage_history', [
+            'application_id' => $aid, 'stage' => 'ai_verification', 'status' => 'flagged',
+        ]);
+    }
+
+    public function testCallbackBerskorLangsungMencatatAiVerificationPassed(): void
+    {
+        [, $aid] = $this->fixture();
+        $body                      = $this->bodySukses($aid);
+        $body['scores']['overall'] = 0.7412;
+
+        $this->kirimCallback($body)->assertStatus(200);
+
+        // dicatat saat callback tiba, tidak menunggu kandidat mengerjakan assessment
+        $this->seeInDatabase('candidate_stage_history', [
+            'application_id' => $aid,
+            'stage'          => 'ai_verification',
+            'status'         => 'passed',
+            'note'           => 'skor_cv=0.7412 (ai-service, fase4-embedding-cosine-v1)',
+        ]);
     }
 
     public function testCallbackGagalEkstraksiTercatatSebagaiDiprosesUlang(): void
@@ -154,27 +175,51 @@ final class ScreeningWiringTest extends CIUnitTestCase
         $this->seeInDatabase('candidate_stage_history', [
             'application_id' => $aid,
             'stage'          => 'ai_verification',
-            'note'           => 'skor_cv=0.8123 (ai-service, fase4-day1-wiring)',
+            'note'           => 'skor_cv=0.8123 (ai-service, fase4-embedding-cosine-v1)',
         ]);
-        // gate1 = 0.5*0.8123 + 0.5*1.0 = 0.9062 (bobot default)
+        // gate1 = 0.5*0.8123 + 0.5*1.0 = 0.9062 (bobot default) -> lolos otomatis
         $this->seeInDatabase('candidate_stage_history', [
             'application_id' => $aid,
             'stage'          => 'gate_1',
+            'status'         => 'passed',
             'note'           => 'skor_gabungan=0.9062',
         ]);
     }
 
-    public function testSkorNullDariCallbackJatuhKeDummyDanDitandai(): void
+    public function testTanpaSkorNyataGate1DipaksaFlaggedBukanDiputusDummy(): void
     {
+        // Tidak ada callback sama sekali -> skorCv jatuh ke dummy acak. Apa pun
+        // angkanya, keputusan otomatis TIDAK boleh diambil.
         [$cid, $aid] = $this->fixture();
-        $this->kirimCallback($this->bodySukses($aid))->assertStatus(200); // overall null
 
         $this->withSession(['candidate_id' => $cid, 'candidate_nama' => 'Sinta'])
             ->post("assessment/{$aid}", ['jawaban' => 'ya']);
 
-        $r = (new \App\Models\StageHistoryModel())
+        $r = (new StageHistoryModel())
+            ->where(['application_id' => $aid, 'stage' => 'gate_1'])->first();
+        $this->assertSame('flagged', $r['status'], 'skor dummy tidak boleh memutus otomatis');
+        $this->assertStringContainsString('belum nyata', $r['note']);
+
+        $ai = (new StageHistoryModel())
             ->where(['application_id' => $aid, 'stage' => 'ai_verification', 'status' => 'passed'])->first();
-        $this->assertStringContainsString('dummy', $r['note'], 'sumber dummy wajib jujur tertulis di riwayat');
+        $this->assertStringContainsString('dummy', $ai['note'], 'sumber dummy wajib jujur tertulis di riwayat');
+    }
+
+    public function testCallbackTidakMenimpaRiwayatAiVerificationYangSudahAda(): void
+    {
+        [$cid, $aid] = $this->fixture();
+        // kandidat lebih cepat: assessment jalan sebelum callback tiba
+        $this->withSession(['candidate_id' => $cid, 'candidate_nama' => 'Sinta'])
+            ->post("assessment/{$aid}", ['jawaban' => 'ya']);
+
+        $body                      = $this->bodySukses($aid);
+        $body['scores']['overall'] = 0.9;
+        $this->kirimCallback($body)->assertStatus(200);
+
+        // hanya satu pasang entered/passed - riwayat append-only tidak dobel
+        $n = (new StageHistoryModel())
+            ->where(['application_id' => $aid, 'stage' => 'ai_verification'])->countAllResults();
+        $this->assertSame(2, $n);
     }
 
     // Jalur "upload tetap sukses saat ai-service mati" diverifikasi lewat e2e
