@@ -1,16 +1,10 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<?= $this->include('partials/head') ?>
 <title><?= esc($judul ?? 'Masuk') ?> - E-REQ BIPROO</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  * { box-sizing: border-box; }
-  body { margin: 0; font-family: 'Poppins', system-ui, sans-serif; background: #F2F4F8; color: #2B2B2B;
-         min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  body { background: #F2F4F8; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
   .auth-wrap { display: flex; width: 100%; max-width: 900px; min-height: 480px; background: #fff;
                border-radius: 20px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,.12); }
 

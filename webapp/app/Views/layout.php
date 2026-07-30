@@ -33,16 +33,10 @@ $inisial = strtoupper(mb_substr((string) $nama, 0, 1));
 <!DOCTYPE html>
 <html lang="id">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<?= $this->include('partials/head') ?>
 <title><?= esc($judul ?? $brand) ?> - E-REQ BIPROO</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  * { box-sizing: border-box; }
-  body { margin: 0; font-family: 'Poppins', system-ui, sans-serif; background: #F2F4F8; color: #2B2B2B; }
-  a { text-decoration: none; }
+  body { background: #F2F4F8; }
 
   .topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: space-between;
             height: 60px; padding: 0 22px; background: linear-gradient(90deg, #FBA919, #F7941D);

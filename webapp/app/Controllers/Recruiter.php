@@ -94,10 +94,10 @@ class Recruiter extends BaseController
                 ['Tanda Tangan Kontrak', '✍️', null],
             ],
             'schedule' => [
-                ['Rabu, 1 Juli 2026', 'Walk-In Interview', 'Ni Putu Dita Suari', '–'],
-                ['Kamis, 2 Juli 2026', 'Walk-In Interview', 'Angelique Karel Sonya Sefia', '–'],
-                ['Senin, 6 Juli 2026', 'Psikotes Online', 'Ahmad Marzuki', '–'],
-                ['Rabu, 8 Juli 2026', 'Interview User', 'Supriyatin Pratiwi', '–'],
+                ['Rabu, 1 Juli 2026', 'Walk-In Interview', 'Ni Putu Dita Suari', '-'],
+                ['Kamis, 2 Juli 2026', 'Walk-In Interview', 'Angelique Karel Sonya Sefia', '-'],
+                ['Senin, 6 Juli 2026', 'Psikotes Online', 'Ahmad Marzuki', '-'],
+                ['Rabu, 8 Juli 2026', 'Interview User', 'Supriyatin Pratiwi', '-'],
             ],
             'weekDays' => [
                 ['Sen', '#2B2B2B', '#F7941D'], ['Sel', '#2B2B2B', '#2E9E5B'], ['Rab', '#2B2B2B', '#1E73E8'],
@@ -129,7 +129,8 @@ class Recruiter extends BaseController
     public function report()
     {
         return view('recruiter/report', [
-            'tab' => $this->request->getGet('tab') === 'fpk' ? 'fpk' : 'summary',
+            'judul' => 'Report',
+            'tab'   => $this->request->getGet('tab') === 'fpk' ? 'fpk' : 'summary',
             'fpk' => [
                 'total'       => 3431,
                 'outstanding' => ['n' => 568, 'pct' => 16.6, 'sla' => ['≤ 7' => 6.4, '≤ 14' => 2.9, '> 14' => 7.3]],
@@ -266,10 +267,10 @@ class Recruiter extends BaseController
         unset($a);
 
         return view('recruiter/tahap', [
-            'stage'      => $stage,
-            'stageTitle' => $valid[$stage],
-            'status'     => $status,
-            'daftar'     => $daftar,
+            'stage'  => $stage,
+            'judul'  => $valid[$stage],
+            'status' => $status,
+            'daftar' => $daftar,
         ]);
     }
 

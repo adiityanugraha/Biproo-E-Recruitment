@@ -1,4 +1,45 @@
-<?= $this->extend('layout_report') ?>
+<?= $this->extend('layout_recruiter') ?>
+
+<?= $this->section('gaya') ?>
+<style>
+  /* khas halaman Report: filter tanggal di topbar, lonceng, form berukuran normal */
+  .rtop .dates { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .rtop .dates input { border: none; border-radius: 8px; padding: 7px 10px; font-size: 13px; font-family: inherit; }
+  .rtop .dates button { margin: 0; padding: 7px 16px; border: none; border-radius: 8px; background: #fff; color: #2F6FED; font-weight: 700; font-size: 13px; cursor: pointer; }
+  .rtop .bell { position: relative; font-size: 18px; cursor: pointer; }
+  .rtop .bell::after { content: ''; position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; background: #E23B4E; border-radius: 50%; }
+
+  h2 { margin-top: 0; }
+  input, select { padding: 10px 12px; border: 1px solid #e2e6ee; border-radius: 10px; font-size: 14px; font-family: inherit; }
+  button { padding: 12px 20px; border: none; border-radius: 10px; cursor: pointer; background: linear-gradient(90deg, #FBA919, #F7941D); color: #fff; font-size: 15px; font-weight: 700; font-family: inherit; }
+  table { font-size: 14px; }
+  th { font-size: 14px; }
+
+  @media (max-width: 820px) { .rtop .dates { display: none; } }
+</style>
+<?= $this->endSection() ?>
+
+<?= $this->section('topbar') ?>
+<div class="dates">
+  <span>Start Date:</span><input type="date" value="2026-01-01">
+  <span>End Date:</span><input type="date" value="2026-07-16">
+  <button onclick="segera('Filter Tanggal')">View</button>
+</div>
+<?= $this->endSection() ?>
+
+<?= $this->section('topbarKanan') ?>
+<span class="bell" onclick="segera('Notifikasi')">🔔</span>
+<?= $this->endSection() ?>
+
+<?= $this->section('sidebar') ?>
+<a href="<?= site_url('recruiter/report') ?>" class="<?= ($tab ?? 'summary') === 'summary' ? 'on' : '' ?>">
+  <span class="l"><span>📊</span><span>Summary</span></span><span><?= ($tab ?? 'summary') === 'summary' ? '»' : '' ?></span>
+</a>
+<a href="<?= site_url('recruiter/report') ?>?tab=fpk" class="<?= ($tab ?? '') === 'fpk' ? 'on' : '' ?>">
+  <span class="l"><span>🗃️</span><span>Data FPK</span></span><span><?= ($tab ?? '') === 'fpk' ? '»' : '' ?></span>
+</a>
+<?= $this->endSection() ?>
+
 <?= $this->section('isi') ?>
 
 <style>
@@ -50,7 +91,7 @@
   <?php if ($tab === 'fpk'): ?>
     <!-- ===================== DATA FPK ===================== -->
     <div style="display:flex;justify-content:space-between;align-items:center">
-      <div class="rep-h">— Data FPK</div>
+      <div class="rep-h">- Data FPK</div>
       <button style="margin:0;background:#20A277;padding:9px 16px" onclick="segera('Download Excel')">⬇ Download Excel</button>
     </div>
     <div class="scroll-x">
@@ -88,7 +129,7 @@
       <div class="sumcard"><div class="cap">Fulfillment by SLA</div><div class="big" style="color:#2F6FED"><?= $fpk['bySla'] ?>%</div></div>
     </div>
 
-    <div class="rep-h">— Program &amp; Activity</div>
+    <div class="rep-h">- Program &amp; Activity</div>
     <div class="scroll-x">
       <table>
         <tr><th>No</th><th>Task Title</th><th class="num">Total Program</th><th class="num">Total Kandidat</th><th class="num">Join</th><th class="num">Not Join</th><th class="num">% Join</th></tr>

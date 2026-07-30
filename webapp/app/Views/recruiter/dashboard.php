@@ -93,7 +93,7 @@
     </div>
 
     <div class="kartu">
-      <h2>— Schedule &amp; Task</h2>
+      <h2>- Schedule &amp; Task</h2>
       <div class="sched">
         <?php foreach ($schedule as [$tgl, $program, $recruiter, $feedback]): ?>
           <div class="c">

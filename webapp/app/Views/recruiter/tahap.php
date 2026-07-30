@@ -1,4 +1,47 @@
-<?= $this->extend('layout_stage') ?>
+<?= $this->extend('layout_recruiter') ?>
+
+<?= $this->section('gaya') ?>
+<style>
+  /* khas halaman tabel tahap: tombol kecil, kolom tak membungkus, pager */
+  table { white-space: nowrap; }
+  button { padding: 5px 14px; border: none; border-radius: 8px; cursor: pointer; font-family: inherit; font-weight: 600; font-size: 12px; }
+  .btn-view { background: #FDE9A9; color: #8a6d1e; }
+  .btn-dl { background: #20A277; color: #fff; padding: 9px 16px; font-size: 13px; }
+  .scroll-x { overflow-x: auto; border: 1px solid #eef0f5; border-radius: 12px; }
+  .avatar-s { width: 30px; height: 30px; border-radius: 50%; background: #F7941D; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; }
+  .foot { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; }
+  .pager span { padding: 5px 9px; border: 1px solid #e2e6ee; border-radius: 6px; margin-right: 4px; font-size: 12px; cursor: pointer; }
+  .pager .now { background: #F7941D; color: #fff; border-color: #F7941D; }
+  .rows select { border: none; border-radius: 8px; padding: 6px 8px; font-family: inherit; }
+</style>
+<?= $this->endSection() ?>
+
+<?= $this->section('topbar') ?>
+<span class="rows" style="display:flex;align-items:center;gap:6px;font-size:13px">Rows
+  <select onchange="segera('Ubah Jumlah Baris')"><option>200</option><option>50</option></select>
+</span>
+<?= $this->endSection() ?>
+
+<?= $this->section('sidebar') ?>
+<?php
+$base = site_url('recruiter/tahap/' . $stage);
+$tabs = [
+    'progress' => ['On Progress', '🔄', $base],
+    'passed'   => ['Passed', '✅', $base . '?status=passed'],
+];
+// tab Completed (keputusan Gate 2) hanya relevan di Interview HRD
+if (($stage ?? '') === 'interview_online') {
+    $tabs['completed'] = ['Completed', '🏁', $base . '?status=completed'];
+}
+$tabs['failed'] = ['Failed', '❌', $base . '?status=failed'];
+foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
+  <a href="<?= $url ?>" class="<?= $status === $k ? 'on' : '' ?>">
+    <span class="l"><span><?= $ic ?></span><span><?= $lbl ?></span></span><span><?= $status === $k ? '»' : '' ?></span></a>
+<?php endforeach ?>
+<a href="#" onclick="segera('Settings');return false"><span class="l"><span>⚙️</span><span>Settings</span></span></a>
+<a href="#" onclick="segera('Upload History');return false"><span class="l"><span>🕘</span><span>Upload History</span></span></a>
+<?= $this->endSection() ?>
+
 <?= $this->section('isi') ?>
 
 <div class="scroll-x">
@@ -8,7 +51,7 @@
       <th>Picture</th><th>FullName</th><th>Email</th><th>Company Code</th><th>Job Posting</th>
     </tr>
     <?php if ($daftar === []): ?>
-      <tr><td colspan="11" style="text-align:center;color:#aaa;padding:26px">— Tidak ada kandidat pada tahap &amp; status ini —</td></tr>
+      <tr><td colspan="11" style="text-align:center;color:#aaa;padding:26px">- Tidak ada kandidat pada tahap &amp; status ini -</td></tr>
     <?php else: ?>
       <?php foreach ($daftar as $i => $a): ?>
         <tr>
