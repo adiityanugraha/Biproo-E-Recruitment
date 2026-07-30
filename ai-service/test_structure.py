@@ -1,6 +1,6 @@
 """Strukturisasi 3 field: CV ber-heading, CV naratif, dan pemisahan atribut sensitif."""
 
-from structure import strukturkan
+from structure import MAX_TEKS_LLM, strukturkan, strukturkan_kontekstual
 
 CV_HEADING = """Budi Contoh
 Jl. Melati No. 5, Jakarta - budi@contoh.com - 0812345678
@@ -79,3 +79,89 @@ def test_field_kosong_tercatat_di_flags():
 
     assert "skill_kosong" in t.flags
     assert "pendidikan_kosong" in t.flags
+
+
+# --- Jalur kontekstual via LLM (Day 3) ---
+
+class FakeLLM:
+    def __init__(self, jawab):
+        self.jawab = jawab
+        self.dipanggil = 0
+        self.terakhir = None
+
+    def generate(self, system, history, question):
+        self.dipanggil += 1
+        self.terakhir = {"system": system, "question": question}
+        if isinstance(self.jawab, Exception):
+            raise self.jawab
+        return self.jawab
+
+
+def test_kontekstual_memakai_hasil_llm():
+    llm = FakeLLM('{"pengalaman":"Kasir toko 2020-2022","skill":"Excel","pendidikan":"SMK Negeri 1"}')
+
+    t = strukturkan_kontekstual("teks cv apa saja", llm)
+
+    assert t.pengalaman == "Kasir toko 2020-2022"
+    assert t.skill == "Excel"
+    assert t.pendidikan == "SMK Negeri 1"
+    assert "kontekstual" in t.flags
+
+
+def test_kontekstual_membuang_lampiran_scan():
+    """Inti perbaikan Day 3: transkrip/sertifikat tidak lagi dipaksa jadi skill."""
+    llm = FakeLLM('{"pengalaman":"Staff gudang","skill":"","pendidikan":"S1 Contoh"}')
+
+    t = strukturkan_kontekstual("CV + 14 halaman transkrip hasil OCR", llm)
+
+    assert t.skill == ""
+    assert "skill_kosong" in t.flags  # kosong TERCATAT, bukan diisi derau
+
+
+def test_llm_error_jatuh_ke_jalur_heading():
+    llm = FakeLLM(RuntimeError("kuota habis"))
+
+    t = strukturkan_kontekstual(CV_HEADING, llm)
+
+    assert "llm_gagal" in t.flags
+    assert "Backend Developer" in t.pengalaman  # tetap dapat hasil
+
+
+def test_llm_json_rusak_jatuh_ke_jalur_heading():
+    t = strukturkan_kontekstual(CV_HEADING, FakeLLM("maaf saya tidak bisa"))
+
+    assert "llm_json_invalid" in t.flags
+    assert "PHP, Python" in t.skill
+
+
+def test_llm_ketiga_bidang_kosong_jatuh_ke_jalur_heading():
+    t = strukturkan_kontekstual(CV_HEADING, FakeLLM('{"pengalaman":"","skill":"","pendidikan":""}'))
+
+    assert "llm_kosong" in t.flags
+    assert "Universitas Contoh" in t.pendidikan
+
+
+def test_jawaban_terbungkus_code_fence_tetap_terparse():
+    llm = FakeLLM('```json\n{"pengalaman":"Sales","skill":"negosiasi","pendidikan":"SMA"}\n```')
+
+    t = strukturkan_kontekstual("x", llm)
+
+    assert t.pengalaman == "Sales"
+    assert "kontekstual" in t.flags
+
+
+def test_teks_kosong_tidak_memanggil_llm():
+    llm = FakeLLM("{}")
+
+    t = strukturkan_kontekstual("   ", llm)
+
+    assert llm.dipanggil == 0
+    assert t.flags == ("teks_kosong",)
+
+
+def test_teks_panjang_dipotong_sebelum_dikirim():
+    llm = FakeLLM('{"pengalaman":"a","skill":"","pendidikan":""}')
+
+    strukturkan_kontekstual("x" * 50000, llm)
+
+    assert len(llm.terakhir["question"]) == MAX_TEKS_LLM

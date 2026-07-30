@@ -12,6 +12,9 @@ from chat import get_chat_provider
 from embeddings import get_provider
 from extract import ekstrak_bytes
 from ocr import ocr_lengkapi
+from sanitize import bersihkan
+from scoring import BIDANG, Skor, hitung
+from structure import strukturkan_kontekstual
 
 RETRY_ATTEMPTS = 4
 RETRY_BASE_DELAY = float(os.environ.get("RETRY_BASE_DELAY", "2"))
@@ -100,8 +103,7 @@ async def _callback(job_id: str) -> None:
         "screening_job_id": job_id,
         "job_id_internal": job["job_id_internal"],  # echo, supaya CI4 tahu lamaran mana
         "status": "success" if job["status"] == "done" else job["status"],
-        # skor nyata diisi Day 3 (embedding CV vs job requirement); null = belum ada
-        "scores": {"overall": None, "skill": None, "pendidikan": None, "pengalaman": None},
+        "scores": job.get("scores", Skor(None, None, None, None).as_dict()),
         "extracted_fields": job.get("extracted", {}),
         "flags": job.get("flags", []),
     }
@@ -146,17 +148,52 @@ async def process_jobs():
             await _callback(job_id)
             continue
 
-        job["cv_text"] = hasil.teks  # bahan strukturisasi + embedding (Day 2-3)
+        job["cv_text"] = hasil.teks
 
-        # 3. embedding (masih 3 field job requirement - diganti teks CV di Day 3)
+        # 3. strukturisasi 3 bidang berbasis konteks (A3.2a), lalu buang atribut
+        #    sensitif SEBELUM embedding (fairness-by-design A3.2)
+        llm = getattr(app.state, "chat_provider", None) or get_chat_provider()
+        t   = await asyncio.to_thread(strukturkan_kontekstual, hasil.teks, llm)
+        cv_bidang = {
+            "skill":      bersihkan(t.skill),
+            "pengalaman": bersihkan(t.pengalaman),
+            "pendidikan": bersihkan(t.pendidikan),
+        }
+        job["flags"] = list(t.flags)
+        job["extracted"]["bidang_karakter"] = {k: len(v) for k, v in cv_bidang.items()}
+
+        # 4. embedding CV vs job requirement, lalu cosine + skor agregat berbobot.
+        #    Bidang yang salah satu sisinya kosong tidak di-embed (hemat kuota)
+        #    dan tidak dinilai - bobotnya dinormalkan ulang di scoring.hitung().
+        job_bidang = job["job_requirement"]
+        pasangan   = [b for b in BIDANG if cv_bidang[b] and job_bidang[b]]
+        job["texts"] = [cv_bidang[b] for b in pasangan] + [job_bidang[b] for b in pasangan]
+
+        if not pasangan:
+            job["status"] = "done"
+            job["scores"] = Skor(None, None, None, None, ("tidak_dapat_dinilai",)).as_dict()
+            job["flags"] += ["tidak_dapat_dinilai"]
+            await _callback(job_id)
+            continue
+
         try:
             vectors = await embed_with_retry(job)
-            job["status"] = "done"
-            job["embedding_dims"] = [len(v) for v in vectors]
         except Exception as e:
             # limit/error provider setelah retry habis → job ditunda, bukan hilang (A3.3)
             job["status"] = "failed_provider"
             job["error"] = str(e)
+            await _callback(job_id)
+            continue
+
+        n = len(pasangan)
+        vek_cv  = {b: vectors[i] for i, b in enumerate(pasangan)}
+        vek_job = {b: vectors[n + i] for i, b in enumerate(pasangan)}
+        skor    = hitung(vek_cv, vek_job)
+
+        job["status"] = "done"
+        job["embedding_dims"] = [len(v) for v in vectors]
+        job["scores"] = skor.as_dict()
+        job["flags"] += list(skor.flags)
 
         await _callback(job_id)
 
@@ -173,8 +210,14 @@ def create_screening(req: ScreeningRequest) -> ScreeningAccepted:
         "cv_file_url": str(req.cv_file_url),
         "callback_url": str(req.callback_url),
         "token": req.callback_token,
-        # yang di-embed masih 3 field job requirement; teks CV asli menggantikan di Day 3
-        "texts": [r.skill, r.pengalaman, r.pendidikan],
+        # sisi lowongan: deskripsi digabung ke pengalaman karena di situlah uraian
+        # tanggung jawab berada, sehingga dibandingkan dengan bidang yang setara
+        "job_requirement": {
+            "skill": r.skill.strip(),
+            "pengalaman": f"{r.pengalaman}\n{r.deskripsi}".strip(),
+            "pendidikan": r.pendidikan.strip(),
+        },
+        "texts": [],  # diisi setelah strukturisasi CV (pasangan bidang yang ada)
         "attempts": 0,
     }
     job_queue.put_nowait(job_id)

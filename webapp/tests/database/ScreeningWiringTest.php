@@ -140,6 +140,43 @@ final class ScreeningWiringTest extends CIUnitTestCase
         }
     }
 
+    public function testSkorNyataDariCallbackDipakaiGate1BukanDummy(): void
+    {
+        [$cid, $aid] = $this->fixture();
+        $body                      = $this->bodySukses($aid);
+        $body['scores']['overall'] = 0.8123;
+        $this->kirimCallback($body)->assertStatus(200);
+
+        // kandidat mengerjakan assessment -> Gate 1 harus memakai 0.8123, bukan acak
+        $this->withSession(['candidate_id' => $cid, 'candidate_nama' => 'Sinta'])
+            ->post("assessment/{$aid}", ['jawaban' => 'ya']);
+
+        $this->seeInDatabase('candidate_stage_history', [
+            'application_id' => $aid,
+            'stage'          => 'ai_verification',
+            'note'           => 'skor_cv=0.8123 (ai-service, fase4-day1-wiring)',
+        ]);
+        // gate1 = 0.5*0.8123 + 0.5*1.0 = 0.9062 (bobot default)
+        $this->seeInDatabase('candidate_stage_history', [
+            'application_id' => $aid,
+            'stage'          => 'gate_1',
+            'note'           => 'skor_gabungan=0.9062',
+        ]);
+    }
+
+    public function testSkorNullDariCallbackJatuhKeDummyDanDitandai(): void
+    {
+        [$cid, $aid] = $this->fixture();
+        $this->kirimCallback($this->bodySukses($aid))->assertStatus(200); // overall null
+
+        $this->withSession(['candidate_id' => $cid, 'candidate_nama' => 'Sinta'])
+            ->post("assessment/{$aid}", ['jawaban' => 'ya']);
+
+        $r = (new \App\Models\StageHistoryModel())
+            ->where(['application_id' => $aid, 'stage' => 'ai_verification', 'status' => 'passed'])->first();
+        $this->assertStringContainsString('dummy', $r['note'], 'sumber dummy wajib jujur tertulis di riwayat');
+    }
+
     // Jalur "upload tetap sukses saat ai-service mati" diverifikasi lewat e2e
     // HTTP nyata (upload multipart sungguhan dengan ai-service dimatikan) -
     // feature test CI4 tidak praktis untuk multipart, dan menguji mock yang

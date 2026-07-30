@@ -358,27 +358,11 @@ class Lamaran extends BaseController
         $kandidat = (new CandidateModel())->find(session('candidate_id'));
         $email    = ['to' => $kandidat['email'], 'nama' => $kandidat['nama'], 'posisi' => $app['judul']];
 
-        // ponytail: skor CV dummy acak 0.30-0.90 sampai pipeline nyata minggu 5 -
-        // acak (bukan konstan) supaya zona flagged muncul utk review recruiter Day 3
-        // Skor CV: hasil screening nyata dari callback ai-service bila skornya
-        // sudah terisi (Day 3+); selama belum, dummy acak - tetap ditulis ke
-        // screening_results (Blueprint A7) supaya pembaca skor cuma satu jalur.
-        $sr = (new ScreeningResultModel())->latestFor($appId);
-        if ($sr !== null && $sr['score_overall'] !== null) {
-            $skorCv     = (float) $sr['score_overall'];
-            $noteSkorCv = "skor_cv={$skorCv}";
-        } else {
-            $skorCv     = mt_rand(30, 90) / 100;
-            $noteSkorCv = "skor_cv={$skorCv} (dummy)";
-            (new ScreeningResultModel())->insert([
-                'application_id'   => $appId,
-                'screening_job_id' => 'dummy-' . bin2hex(random_bytes(8)),
-                'status'           => 'success',
-                'score_overall'    => $skorCv,
-                'provider'         => 'dummy',
-                'model_version'    => 'dummy-mt_rand',
-            ]);
-        }
+        // Skor CV dari hasil screening ai-service (Fase 4 Day 3). Fallback dummy
+        // hanya bila callback belum mendarat / belum bisa dinilai, supaya alur
+        // demo tidak terhenti. Keduanya tercatat di screening_results (A7)
+        // sehingga pembaca skor tetap satu jalur.
+        [$skorCv, $noteSkorCv] = $this->skorCv($appId);
 
         $logger->log($appId, 'ai_verification', 'entered');
         $logger->log($appId, 'ai_verification', 'passed', 'system', $noteSkorCv);
@@ -391,6 +375,36 @@ class Lamaran extends BaseController
         $logger->log($appId, 'gate_1', $gate['decision'], 'system', "skor_gabungan={$gate['score']}", $email);
 
         return redirect()->to('/status')->with('sukses', 'Assessment terkirim - lihat status terbaru di bawah.');
+    }
+
+    /**
+     * Skor CV untuk Gate 1: hasil screening nyata bila sudah ada, dummy bila belum.
+     *
+     * @return array{0: float, 1: string} [skor 0..1, catatan riwayat]
+     */
+    private function skorCv(int $appId): array
+    {
+        $sr = (new ScreeningResultModel())->latestFor($appId);
+        if ($sr !== null && $sr['score_overall'] !== null) {
+            $skor = (float) $sr['score_overall'];
+
+            return [$skor, "skor_cv={$skor} (ai-service, {$sr['model_version']})"];
+        }
+
+        // Belum ada skor nyata: bisa karena callback belum tiba, ekstraksi gagal,
+        // atau tidak ada bidang yang bisa dinilai. Dummy dipakai agar alur jalan,
+        // dan sumbernya ditulis apa adanya di catatan supaya tidak menyesatkan.
+        $skor = mt_rand(30, 90) / 100;
+        (new ScreeningResultModel())->insert([
+            'application_id'   => $appId,
+            'screening_job_id' => 'dummy-' . bin2hex(random_bytes(8)),
+            'status'           => 'success',
+            'score_overall'    => $skor,
+            'provider'         => 'dummy',
+            'model_version'    => 'dummy-mt_rand',
+        ]);
+
+        return [$skor, "skor_cv={$skor} (dummy - skor screening belum tersedia)"];
     }
 
     /** @return array|null lamaran + judul + config gate, hanya milik kandidat yang login */

@@ -36,13 +36,26 @@ def _pdf_sintetis() -> bytes:
 SAMPLE_PDF = _pdf_sintetis()
 
 
+class FakeStrukturLLM:
+    """LLM strukturisasi palsu. WAJIB dipasang di tiap test pipeline - tanpa ini
+    process_jobs jatuh ke get_chat_provider() dan memanggil Gemini sungguhan."""
+
+    def generate(self, system, history, question):
+        return (
+            '{"pengalaman":"Backend developer PHP dan SQL Server di PT Contoh 2021-2024",'
+            '"skill":"PHP, SQL Server, Git",'
+            '"pendidikan":"S1 Teknik Informatika Universitas Contoh"}'
+        )
+
+
 @pytest.fixture()
 def wiring(monkeypatch):
-    """Mock unduhan CV + tangkap callback; kembalikan daftar callback terkirim."""
+    """Mock unduhan CV + LLM strukturisasi + tangkap callback."""
     terkirim = []
     monkeypatch.setattr(main, "_unduh_cv", lambda url, token: SAMPLE_PDF)
     monkeypatch.setattr(main, "_kirim_callback", lambda url, token, body: terkirim.append((url, token, body)))
     monkeypatch.setattr(main, "retry_extraction", [])
+    app.state.chat_provider = FakeStrukturLLM()
     return terkirim
 
 
@@ -79,7 +92,8 @@ def test_screening_queues_and_calls_embedding(wiring):
         assert resp.status_code == 202
         job = wait_done(client, resp.json()["screening_job_id"])
         assert job["status"] == "done"
-        assert job["embedding_dims"] == [3, 3, 3]  # 3 field ter-embed
+        # 3 bidang CV + 3 bidang lowongan yang berpasangan = 6 vektor
+        assert job["embedding_dims"] == [3] * 6
         assert app.state.provider.calls == 1
         # CV benar-benar terekstrak sebelum embedding
         assert job["extracted"]["metode"] == "text-layer"
@@ -246,3 +260,92 @@ def test_chat_llm_failure_returns_502():
     app.state.chat_provider = Boom()
     with TestClient(app) as client:
         assert client.post("/chat", json={"question": "halo", "context": "x"}).status_code == 502
+
+
+# --- Day 3: skor nyata di callback ---
+
+def test_callback_membawa_skor_nyata(wiring):
+    """FakeProvider mengembalikan vektor identik utk semua teks -> cosine 1.0."""
+    app.state.provider = FakeProvider()
+    with TestClient(app) as client:
+        job_id = client.post("/screening", json=VALID_BODY).json()["screening_job_id"]
+        wait_done(client, job_id)
+
+    (_, _, body), = wiring
+    s = body["scores"]
+    assert s["overall"] == 1.0                      # vektor identik -> cocok penuh
+    assert s["skill"] == s["pendidikan"] == s["pengalaman"] == 1.0
+    assert body["status"] == "success"
+
+
+def test_atribut_sensitif_tidak_ikut_di_embed(wiring, monkeypatch):
+    """Alamat/HP/agama dari CV tidak boleh sampai ke provider embedding."""
+    class LLMBocor:
+        def generate(self, system, history, question):
+            return (
+                '{"pengalaman":"Kasir di Toko Maju. Alamat: Jl. Melati No. 5. '
+                'Agama: Islam. Telepon: 081234567890",'
+                '"skill":"Excel","pendidikan":"SMK Negeri 1"}'
+            )
+
+    app.state.chat_provider = LLMBocor()
+    dikirim = []
+
+    class Perekam:
+        def embed(self, texts):
+            dikirim.extend(texts)
+            return [[0.1, 0.2, 0.3] for _ in texts]
+
+    app.state.provider = Perekam()
+    with TestClient(app) as client:
+        wait_done(client, client.post("/screening", json=VALID_BODY).json()["screening_job_id"])
+
+    gabung = "\n".join(dikirim)
+    for bocor in ("Jl. Melati", "081234567890", "Islam"):
+        assert bocor not in gabung, f"atribut sensitif ikut ter-embed: {bocor}"
+    assert "Kasir di Toko Maju" in gabung  # kompetensi tetap ikut
+
+
+def test_bidang_cv_kosong_tidak_dinilai_dan_bobot_dinormalkan(wiring):
+    class LLMHanyaPengalaman:
+        def generate(self, system, history, question):
+            return '{"pengalaman":"Staff gudang 2020-2023","skill":"","pendidikan":""}'
+
+    app.state.chat_provider = LLMHanyaPengalaman()
+    app.state.provider = FakeProvider()
+    with TestClient(app) as client:
+        wait_done(client, client.post("/screening", json=VALID_BODY).json()["screening_job_id"])
+
+    (_, _, body), = wiring
+    s = body["scores"]
+    assert s["pengalaman"] == 1.0
+    assert s["skill"] is None and s["pendidikan"] is None  # bukan 0
+    assert s["overall"] == 1.0                             # bobot dinormalkan ulang
+    assert "bobot_dinormalkan_ulang" in body["flags"]
+
+
+def test_semua_bidang_kosong_tetap_success_tanpa_skor(wiring):
+    class LLMKosong:
+        def generate(self, system, history, question):
+            return '{"pengalaman":"","skill":"","pendidikan":""}'
+
+    app.state.chat_provider = LLMKosong()
+    app.state.provider = FakeProvider()
+    with TestClient(app) as client:
+        job = wait_done(client, client.post("/screening", json=VALID_BODY).json()["screening_job_id"])
+
+    # LLM kosong -> fallback heading; PDF sintetis tanpa heading -> pengalaman terisi
+    assert job["status"] == "done"
+    (_, _, body), = wiring
+    assert body["scores"]["overall"] is not None
+
+
+def test_embedding_gagal_tetap_kirim_callback_failed_provider(wiring, monkeypatch):
+    monkeypatch.setattr(main, "RETRY_BASE_DELAY", 0)
+    app.state.provider = FakeProvider(fail_first=99)
+    with TestClient(app) as client:
+        wait_done(client, client.post("/screening", json=VALID_BODY).json()["screening_job_id"])
+
+    (_, _, body), = wiring
+    assert body["status"] == "failed_provider"
+    assert body["scores"]["overall"] is None
