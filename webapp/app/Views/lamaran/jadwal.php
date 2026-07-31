@@ -1,9 +1,21 @@
+<?php use App\Models\InterviewModel; ?>
 <?= $this->extend('layout') ?>
 <?= $this->section('isi') ?>
 
+<?php
+// Judul halaman mengikuti keadaan kandidat: selama masih mengajukan, ini halaman
+// pendaftaran. Begitu ada ruang Zoom yang benar-benar bisa dimasuki, tidak ada
+// lagi yang perlu didaftarkan - yang dibutuhkan kandidat cuma jalan masuknya.
+$adaSesiTerbuka = (bool) array_filter($apps, static fn (array $a): bool => $a['link_aktif']);
+?>
 <div class="kartu">
-  <h2>Pendaftaran Jadwal Interview</h2>
-  <p style="color:#666;font-size:14px;margin-top:-6px">Ajukan jadwal interview untuk lamaran yang sudah lolos Tahap 1. Recruiter akan menyetujui atau menolak ajuan Anda.</p>
+  <?php if ($adaSesiTerbuka): ?>
+    <h2>Penjadwalan Berhasil</h2>
+    <p style="color:#666;font-size:14px;margin-top:-6px">Jadwal interview Anda sudah disetujui recruiter dan ruang Zoom-nya sudah dibuka. Silakan masuk lewat tombol di bawah.</p>
+  <?php else: ?>
+    <h2>Pendaftaran Jadwal Interview</h2>
+    <p style="color:#666;font-size:14px;margin-top:-6px">Ajukan jadwal interview untuk lamaran yang sudah lolos Tahap 1. Recruiter akan menyetujui atau menolak ajuan Anda.</p>
+  <?php endif ?>
 </div>
 
 <?php if ($apps === []): ?>
@@ -23,6 +35,15 @@
         <b style="color:#1d6b3d">✅ Ajuan diterima - Interview dijadwalkan</b>
         <p style="margin:8px 0 0">🗓️ <b><?= esc(date('d M Y, H:i', strtotime($iv['scheduled_at']))) ?> WIB</b></p>
         <?php if ($app['link_aktif']): ?>
+          <?php
+          // Batas tutup dihitung dari konstanta yang sama dengan penjaganya,
+          // jadi keterangan ini tidak bisa melenceng dari perilaku sebenarnya.
+          $tutup = date('H:i', strtotime($iv['scheduled_at']) + InterviewModel::TUTUP_MENIT * 60);
+          ?>
+          <p style="margin:10px 0 0;font-size:13px;color:#1d6b3d">🎥 <b>Ruang interview sudah dibuka.</b>
+            Tautan ini berlaku sampai <b><?= esc($tutup) ?> WIB</b>, setelah itu tidak bisa dipakai lagi.</p>
+          <p style="margin:6px 0 0;font-size:13px;color:#666">Masuk memakai nama lengkap Anda, pastikan kamera dan mikrofon berfungsi.
+            Tautan ini khusus untuk Anda dan tidak berguna bila diteruskan ke orang lain.</p>
           <a href="<?= site_url('interview/masuk/' . $app['id']) ?>" target="_blank" rel="noopener">
             <button type="button" style="margin-top:12px">Gabung via Zoom</button>
           </a>

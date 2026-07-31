@@ -39,11 +39,16 @@ class Lamaran extends BaseController
         'retry_queued' => 'diproses ulang',
     ];
 
-    /** Definisi stepper (stage nyata dipetakan ke dua kolom ala BIPROO). */
+    /**
+     * Definisi stepper (stage nyata dipetakan ke dua kolom ala BIPROO).
+     *
+     * ai_verification sengaja TIDAK ditampilkan: itu proses internal yang tidak
+     * memerlukan tindakan kandidat dan tidak lagi menentukan kelolosan Gate 1.
+     * Riwayat lengkapnya tetap ada di halaman Status Lamaran untuk audit.
+     */
     private const STEPPER = [
         'assessment' => [
             ['upload_cv', 'Upload CV', '📄'],
-            ['ai_verification', 'Verifikasi CV (AI)', '🤖'],
             ['online_assessment', 'Assessment', '📝'],
             ['gate_1', 'Keputusan Tahap 1', '🎯'],
         ],
@@ -55,6 +60,34 @@ class Lamaran extends BaseController
         ],
     ];
 
+    /**
+     * Lamaran mana yang sedang dilihat, dari parameter ?app= milik kandidat sendiri.
+     * Tanpa parameter (atau id yang bukan miliknya) jatuh ke lamaran terbaru.
+     *
+     * Id ikut dinormalkan ke int di sini, dan itu bukan kerapian belaka: driver
+     * sqlsrv mengembalikan kolom INT sebagai STRING sedangkan SQLite sebagai int,
+     * jadi perbandingan ketat di bawah selalu gagal di produksi tapi lolos di
+     * test. Disatukan supaya kedua halaman yang memakainya tidak bisa berbeda.
+     *
+     * @param list<array> $apps daftar lamaran, terurut terbaru lebih dulu
+     */
+    private function pilihLamaran(array &$apps): ?array
+    {
+        foreach ($apps as &$a) {
+            $a['id'] = (int) $a['id'];
+        }
+        unset($a);
+
+        $pilih = (int) ($this->request->getGet('app') ?? 0);
+        foreach ($apps as $a) {
+            if ($a['id'] === $pilih) {
+                return $a;
+            }
+        }
+
+        return $apps[0] ?? null;
+    }
+
     public function dashboard()
     {
         $apps = (new ApplicationModel())
@@ -64,14 +97,7 @@ class Lamaran extends BaseController
             ->orderBy('applications.id', 'DESC')
             ->findAll();
 
-        $pilih = (int) ($this->request->getGet('app') ?? 0);
-        $aktif = null;
-        foreach ($apps as $a) {
-            if ($a['id'] === $pilih) {
-                $aktif = $a;
-            }
-        }
-        $aktif ??= $apps[0] ?? null;
+        $aktif = $this->pilihLamaran($apps);
 
         // status terkini per stage (baris terakhir per stage yang menang)
         $statusMap = $aktif !== null ? (new StageHistoryModel())->latestStatusMap($aktif['id']) : [];
@@ -86,29 +112,73 @@ class Lamaran extends BaseController
         // begitu lolos Gate 1, tahap Penjadwalan Interview terbuka -> halaman pengajuan jadwal
         $gate1Passed = ($statusMap['gate_1'] ?? null) === 'passed';
 
-        // halaman tujuan per tahap; null = belum ada halaman (modal "segera hadir")
-        $appId    = $aktif['id'] ?? 0;
+        // Assessment terbuka sejak CV terkirim sampai Gate 1 diputus. Aturan yang
+        // sama persis dengan penjaganya di Lamaran::assessment() dan tombol di
+        // halaman status - assessment TIDAK menunggu screening CV selesai, karena
+        // sejak kalibrasi Gate 1 diputus assessment, bukan skor CV. Stepper harus
+        // ikut aturan itu, kalau tidak kandidat melihat tahapnya abu-abu padahal
+        // halamannya sudah bisa dibuka.
+        $bisaAssessment = ! isset($statusMap['gate_1']);
+
+        // Sesi Interview mengikuti jendela link Zoom, bukan sekadar "sudah dijadwalkan":
+        // mati sebelum ruangnya buka, menyala saat jendelanya terbuka. Sumber
+        // kebenarannya sama dengan halaman jadwal (InterviewModel::siapDimasuki),
+        // supaya stepper tidak pernah menyala saat tombol Zoom-nya belum ada.
+        $appId   = $aktif['id'] ?? 0;
+        $ivAktif = $appId > 0
+            && InterviewModel::siapDimasuki((new InterviewModel())->forApplication($appId));
+
+        // Keputusan Akhir terbuka begitu skor interview keluar. Recruiter menulis
+        // skor dan putusan Gate 2 dalam satu langkah, tapi syaratnya dikunci ke
+        // skor interview supaya tetap benar bila kelak kedua langkah dipisah.
+        $gate2Terbuka = isset($statusMap['interview_online']) || isset($statusMap['gate_2']);
+
+        // halaman tujuan per tahap; null = belum ada halaman (modal "segera hadir").
+        // Status Lamaran menampilkan satu lamaran pada satu waktu, jadi ?app= harus
+        // ikut - tanpa itu kandidat dengan beberapa lamaran mendarat di posisi lain.
+        $status   = site_url('status') . '?app=' . $appId;
         $urlStage = [
             'upload_cv'         => site_url('lamar'),
-            'ai_verification'   => site_url('status'),
             'online_assessment' => site_url('assessment/' . $appId),
-            'gate_1'            => site_url('status'),
+            'gate_1'            => $status,
             'penjadwalan'       => $gate1Passed ? site_url('jadwal') : null,
+            'interview_online'  => $ivAktif ? site_url('jadwal') : null,
+            'gate_2'            => $gate2Terbuka ? $status : null,
         ];
-        $build = static function (array $list) use ($statusMap, $urutan, $maxIdx, $urlStage, $gate1Passed): array {
-            return array_map(static function (array $s) use ($statusMap, $urutan, $maxIdx, $urlStage, $gate1Passed): array {
+        $build = static function (array $list) use ($statusMap, $urutan, $maxIdx, $urlStage, $gate1Passed, $bisaAssessment, $ivAktif, $gate2Terbuka): array {
+            return array_map(static function (array $s) use ($statusMap, $urutan, $maxIdx, $urlStage, $gate1Passed, $bisaAssessment, $ivAktif, $gate2Terbuka): array {
                 [$stage, $label, $icon] = $s;
                 $i   = array_search($stage, $urutan, true);
                 $st  = ! isset($statusMap[$stage]) ? ($i > $maxIdx ? 'locked' : 'done')
                     : ($statusMap[$stage] === 'failed' ? 'failed'
                     : ($statusMap[$stage] === 'passed' || $i < $maxIdx ? 'done' : 'current'));
+                // Assessment: menyala sejak CV terkirim, tidak menunggu screening CV
+                if ($stage === 'online_assessment' && $bisaAssessment && ! isset($statusMap[$stage])) {
+                    $st = 'current';
+                }
                 // Penjadwalan Interview: jangan terkunci begitu lolos Gate 1 (agar bisa diklik ke /jadwal)
                 if ($stage === 'penjadwalan' && $gate1Passed && ! isset($statusMap['penjadwalan'])) {
                     $st = 'current';
                 }
+                // Interview yang belum berlangsung: menyala hanya saat ruangnya
+                // buka. Di luar itu benar-benar mati - bukan modal "segera hadir",
+                // karena tahap ini memang ada, cuma belum waktunya.
+                $mati = false;
+                if ($stage === 'interview_online' && ! isset($statusMap[$stage])) {
+                    $ivAktif ? $st = 'current' : $mati = true;
+                }
+                // Keputusan Akhir: mati sampai skor interview keluar, lalu menyala
+                // dan mengarah ke Status Lamaran tempat rincian keputusannya ada.
+                if ($stage === 'gate_2') {
+                    if (! $gate2Terbuka) {
+                        $mati = true;
+                    } elseif (! isset($statusMap[$stage])) {
+                        $st = 'current';
+                    }
+                }
                 $url = $urlStage[$stage] ?? null;
 
-                return compact('label', 'icon', 'st', 'url');
+                return compact('label', 'icon', 'st', 'url', 'mati');
             }, $list);
         };
 
@@ -214,21 +284,24 @@ class Lamaran extends BaseController
     /** Portal status: timeline tiap lamaran dari candidate_stage_history. */
     public function status()
     {
+        // Satu lamaran tampil pada satu waktu, sama seperti stepper di dashboard.
+        // Riwayat pun hanya diambil untuk yang sedang dilihat, bukan semuanya.
         $apps = (new ApplicationModel())
             ->select('applications.id, applications.created_at, jobs.judul')
             ->join('jobs', 'jobs.id = applications.job_id')
             ->where('candidate_id', session('candidate_id'))
-            ->orderBy('applications.id')
+            ->orderBy('applications.id', 'DESC')
             ->findAll();
 
-        $history = new StageHistoryModel();
-        foreach ($apps as &$app) {
-            $app['riwayat'] = $history->where('application_id', $app['id'])->orderBy('id')->findAll();
+        $aktif = $this->pilihLamaran($apps);
+        if ($aktif !== null) {
+            $aktif['riwayat'] = (new StageHistoryModel())
+                ->where('application_id', $aktif['id'])->orderBy('id')->findAll();
             // assessment bisa dikerjakan bila gate_1 belum diputus utk lamaran ini
-            $app['bisa_assessment'] = ! in_array('gate_1', array_column($app['riwayat'], 'stage'), true);
+            $aktif['bisa_assessment'] = ! in_array('gate_1', array_column($aktif['riwayat'], 'stage'), true);
         }
 
-        return view('lamaran/status', ['apps' => $apps]);
+        return view('lamaran/status', ['apps' => $apps, 'aktif' => $aktif]);
     }
 
     /**
@@ -251,9 +324,8 @@ class Lamaran extends BaseController
             if ($history->latestStatus($app['id'], 'gate_1') === 'passed') {
                 $iv                = $interview->forApplication($app['id']);
                 $app['interview']  = $iv;
-                $app['link_aktif'] = $iv !== null && $iv['status'] === 'approved'
-                    && InterviewModel::linkAktif($iv['scheduled_at']);
-                $lolos[] = $app;
+                $app['link_aktif'] = InterviewModel::siapDimasuki($iv);
+                $lolos[]           = $app;
             }
         }
 

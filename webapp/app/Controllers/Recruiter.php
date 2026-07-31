@@ -202,24 +202,44 @@ class Recruiter extends BaseController
             return redirect()->to('/recruiter')->with('error', 'Tahap tidak dikenal.');
         }
 
+        // Upload CV tidak punya keputusan lolos/gagal - satu-satunya status yang
+        // pernah ditulis di tahap ini adalah 'entered'. Memecahnya jadi On Progress
+        // / Passed / Failed cuma menghasilkan dua tab yang selamanya kosong, jadi
+        // tahap ini memakai satu tab: semua CV yang masuk.
+        $satuTab = $stage === 'upload_cv';
+
         $req    = $this->request->getGet('status');
-        $status = in_array($req, ['passed', 'failed', 'completed'], true) ? $req : 'progress';
+        $status = $satuTab
+            ? 'uploaded'
+            : (in_array($req, ['passed', 'failed', 'completed'], true) ? $req : 'progress');
 
         $ivMap = [];
         if ($stage === 'interview_online') {
-            // Tab Interview HRD berdasar status ajuan + waktu:
+            // Tab Interview HRD berdasar status ajuan + waktu. Keempatnya SALING
+            // LEPAS - satu kandidat hanya boleh berada di satu tab, kalau tidak
+            // recruiter mengerjakan orang yang sama dua kali:
             //   On Progress = requested (menunggu acc)
-            //   Passed      = approved (ajuan sudah di-acc)
+            //   Passed      = approved & jadwal BELUM lewat (interview akan datang)
+            //   Failed      = rejected (recruiter menolak ajuan jadwal kandidat)
             //   Completed   = approved & jadwal SUDAH lewat (siap dinilai Gate 2)
-            //   Failed      = rejected (ditolak)
+            //
+            // Passed dan Completed dipisah tanggal, bukan status: kandidat pindah
+            // sendiri dari Passed ke Completed begitu jadwalnya terlewat.
+            //
+            // Failed bukan riwayat: mengajukan ulang memakai BARIS YANG SAMA
+            // (Lamaran::ajukanInterview), jadi kandidat yang mengajukan jadwal
+            // baru langsung pindah ke On Progress dan tidak tertinggal di sini.
+            //
+            // Tanggal dibandingkan di SQL (CURRENT_TIMESTAMP), bukan date() PHP -
+            // scheduled_at disimpan dalam jam lokal mesin, sama dgn jam DB.
+            // CURRENT_TIMESTAMP portabel SQLSRV + SQLite test, tidak seperti GETDATE.
             $q = new InterviewModel();
             if ($status === 'completed') {
-                // bandingkan dgn jam DB (CURRENT_TIMESTAMP), bukan date() PHP (UTC) -
-                // scheduled_at disimpan dalam jam lokal mesin, sama dgn jam DB. Pakai
-                // CURRENT_TIMESTAMP (portabel SQLSRV + SQLite test), bukan GETDATE.
                 $rows = $q->where('status', 'approved')->where(new RawSql('scheduled_at <= CURRENT_TIMESTAMP'))->findAll();
+            } elseif ($status === 'passed') {
+                $rows = $q->where('status', 'approved')->where(new RawSql('scheduled_at > CURRENT_TIMESTAMP'))->findAll();
             } else {
-                $ivStatus = ['progress' => 'requested', 'passed' => 'approved', 'failed' => 'rejected'][$status];
+                $ivStatus = ['progress' => 'requested', 'failed' => 'rejected'][$status];
                 $rows     = $q->where('status', $ivStatus)->findAll();
             }
             foreach ($rows as $iv) {
@@ -234,7 +254,9 @@ class Recruiter extends BaseController
             }
             $ids = [];
             foreach ($latest as $appId => $st) {
-                $bucket = $st === 'passed' ? 'passed' : ($st === 'failed' ? 'failed' : 'progress');
+                $bucket = $satuTab
+                    ? 'uploaded'
+                    : ($st === 'passed' ? 'passed' : ($st === 'failed' ? 'failed' : 'progress'));
                 if ($bucket === $status) {
                     $ids[] = $appId;
                 }

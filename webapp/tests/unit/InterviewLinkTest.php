@@ -43,4 +43,25 @@ final class InterviewLinkTest extends CIUnitTestCase
     {
         $this->assertFalse($this->pada('2026-08-10 11:00:01'));
     }
+
+    /**
+     * Uji jendela di atas menyuntik "sekarang", jadi ia benar di zona mana pun.
+     * Justru itu yang membuat bug zona waktu lolos: linkAktif tanpa suntikan
+     * memakai jam default aplikasi, sementara scheduled_at adalah jam dinding
+     * WIB milik SQL Server. Saat appTimezone masih UTC, PHP tertinggal 7 jam
+     * dan link Zoom kandidat tidak pernah terbuka pada jadwalnya.
+     *
+     * Ini penguncian konfigurasi, bukan bukti perilaku: selisih dua sistem tidak
+     * bisa dibuktikan dari dalam PHPUnit yang basis datanya SQLite. Yang bisa
+     * dijaga adalah nilainya tidak berubah tanpa sengaja.
+     */
+    public function testZonaWaktuAplikasiIkutJamDatabaseWIB(): void
+    {
+        $this->assertSame(
+            'Asia/Jakarta',
+            date_default_timezone_get(),
+            'scheduled_at disimpan sebagai jam dinding WIB (diketik recruiter, default kolom GETDATE()). '
+            . 'Zona lain membuat perbandingan waktu meleset diam-diam, bukan error.'
+        );
+    }
 }

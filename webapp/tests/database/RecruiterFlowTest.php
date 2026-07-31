@@ -81,4 +81,43 @@ final class RecruiterFlowTest extends CIUnitTestCase
         $respons = $this->withSession(['candidate_id' => 1, 'candidate_nama' => 'Budi'])->get('recruiter');
         $respons->assertRedirectTo(site_url('recruiter/login'));
     }
+
+    public function testTahapUploadCvHanyaPunyaSatuTabUploaded(): void
+    {
+        $this->fixtureFlagged();
+
+        $res = $this->withSession($this->sesiRecruiter)->get('recruiter/tahap/upload_cv');
+
+        // upload_cv tidak pernah punya status passed/failed, jadi tab itu selalu
+        // kosong dan cuma bikin recruiter mengira ada kandidat yang hilang
+        $res->assertSee('Uploaded');
+        $res->assertDontSee('On Progress');
+        $res->assertDontSee('Passed');
+        $res->assertDontSee('Failed');
+    }
+
+    public function testTahapUploadCvMenampilkanSemuaCvYangMasuk(): void
+    {
+        $aid = $this->fixtureFlagged();
+
+        // ?status=passed dulu memfilter habis daftarnya; sekarang diabaikan
+        foreach (['', '?status=passed', '?status=failed'] as $q) {
+            $this->withSession($this->sesiRecruiter)->get('recruiter/tahap/upload_cv' . $q)
+                ->assertSee('Kandidat Abu');
+        }
+
+        $this->assertSame(1, (new StageHistoryModel())
+            ->where(['application_id' => $aid, 'stage' => 'upload_cv'])->countAllResults());
+    }
+
+    public function testTahapLainTetapPunyaTabLengkap(): void
+    {
+        $this->fixtureFlagged();
+
+        $res = $this->withSession($this->sesiRecruiter)->get('recruiter/tahap/online_assessment');
+
+        $res->assertSee('On Progress');
+        $res->assertSee('Passed');
+        $res->assertSee('Failed');
+    }
 }

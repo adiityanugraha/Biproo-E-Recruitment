@@ -1,5 +1,6 @@
 <?php
 
+use App\Libraries\StageLogger;
 use App\Models\ApplicationModel;
 use App\Models\CandidateModel;
 use App\Models\JobModel;
@@ -48,15 +49,12 @@ final class AssessmentFlowTest extends CIUnitTestCase
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'online_assessment', 'status' => 'passed']);
 
-        // jawaban "ya" (1.0) + cv dummy 0.30-0.90 -> gabungan 0.65-0.95: passed atau flagged, tak pernah failed
+        // Gate 1 diputus assessment saja, jadi hasilnya pasti - bukan lagi
+        // rentang skor gabungan dengan zona flagged
         $gate = (new StageHistoryModel())->where(['application_id' => $aid, 'stage' => 'gate_1'])->findAll();
         $this->assertCount(1, $gate);
-        $this->assertContains($gate[0]['status'], ['passed', 'flagged']);
-
-        // email hasil_gate hanya utk keputusan final; flagged = review internal tanpa email
-        if ($gate[0]['status'] === 'passed') {
-            $this->seeInDatabase('email_queue', ['to_email' => 'tes@example.com', 'template' => 'hasil_gate']);
-        }
+        $this->assertSame('passed', $gate[0]['status']);
+        $this->seeInDatabase('email_queue', ['to_email' => 'tes@example.com', 'template' => 'hasil_gate']);
     }
 
     public function testJawabanTidakMembuatGate1Failed(): void
@@ -66,9 +64,9 @@ final class AssessmentFlowTest extends CIUnitTestCase
         $this->withSession(['candidate_id' => $cid, 'candidate_nama' => 'Kandidat Tes'])
             ->post("assessment/{$aid}", ['jawaban' => 'tidak']);
 
-        // "tidak" (0.0) + cv maks 0.90 -> gabungan maks 0.45 -> selalu failed (< lower 0.45? tepat 0.45=flagged)
+        // jawaban "tidak" = tidak lulus assessment = gugur, tanpa perantara skor apa pun
         $gate = (new StageHistoryModel())->where(['application_id' => $aid, 'stage' => 'gate_1'])->first();
-        $this->assertContains($gate['status'], ['failed', 'flagged']);
+        $this->assertSame('failed', $gate['status']);
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'online_assessment', 'status' => 'failed']);
     }
 
@@ -92,5 +90,42 @@ final class AssessmentFlowTest extends CIUnitTestCase
             ->post("assessment/{$aid}", ['jawaban' => 'ya']);
 
         $this->assertSame(0, (new StageHistoryModel())->where('application_id', $aid)->countAllResults());
+    }
+
+    /** Kelas keadaan (locked/current/done) langkah stepper yang menautkan ke $urlPart. */
+    private function stateLangkah(string $html, string $urlPart): ?string
+    {
+        foreach (explode('class="step ', $html) as $blok) {
+            if (str_contains($blok, $urlPart)) {
+                return strtok($blok, '"');
+            }
+        }
+
+        return null;
+    }
+
+    private function bukaDashboard(int $cid, int $aid): string
+    {
+        return (string) $this->withSession(['candidate_id' => $cid, 'candidate_nama' => 'Kandidat Tes'])
+            ->get('dashboard?app=' . $aid)->getBody();
+    }
+
+    public function testStepperAssessmentMenyalaBegituCvTerkirim(): void
+    {
+        [$cid, $aid] = $this->fixture();
+        (new StageLogger())->log($aid, 'upload_cv', 'entered');
+
+        // Screening CV sengaja belum jalan: assessment tidak bergantung padanya,
+        // jadi tahapnya harus sudah menyala supaya kandidat tahu bisa mengerjakan.
+        $this->assertSame('current', $this->stateLangkah($this->bukaDashboard($cid, $aid), "assessment/{$aid}"));
+    }
+
+    public function testStepperAssessmentTidakMenyalaLagiSetelahGate1Diputus(): void
+    {
+        [$cid, $aid] = $this->fixture();
+        $this->withSession(['candidate_id' => $cid, 'candidate_nama' => 'Kandidat Tes'])
+            ->post("assessment/{$aid}", ['jawaban' => 'ya']);
+
+        $this->assertSame('done', $this->stateLangkah($this->bukaDashboard($cid, $aid), "assessment/{$aid}"));
     }
 }

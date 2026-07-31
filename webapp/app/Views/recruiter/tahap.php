@@ -25,15 +25,22 @@
 <?= $this->section('sidebar') ?>
 <?php
 $base = site_url('recruiter/tahap/' . $stage);
-$tabs = [
-    'progress' => ['On Progress', '🔄', $base],
-    'passed'   => ['Passed', '✅', $base . '?status=passed'],
-];
-// tab Completed (keputusan Gate 2) hanya relevan di Interview HRD
-if (($stage ?? '') === 'interview_online') {
-    $tabs['completed'] = ['Completed', '🏁', $base . '?status=completed'];
+if (($stage ?? '') === 'upload_cv') {
+    // Tidak ada keputusan lolos/gagal di tahap unggah - satu tab saja
+    $tabs = ['uploaded' => ['Uploaded', '📥', $base]];
+} else {
+    // Urutan mengikuti alur ajuan: menunggu -> disetujui -> ditolak, baru
+    // Completed yang berada di ujung karena menandai proses yang sudah tuntas.
+    $tabs = [
+        'progress' => ['On Progress', '🔄', $base],
+        'passed'   => ['Passed', '✅', $base . '?status=passed'],
+        'failed'   => ['Failed', '❌', $base . '?status=failed'],
+    ];
+    // tab Completed (keputusan Gate 2) hanya relevan di Interview HRD
+    if (($stage ?? '') === 'interview_online') {
+        $tabs['completed'] = ['Completed', '🏁', $base . '?status=completed'];
+    }
 }
-$tabs['failed'] = ['Failed', '❌', $base . '?status=failed'];
 foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
   <a href="<?= $url ?>" class="<?= $status === $k ? 'on' : '' ?>">
     <span class="l"><span><?= $ic ?></span><span><?= $lbl ?></span></span><span><?= $status === $k ? '»' : '' ?></span></a>

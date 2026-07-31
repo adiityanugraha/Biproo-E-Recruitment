@@ -132,8 +132,18 @@ class App extends BaseConfig
      *
      * @see https://www.php.net/manual/en/timezones.php for list of timezones
      *      supported by PHP.
+     *
+     * WAJIB Asia/Jakarta, bukan UTC. Kolom DATETIME di SQL Server menyimpan jam
+     * dinding tanpa offset, dan jam yang masuk ke sana adalah WIB: diketik
+     * recruiter dalam WIB, dibaca kandidat sebagai WIB, dan default kolom pakai
+     * GETDATE() milik SQL Server yang juga berjalan WIB.
+     *
+     * Saat nilainya UTC, "sekarang" versi PHP tertinggal 7 jam dari jam yang
+     * tersimpan. Akibat nyatanya: link Zoom kandidat tidak pernah terbuka pada
+     * waktunya karena InterviewModel::linkAktif mengira jadwal masih 7 jam lagi.
+     * Dijaga oleh ZonaWaktuTest.
      */
-    public string $appTimezone = 'UTC';
+    public string $appTimezone = 'Asia/Jakarta';
 
     /**
      * --------------------------------------------------------------------------

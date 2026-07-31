@@ -126,6 +126,7 @@ $inisial = strtoupper(mb_substr((string) $nama, 0, 1));
   .step.current .dot { background: #F5B301; } .step.current .card { background: #FFF9EC; border-color: #F3B94A; }
   .step.failed .dot { background: #E23B4E; } .step.failed .card { background: #FDECEC; }
   .step.locked .card { opacity: .65; } .step.locked .ic { background: #e6e8ee; filter: grayscale(1); }
+  .step .card.mati { cursor: default; } .step .card.mati:hover { border-color: #eef0f5; box-shadow: none; }
 
   /* minmax(0,1fr) supaya kolom kiri BISA menyusut (hindari overflow horizontal) */
   .dash { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start; }

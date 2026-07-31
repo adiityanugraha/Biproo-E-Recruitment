@@ -43,4 +43,19 @@ class InterviewModel extends Model
         return $now >= $jadwal->modify('-' . self::BUKA_MENIT . ' minutes')
             && $now <= $jadwal->modify('+' . self::TUTUP_MENIT . ' minutes');
     }
+
+    /**
+     * Sesi interview benar-benar siap dimasuki kandidat: jadwalnya sudah di-acc
+     * recruiter DAN jendela waktunya terbuka. Dipakai halaman jadwal maupun
+     * stepper dashboard - keduanya harus sepakat, kalau tidak stepper menyala
+     * padahal tombol Zoom-nya belum ada.
+     *
+     * @param array|null $iv baris interviews, null = belum ada ajuan
+     */
+    public static function siapDimasuki(?array $iv, ?DateTimeInterface $now = null): bool
+    {
+        return $iv !== null
+            && $iv['status'] === 'approved'
+            && self::linkAktif($iv['scheduled_at'], $now);
+    }
 }

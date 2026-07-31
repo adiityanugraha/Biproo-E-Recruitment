@@ -56,6 +56,11 @@
           <?php
           $stepCard = static function (array $s): string {
               $isi = '<span class="ic">' . $s['icon'] . '</span><span class="nm">' . esc($s['label']) . '</span>';
+              // mati = tahapnya nyata tapi belum waktunya; jangan jadi tautan sama
+              // sekali, supaya tidak memancing klik yang tidak menghasilkan apa-apa
+              if (! empty($s['mati'])) {
+                  return '<span class="card mati" title="Sesi belum dibuka">' . $isi . '</span>';
+              }
               if ($s['url'] !== null) {
                   return '<a class="card" href="' . $s['url'] . '">' . $isi . '</a>';
               }
