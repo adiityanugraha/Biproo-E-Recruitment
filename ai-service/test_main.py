@@ -325,6 +325,15 @@ def test_bidang_cv_kosong_tidak_dinilai_dan_bobot_dinormalkan(wiring):
 
 
 def test_semua_bidang_kosong_tetap_success_tanpa_skor(wiring):
+    """
+    LLM menjawab dokumen ini tidak memuat isi CV -> TIDAK ada skor.
+
+    Dulu jawaban itu dibatalkan oleh jalur heading, dan karena PDF-nya tanpa
+    heading maka seluruh teks mentah masuk ke pengalaman lalu diberi skor.
+    Di produksi hasilnya 0,6567 - tak terbedakan dari CV yang terurai benar
+    (0,6568). Kandidat tetap TIDAK digugurkan: status sukses, skornya null,
+    dan CI4 mencatatnya sebagai ai_verification/flagged untuk ditinjau manusia.
+    """
     class LLMKosong:
         def generate(self, system, history, question):
             return '{"pengalaman":"","skill":"","pendidikan":""}'
@@ -334,10 +343,12 @@ def test_semua_bidang_kosong_tetap_success_tanpa_skor(wiring):
     with TestClient(app) as client:
         job = wait_done(client, client.post("/screening", json=VALID_BODY).json()["screening_job_id"])
 
-    # LLM kosong -> fallback heading; PDF sintetis tanpa heading -> pengalaman terisi
     assert job["status"] == "done"
     (_, _, body), = wiring
-    assert body["scores"]["overall"] is not None
+    assert body["status"] == "success"          # kandidat tidak gugur
+    assert body["scores"]["overall"] is None    # tapi tidak diberi angka karangan
+    assert "tanpa_isi_cv" in body["flags"]
+    assert "tidak_dapat_dinilai" in body["flags"]
 
 
 def test_embedding_gagal_tetap_kirim_callback_failed_provider(wiring, monkeypatch):

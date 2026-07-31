@@ -3,3 +3,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .env
+
+# Berkas log tidak masuk repo: berubah tiap kali dijalankan, bikin diff berisik,
+# dan bisa menampung kredensial. uvicorn.log pernah menampung API key Gemini
+# karena httpx menyertakan URL lengkap (?key=...) di pesan errornya. Sekarang
+# kunci itu disensor di sisi kode (chat.tanpa_kunci), tapi berkas log tetap
+# tidak layak di-commit.
+*.log

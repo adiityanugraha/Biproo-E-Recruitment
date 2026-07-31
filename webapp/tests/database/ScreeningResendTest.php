@@ -105,6 +105,34 @@ final class ScreeningResendTest extends CIUnitTestCase
         $this->assertSame([], $this->terkirim, 'tidak boleh mengirim job ganda');
     }
 
+    public function testPaksaIkutMengirimYangSudahBerskor(): void
+    {
+        // dipakai setelah pipeline diperbaiki: nilai ulang kandidat yang skornya
+        // sah tapi dihitung dengan cara yang lebih buruk (mis. skill gagal terurai)
+        $aid = $this->lamaran('paksa@example.test');
+        (new ScreeningResultModel())->insert([
+            'application_id' => $aid, 'screening_job_id' => 'x', 'status' => 'success',
+            'score_overall' => 0.6385, 'provider' => 'ai-service', 'model_version' => 'v1',
+        ]);
+
+        $this->jalankan(['--paksa']);
+
+        $this->assertSame([$aid], $this->terkirim);
+    }
+
+    public function testTanpaPaksaYangSudahBerskorTetapDilewati(): void
+    {
+        $aid = $this->lamaran('nopaksa@example.test');
+        (new ScreeningResultModel())->insert([
+            'application_id' => $aid, 'screening_job_id' => 'x', 'status' => 'success',
+            'score_overall' => 0.6385, 'provider' => 'ai-service', 'model_version' => 'v1',
+        ]);
+
+        $this->jalankan();
+
+        $this->assertSame([], $this->terkirim, 'default harus tetap idempoten');
+    }
+
     public function testBarisTanpaSkorTetapDikirimUlang(): void
     {
         // callback pernah tiba tapi status gagal / skor null -> masih perlu diulang

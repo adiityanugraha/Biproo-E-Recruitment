@@ -13,7 +13,8 @@ berubah, sehingga tidak bisa dibandingkan dengan ambang gate yang tetap.
 Bidang yang KOSONG tidak dinilai 0 - bobotnya dipindahkan ke bidang yang ada
 lalu dinormalkan ulang, dan kekosongannya di-flag untuk review recruiter.
 Menilai 0 karena datanya tak terbaca adalah pola bug "umur nan" tim DS yang
-menggugurkan 1.839 kandidat; di sini itu tidak diulang.
+menggugurkan 1.888 kandidat (terverifikasi, docs/pipeline-screening-cv.md);
+di sini itu tidak diulang.
 """
 
 import math

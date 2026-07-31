@@ -7,16 +7,38 @@ Dua jalur:
   strukturkan_kontekstual()- via LLM (Day 3). Memahami konteks per kalimat
                              sesuai A3.2a, jadi CV naratif tanpa heading dan CV
                              mixed (lampiran scan menempel ke section terakhir)
-                             tidak lagi salah kelompok. Gagal/kosong -> otomatis
-                             jatuh ke jalur heading, bukan kehilangan CV.
+                             tidak lagi salah kelompok. LLM ERROR -> jatuh ke
+                             jalur heading, bukan kehilangan CV.
+
+Beda penting antara LLM error dan LLM menjawab kosong:
+
+  - error (jaringan, kuota, JSON rusak) = kita tidak tahu apa isi CV-nya,
+    jadi jalur heading dicoba sebagai cadangan.
+  - ketiga bidang kosong = LLM sudah membaca dan menjawab bahwa dokumen ini
+    TIDAK memuat isi CV (mis. berkas yang isinya cuma transkrip/sertifikat
+    hasil scan). Itu JAWABAN, bukan kegagalan, dan tidak boleh dibatalkan
+    oleh jalur heading.
+
+Yang terakhir itu sempat salah: hasil "kosong" dianggap gagal, jatuh ke jalur
+heading, dan karena dokumennya juga tanpa heading maka SELURUH teks mentah
+masuk ke bidang pengalaman. Skornya lalu dihitung dari tumpahan teks itu dan
+keluar 0,6567 - tak terbedakan dari CV yang terurai benar (0,6568). Itu skor
+karangan, pola yang sama dengan bug "umur nan" tim DS. Sekarang kasus ini
+mengembalikan bidang kosong supaya skornya null dan kandidat masuk antrian
+review recruiter.
 
 Atribut sensitif dibuang terpisah oleh sanitize.bersihkan() setelah
 strukturisasi - jaminan deterministik, tidak bergantung kepatuhan LLM.
 """
 
 import json
+import logging
+import os
 import re
+import time
 from typing import NamedTuple
+
+from chat import tanpa_kunci
 
 # heading yang lazim di CV Indonesia + Inggris; dicocokkan ke SELURUH baris
 # pendek (bukan substring bebas) supaya kalimat biasa tidak salah terdeteksi
@@ -123,20 +145,56 @@ def _json_pertama(s: str) -> dict | None:
     return d if isinstance(d, dict) else None
 
 
+RETRY_LLM = 2  # sekali coba + sekali ulang
+
+# Jeda ulang 20 detik, bukan 1. Kegagalan yang benar-benar terjadi di lapangan
+# adalah 429 Too Many Requests dari kuota Gemini gratis, dan kuota itu dihitung
+# PER MENIT. Mengulang setelah 1 detik pasti kena 429 lagi - percobaan kedua
+# terbuang percuma, persis yang terlihat di log app#37.
+RETRY_JEDA = float(os.environ.get("RETRY_JEDA_LLM", "20"))
+
+
+def _panggil_llm(provider, teks: str) -> str | None:
+    """
+    Panggil LLM dengan satu kali coba ulang. None = tetap gagal setelah diulang.
+
+    Errornya DICATAT, bukan ditelan. Versi sebelumnya memakai `except Exception`
+    telanjang, sehingga kegagalan nyata tidak meninggalkan jejak apa pun: satu CV
+    gagal dalam 0,2 detik padahal teksnya identik dengan CV lain yang sukses, dan
+    penyebabnya tidak bisa dikejar sama sekali. Sekali coba ulang karena pola
+    kegagalannya sporadis (429/5xx sesaat), sama seperti embed_with_retry.
+    """
+    log = logging.getLogger("uvicorn.error")
+
+    for percobaan in range(RETRY_LLM):
+        try:
+            return provider.generate(SYSTEM_STRUKTUR, [], teks[:MAX_TEKS_LLM])
+        except Exception as e:
+            log.warning(
+                "strukturisasi LLM gagal (percobaan %d/%d, %d karakter): %s: %s",
+                percobaan + 1, RETRY_LLM, len(teks), type(e).__name__, tanpa_kunci(e),
+            )
+            if percobaan == RETRY_LLM - 1:
+                return None
+            time.sleep(RETRY_JEDA)
+
+    return None
+
+
 def strukturkan_kontekstual(teks: str, provider) -> Terstruktur:
     """
     Strukturisasi berbasis pemahaman konteks. `provider` mengikuti ChatProvider
     (chat.py): generate(system, history, question) -> str.
 
-    Selalu mengembalikan hasil yang bisa dipakai: LLM error, JSON tak terparse,
-    atau ketiga bidang kosong -> jatuh ke strukturkan() berbasis heading.
+    LLM error atau JSON tak terparse -> jatuh ke strukturkan() berbasis heading.
+    LLM menjawab ketiga bidang kosong -> bidang kosong, TIDAK jatuh ke heading
+    (lihat penjelasan di docstring modul).
     """
     if not teks.strip():
         return Terstruktur("", "", "", "", ("teks_kosong",))
 
-    try:
-        jawab = provider.generate(SYSTEM_STRUKTUR, [], teks[:MAX_TEKS_LLM])
-    except Exception:
+    jawab = _panggil_llm(provider, teks)
+    if jawab is None:
         return strukturkan(teks)._replace_flags("llm_gagal")
 
     d = _json_pertama(jawab)
@@ -147,7 +205,13 @@ def strukturkan_kontekstual(teks: str, provider) -> Terstruktur:
     peng, skill, didik = ambil("pengalaman"), ambil("skill"), ambil("pendidikan")
 
     if not (peng or skill or didik):
-        return strukturkan(teks)._replace_flags("llm_kosong")
+        # LLM sudah membaca dan memutuskan dokumen ini tidak memuat isi CV.
+        # Dihormati: bidang dikosongkan -> skor null -> recruiter meninjau.
+        # Jangan diganti tebakan heading, itu menghasilkan skor karangan.
+        logging.getLogger("uvicorn.error").info(
+            "LLM menyatakan dokumen tidak memuat isi CV (%d karakter) - skor dikosongkan", len(teks)
+        )
+        return Terstruktur("", "", "", "", ("tanpa_isi_cv",))
 
     flags = tuple(
         f"{n}_kosong" for n, v in (("pengalaman", peng), ("skill", skill), ("pendidikan", didik)) if not v

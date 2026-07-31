@@ -8,7 +8,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, HttpUrl
 
-from chat import get_chat_provider
+from chat import get_chat_provider, tanpa_kunci
 from embeddings import get_provider
 from extract import ekstrak_bytes
 from ocr import ocr_lengkapi
@@ -111,7 +111,7 @@ async def _callback(job_id: str) -> None:
         await asyncio.to_thread(_kirim_callback, job["callback_url"], job.get("token"), body)
         job["callback"] = "sent"
     except Exception as e:
-        logging.getLogger("uvicorn.error").error("callback ke CI4 gagal: %s", e)
+        logging.getLogger("uvicorn.error").error("callback ke CI4 gagal: %s", tanpa_kunci(e))
         job["callback"] = f"failed: {e}"
 
 
@@ -277,7 +277,7 @@ def chat(req: ChatRequest) -> ChatReply:
     except Exception as e:
         # JANGAN echo str(e): pesan httpx memuat URL Gemini + ?key=API_KEY.
         # Log sisi server, balas detail generik. CI4 tampilkan pesan ramah.
-        logging.getLogger("uvicorn.error").error("chat LLM gagal: %s", e)
+        logging.getLogger("uvicorn.error").error("chat LLM gagal: %s", tanpa_kunci(e))
         raise HTTPException(502, "LLM gagal")
 
     return ChatReply(answer=answer)

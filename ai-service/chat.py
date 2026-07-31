@@ -1,4 +1,5 @@
 import os
+import re
 from typing import Protocol
 
 import httpx
@@ -7,6 +8,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+
+
+def tanpa_kunci(pesan: object) -> str:
+    """
+    Buang API key dari pesan sebelum masuk log.
+
+    httpx menyertakan URL lengkap di pesan errornya, dan URL Gemini membawa
+    ?key=<API KEY>. Meneruskannya mentah ke log berarti menulis kredensial ke
+    berkas - pernah terjadi di uvicorn.log. Setiap logging exception yang
+    menyentuh panggilan API WAJIB lewat sini.
+    """
+    return re.sub(r"key=[^&\s'\"\)]+", "key=***", str(pesan))
 
 # ponytail: jawaban cadangan bila LLM tidak mengembalikan teks (mis. diblokir
 # safety filter) - lebih baik pesan sopan daripada string kosong

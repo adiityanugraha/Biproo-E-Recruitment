@@ -42,7 +42,7 @@ class DemoFlow extends BaseCommand
         $steps = [
             ['upload_cv', 'entered', 'system', null, $email],
             ['ai_verification', 'entered', 'system', null, null],
-            ['ai_verification', 'passed', 'system', 'Skor kecocokan CV 82/100 (demo)', null],
+            ['ai_verification', 'passed', 'system', 'Kemiripan CV terhadap lowongan: tinggi (0,82) (demo)', null],
             ['online_assessment', 'entered', 'system', null, null],
             ['online_assessment', 'passed', 'system', 'Hasil assessment: lulus', null],
         ];
@@ -55,7 +55,7 @@ class DemoFlow extends BaseCommand
         // Gate 1 diputus assessment, bukan skor CV (lihat GateOne)
         $keputusan = GateOne::dariAssessment(true);
         $logger->log($appId, 'gate_1', $keputusan, 'system',
-            'Keputusan dari hasil assessment. Skor CV 82/100 dipakai di Tahap 2', $email);
+            'Keputusan dari hasil assessment. Kemiripan CV tinggi (0,82) dipakai di Tahap 2', $email);
         CLI::write("  gate_1 / {$keputusan} (dari assessment)  [email terpicu]", 'green');
 
         $logger->log($appId, 'penjadwalan', 'entered', 'recruiter', null,

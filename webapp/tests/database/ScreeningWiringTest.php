@@ -95,7 +95,7 @@ final class ScreeningWiringTest extends CIUnitTestCase
             'application_id' => $aid,
             'stage'          => 'ai_verification',
             'status'         => 'passed',
-            'note'           => 'Skor kecocokan CV 74/100 (fase4-embedding-cosine-v1)',
+            'note'           => 'Kemiripan CV terhadap lowongan: sedang (0,74) (fase4-embedding-cosine-v1)',
         ]);
     }
 
@@ -168,12 +168,12 @@ final class ScreeningWiringTest extends CIUnitTestCase
         $body['scores']['overall'] = 0.8123;
         $this->kirimCallback($body)->assertStatus(200);
 
-        // callback mencatat skor sebagai 81/100, bukan "skor_cv=0.8123"
+        // callback mencatat pita + angka terbaca, bukan "skor_cv=0.8123" mentah
         $this->seeInDatabase('candidate_stage_history', [
             'application_id' => $aid,
             'stage'          => 'ai_verification',
             'status'         => 'passed',
-            'note'           => 'Skor kecocokan CV 81/100 (fase4-embedding-cosine-v1)',
+            'note'           => 'Kemiripan CV terhadap lowongan: tinggi (0,81) (fase4-embedding-cosine-v1)',
         ]);
 
         // Gate 1 tetap diputus assessment, bukan skor 0.8123 itu
@@ -222,7 +222,7 @@ final class ScreeningWiringTest extends CIUnitTestCase
         $this->assertSame(1, count(array_filter($rows, fn ($r) => $r['status'] === 'entered')));
         // skor susulan MUNCUL sebagai baris baru, bukan menimpa yang lama.
         // Tanpa ini recruiter melihat "belum ada skor" padahal skornya sudah tiba.
-        $this->assertStringContainsString('90/100', (string) end($rows)['note']);
+        $this->assertStringContainsString('tinggi (0,90)', (string) end($rows)['note']);
     }
 
     // Jalur "upload tetap sukses saat ai-service mati" diverifikasi lewat e2e
@@ -248,8 +248,67 @@ final class ScreeningWiringTest extends CIUnitTestCase
             'application_id' => $aid,
             'stage'          => 'ai_verification',
             'status'         => 'passed',
-            'note'           => 'Skor kecocokan CV 66/100 (fase4-embedding-cosine-v1)',
+            'note'           => 'Kemiripan CV terhadap lowongan: sedang (0,66) (fase4-embedding-cosine-v1)',
         ]);
+    }
+
+    public function testPenilaianUlangDenganSkorBerbedaTercatatBesertaAngkaLamanya(): void
+    {
+        // screening:resend --paksa setelah pipeline diperbaiki: skor lama tetap
+        // tersimpan, perubahannya muncul sebagai baris riwayat baru.
+        [, $aid] = $this->fixture();
+
+        $b                      = $this->bodySukses($aid);
+        $b['scores']['overall'] = 0.6385;
+        $this->kirimCallback($b)->assertStatus(200);
+
+        $b['scores']['overall'] = 0.7120;
+        $this->kirimCallback($b)->assertStatus(200);
+
+        $this->seeInDatabase('candidate_stage_history', [
+            'application_id' => $aid,
+            'stage'          => 'ai_verification',
+            'status'         => 'passed',
+            'note'           => 'Kemiripan CV terhadap lowongan: sedang (0,71) (fase4-embedding-cosine-v1), dinilai ulang dari sedang (0,64)',
+        ]);
+        // baris lama tetap ada - riwayat append-only, bukan ditimpa
+        $this->assertSame(2, (new ScreeningResultModel())->where('application_id', $aid)->countAllResults());
+    }
+
+    public function testSkorDitarikTercatatSebagaiFlaggedBukanDibiarkanDiamDiam(): void
+    {
+        // Skenario nyata: screening pertama memberi skor, screening ulang (kode
+        // strukturisasi diperbaiki) menyimpulkan dokumennya tidak memuat isi CV.
+        // Riwayat WAJIB menunjukkan skor lama tidak berlaku lagi.
+        [, $aid] = $this->fixture();
+
+        $b                      = $this->bodySukses($aid);
+        $b['scores']['overall'] = 0.66;
+        $this->kirimCallback($b)->assertStatus(200);
+
+        $this->kirimCallback($this->bodySukses($aid))->assertStatus(200); // overall null
+
+        $rows = (new StageHistoryModel())
+            ->where(['application_id' => $aid, 'stage' => 'ai_verification'])->orderBy('id')->findAll();
+
+        $this->assertSame('flagged', end($rows)['status']);
+        $this->assertStringContainsString('tidak berlaku lagi', (string) end($rows)['note']);
+    }
+
+    public function testPenarikanSkorTidakDiulangPadaCallbackBerikutnya(): void
+    {
+        [, $aid] = $this->fixture();
+        $b                      = $this->bodySukses($aid);
+        $b['scores']['overall'] = 0.66;
+        $this->kirimCallback($b)->assertStatus(200);
+
+        $this->kirimCallback($this->bodySukses($aid))->assertStatus(200);
+        $this->kirimCallback($this->bodySukses($aid))->assertStatus(200);
+
+        $n = (new StageHistoryModel())
+            ->where(['application_id' => $aid, 'stage' => 'ai_verification', 'status' => 'flagged'])
+            ->countAllResults();
+        $this->assertSame(1, $n);
     }
 
     public function testCallbackKeduaDenganSkorSamaTidakMenambahBarisLagi(): void

@@ -8,7 +8,7 @@
     <p>Belum ada pelamar.</p>
   <?php else: ?>
     <table>
-      <tr><th>Nama</th><th>Posisi</th><th>Tahap Terkini</th><th>Skor CV</th><th>Gate 1</th><th>Interview</th><th></th></tr>
+      <tr><th>Nama</th><th>Posisi</th><th>Tahap Terkini</th><th>Kemiripan CV</th><th>Gate 1</th><th>Interview</th><th></th></tr>
       <?php foreach ($daftar as $a): ?>
         <tr>
           <td><?= esc($a['nama']) ?><br><small style="color:#666"><?= esc($a['email']) ?></small></td>

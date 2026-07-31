@@ -1,6 +1,20 @@
 """Strukturisasi 3 field: CV ber-heading, CV naratif, dan pemisahan atribut sensitif."""
 
+import logging
+
+import pytest
+
+import structure
 from structure import MAX_TEKS_LLM, strukturkan, strukturkan_kontekstual
+
+
+@pytest.fixture(autouse=True)
+def _tanpa_jeda(monkeypatch):
+    """
+    Produksi menunggu 20 detik sebelum mengulang karena kuota 429 dihitung per
+    menit. Uji tidak perlu menunggu itu - yang diuji perilakunya, bukan jedanya.
+    """
+    monkeypatch.setattr(structure, "RETRY_JEDA", 0)
 
 CV_HEADING = """Budi Contoh
 Jl. Melati No. 5, Jakarta - budi@contoh.com - 0812345678
@@ -127,6 +141,32 @@ def test_llm_error_jatuh_ke_jalur_heading():
     assert "Backend Developer" in t.pengalaman  # tetap dapat hasil
 
 
+def test_llm_error_dicoba_ulang_sekali_sebelum_menyerah():
+    """Kegagalan LLM sporadis (429/5xx sesaat) - sekali ulang menutup sebagian."""
+    llm = FakeLLM(RuntimeError("429 rate limit"))
+
+    strukturkan_kontekstual(CV_HEADING, llm)
+
+    assert llm.dipanggil == 2
+
+
+def test_llm_error_dicatat_bukan_ditelan(caplog):
+    """Tanpa catatan ini, llm_gagal tidak bisa didiagnosis sama sekali."""
+    with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
+        strukturkan_kontekstual(CV_HEADING, FakeLLM(RuntimeError("kuota habis")))
+
+    assert "kuota habis" in caplog.text
+    assert "RuntimeError" in caplog.text
+
+
+def test_llm_sukses_tidak_dicoba_ulang():
+    llm = FakeLLM('{"pengalaman":"Kasir","skill":"Excel","pendidikan":"SMK"}')
+
+    strukturkan_kontekstual("teks cv", llm)
+
+    assert llm.dipanggil == 1
+
+
 def test_llm_json_rusak_jatuh_ke_jalur_heading():
     t = strukturkan_kontekstual(CV_HEADING, FakeLLM("maaf saya tidak bisa"))
 
@@ -134,11 +174,26 @@ def test_llm_json_rusak_jatuh_ke_jalur_heading():
     assert "PHP, Python" in t.skill
 
 
-def test_llm_ketiga_bidang_kosong_jatuh_ke_jalur_heading():
+def test_llm_ketiga_bidang_kosong_tidak_dijatuhkan_ke_jalur_heading():
+    """
+    LLM menjawab kosong = dokumen tidak memuat isi CV. Itu jawaban, bukan
+    kegagalan. Dulu jawaban ini dibatalkan oleh jalur heading; pada dokumen
+    tanpa heading akibatnya SELURUH teks mentah masuk ke pengalaman dan
+    menghasilkan skor karangan yang tak terbedakan dari CV asli.
+    """
     t = strukturkan_kontekstual(CV_HEADING, FakeLLM('{"pengalaman":"","skill":"","pendidikan":""}'))
 
-    assert "llm_kosong" in t.flags
-    assert "Universitas Contoh" in t.pendidikan
+    assert t.flags == ("tanpa_isi_cv",)
+    assert (t.pengalaman, t.skill, t.pendidikan) == ("", "", "")
+    # bukti bahwa jalur heading TIDAK dipakai walau teksnya jelas punya heading
+    assert "Universitas Contoh" not in t.pendidikan
+
+
+def test_dokumen_tanpa_isi_cv_tidak_menghasilkan_skor():
+    """Rantai lengkapnya: bidang kosong -> tidak ada yang bisa di-embed."""
+    t = strukturkan_kontekstual("14 halaman transkrip hasil scan", FakeLLM('{"pengalaman":"","skill":"","pendidikan":""}'))
+
+    assert not any((t.pengalaman, t.skill, t.pendidikan))
 
 
 def test_jawaban_terbungkus_code_fence_tetap_terparse():
@@ -165,3 +220,20 @@ def test_teks_panjang_dipotong_sebelum_dikirim():
     strukturkan_kontekstual("x" * 50000, llm)
 
     assert len(llm.terakhir["question"]) == MAX_TEKS_LLM
+
+
+def test_api_key_tidak_pernah_masuk_log(caplog):
+    """
+    httpx menaruh URL lengkap di pesan error, dan URL Gemini membawa ?key=.
+    Kredensial tidak boleh mendarat di berkas log - ini pernah terjadi.
+    """
+    bocor = RuntimeError(
+        "Client error '429 Too Many Requests' for url "
+        "'https://generativelanguage.googleapis.com/v1beta/models/x:generateContent?key=RAHASIA123'"
+    )
+    with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
+        strukturkan_kontekstual(CV_HEADING, FakeLLM(bocor))
+
+    assert "RAHASIA123" not in caplog.text
+    assert "key=***" in caplog.text
+    assert "429" in caplog.text  # sisa pesannya tetap berguna untuk diagnosis

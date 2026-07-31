@@ -21,9 +21,15 @@ use CodeIgniter\CLI\CLI;
  * dilewati, jadi tidak ada job ganda.
  *
  * Pemakaian:
- *   php spark screening:resend            kirim ulang semua yang belum berskor
- *   php spark screening:resend --dry      hanya tampilkan, tidak mengirim
- *   php spark screening:resend --id 37    satu lamaran saja
+ *   php spark screening:resend             kirim ulang semua yang belum berskor
+ *   php spark screening:resend --dry       hanya tampilkan, tidak mengirim
+ *   php spark screening:resend --id 37     satu lamaran saja
+ *   php spark screening:resend --paksa     ikut yang sudah berskor
+ *
+ * --paksa dipakai setelah pipeline diperbaiki: skor lama tetap sah tapi dihitung
+ * dengan cara yang lebih buruk (mis. bidang skill gagal terurai). Baris lama TIDAK
+ * dihapus - hasil baru masuk sebagai baris tambahan di screening_results, jadi
+ * jejak "dulu dinilai begini, sekarang begitu" tetap ada.
  */
 class ScreeningResend extends BaseCommand
 {
@@ -32,8 +38,9 @@ class ScreeningResend extends BaseCommand
     protected $description = 'Kirim ulang job screening CV untuk lamaran yang belum punya skor.';
     protected $usage       = 'screening:resend [--dry] [--id <appId>]';
     protected $options     = [
-        '--dry' => 'Tampilkan daftar tanpa mengirim apa pun.',
-        '--id'  => 'Batasi ke satu application_id.',
+        '--dry'   => 'Tampilkan daftar tanpa mengirim apa pun.',
+        '--id'    => 'Batasi ke satu application_id.',
+        '--paksa' => 'Ikut sertakan lamaran yang sudah punya skor (nilai ulang).',
     ];
 
     /**
@@ -54,8 +61,9 @@ class ScreeningResend extends BaseCommand
 
     public function run(array $params)
     {
-        $dry  = (bool) $this->opsi($params, 'dry');
-        $satu = (int) ($this->opsi($params, 'id') ?? 0);
+        $dry   = (bool) $this->opsi($params, 'dry');
+        $satu  = (int) ($this->opsi($params, 'id') ?? 0);
+        $paksa = (bool) $this->opsi($params, 'paksa');
 
         $token = (string) config('AiService')->sharedToken;
         if ($token === '') {
@@ -76,9 +84,9 @@ class ScreeningResend extends BaseCommand
 
         $perlu = [];
         foreach ($builder->findAll() as $app) {
-            // sudah punya skor -> lewati (idempoten)
+            // sudah punya skor -> lewati (idempoten), kecuali diminta menilai ulang
             $ada = $sr->latestFor((int) $app['id']);
-            if ($ada !== null && $ada['score_overall'] !== null) {
+            if (! $paksa && $ada !== null && $ada['score_overall'] !== null) {
                 continue;
             }
             // CV harus benar-benar ada, kalau tidak ai-service pasti gagal unduh
@@ -95,7 +103,8 @@ class ScreeningResend extends BaseCommand
             return 0;
         }
 
-        CLI::write(count($perlu) . ' lamaran belum punya skor CV.' . ($dry ? ' (mode dry, tidak mengirim)' : ''));
+        CLI::write(count($perlu) . ($paksa ? ' lamaran akan dinilai ulang.' : ' lamaran belum punya skor CV.')
+            . ($dry ? ' (mode dry, tidak mengirim)' : ''));
 
         $ai = service('aiService');
         $ok = $gagal = 0;

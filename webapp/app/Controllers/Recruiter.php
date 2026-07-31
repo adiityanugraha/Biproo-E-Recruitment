@@ -443,7 +443,7 @@ class Recruiter extends BaseController
         $rincian = 'Skor interview ' . $skorInterview . '/100'
             . ($skorCv === null
                 ? ', skor CV belum tersedia (bobot dialihkan ke interview)'
-                : ', skor CV ' . skor_100($skorCv) . '/100')
+                : ', kemiripan CV ' . kemiripan_teks($skorCv))
             . '. Skor akhir ' . skor_100($rec['score']) . '/100';
 
         $logger->log($appId, 'interview_online', 'passed', $actor, 'Skor interview ' . $skorInterview . '/100');

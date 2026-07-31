@@ -141,7 +141,7 @@ final class ScreeningScoreTest extends CIUnitTestCase
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'passed']);
         $this->assertStringContainsString('Skor akhir 78/100', $this->skorAkhir($aid));
-        $this->assertStringContainsString('skor CV 90/100', $this->skorAkhir($aid));
+        $this->assertStringContainsString('kemiripan CV tinggi (0,90)', $this->skorAkhir($aid));
     }
 
     public function testGate2SkorCvRendahMenggugurkanWalauInterviewSama(): void

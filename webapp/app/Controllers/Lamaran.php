@@ -451,7 +451,8 @@ class Lamaran extends BaseController
         // tersimpan di screening_results dan baru dipakai di Gate 2 bersama skor
         // interview (lihat GateOne dan docs/kalibrasi-gate.md).
         $logger->log($appId, 'gate_1', GateOne::dariAssessment($lulus), 'system',
-            'Keputusan dari hasil assessment' . ($skorCv === null ? '' : '. Skor CV ' . skor_100($skorCv) . '/100 dipakai di Tahap 2'),
+            'Keputusan dari hasil assessment'
+            . ($skorCv === null ? '' : '. Kemiripan CV ' . kemiripan_teks($skorCv) . ' dipakai di Tahap 2'),
             $email);
 
         return redirect()->to('/status')->with('sukses', 'Assessment terkirim - lihat status terbaru di bawah.');
@@ -472,7 +473,7 @@ class Lamaran extends BaseController
         if ($sr !== null && $sr['score_overall'] !== null) {
             $skor = (float) $sr['score_overall'];
 
-            return [$skor, 'Skor kecocokan CV ' . skor_100($skor) . '/100 (' . $sr['model_version'] . ')'];
+            return [$skor, 'Kemiripan CV terhadap lowongan: ' . kemiripan_teks($skor) . ' (' . $sr['model_version'] . ')'];
         }
 
         return [null, 'Screening CV belum menghasilkan skor - akan ditinjau recruiter di Tahap 2'];

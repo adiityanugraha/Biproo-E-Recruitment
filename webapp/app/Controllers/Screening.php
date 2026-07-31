@@ -68,10 +68,12 @@ class Screening extends BaseController
         $scores = (array) ($b['scores'] ?? []);
         $sr     = new ScreeningResultModel();
 
-        // Dicek SEBELUM insert: apakah lamaran ini sudah pernah punya skor nyata?
+        // Dicek SEBELUM insert: skor terakhir yang pernah tercatat untuk lamaran ini.
         // Menentukan apakah callback ini membawa kabar baru bagi riwayat.
-        $sebelumnya  = $sr->latestFor($appId);
-        $sudahBerskor = $sebelumnya !== null && $sebelumnya['score_overall'] !== null;
+        $sebelumnya = $sr->latestFor($appId);
+        $skorLama   = $sebelumnya === null || $sebelumnya['score_overall'] === null
+            ? null
+            : round((float) $sebelumnya['score_overall'], 4);
 
         $sr->insert([
             'application_id'   => $appId,
@@ -100,21 +102,40 @@ class Screening extends BaseController
             // (A3.2 antrian proses ulang; pelajaran bug umur-nan tim DS).
             $catatan = (string) (($b['extracted_fields']['catatan'] ?? '') ?: $status);
             $logger->log($appId, 'ai_verification', 'retry_queued', 'system', $catatan);
-        } elseif ($skor !== null && ! $sudahBerskor) {
-            // Skor NYATA yang pertama tiba. Selalu dicatat, termasuk saat riwayat
-            // sudah memuat baris "belum ada skor" dari percobaan sebelumnya
-            // (screening:resend). Riwayat append-only: baris lama tidak diubah,
-            // koreksinya muncul sebagai baris baru supaya jejaknya jujur.
+        } elseif ($skor !== null && round((float) $skor, 4) !== $skorLama) {
+            // Skor nyata yang BERBEDA dari yang tercatat. Mencakup skor pertama
+            // (skorLama null) maupun hasil penilaian ulang setelah pipeline
+            // diperbaiki (screening:resend --paksa). Riwayat append-only: baris
+            // lama tidak diubah, perubahannya muncul sebagai baris baru.
+            //
+            // Callback berulang dengan skor SAMA tidak menambah baris - itu yang
+            // menjaga idempotensi, bukan pengecekan "sudah pernah berskor".
             if (! $adaAI) {
                 $logger->log($appId, 'ai_verification', 'entered', 'system');
             }
             $logger->log($appId, 'ai_verification', 'passed', 'system',
-                'Skor kecocokan CV ' . skor_100($skor) . '/100 (' . self::MODEL_VERSION . ')');
-        } elseif ($skor === null && ! $adaAI) {
+                'Kemiripan CV terhadap lowongan: ' . kemiripan_teks($skor) . ' (' . self::MODEL_VERSION . ')'
+                . ($skorLama === null ? '' : ', dinilai ulang dari ' . kemiripan_teks($skorLama)));
+        } elseif ($skor === null) {
             // Terekstrak, tapi tak ada bidang yang bisa dihitung -> minta mata
             // manusia, bukan diberi angka karangan.
-            $logger->log($appId, 'ai_verification', 'flagged', 'system',
-                'Screening selesai tanpa skor yang bisa dihitung. Perlu ditinjau recruiter.');
+            //
+            // Dicatat JUGA ketika riwayat sudah memuat skor lama. Screening ulang
+            // bisa menyimpulkan dokumen ini tidak memuat isi CV, dan skor lamanya
+            // dengan begitu ditarik. Tanpa baris ini riwayat berhenti di angka
+            // lama sementara skor sebenarnya sudah kosong - persis jenis
+            // kebohongan diam yang pipeline ini ada untuk mencegah.
+            //
+            // Idempoten: tidak diulang bila baris terakhir sudah flagged.
+            if ((new StageHistoryModel())->latestStatus($appId, 'ai_verification') !== 'flagged') {
+                if (! $adaAI) {
+                    $logger->log($appId, 'ai_verification', 'entered', 'system');
+                }
+                $logger->log($appId, 'ai_verification', 'flagged', 'system',
+                    'Screening selesai tanpa skor yang bisa dihitung'
+                    . ($adaAI ? ' - skor sebelumnya tidak berlaku lagi' : '')
+                    . '. Perlu ditinjau recruiter.');
+            }
         }
 
         return $this->response->setJSON(['ok' => true]);
