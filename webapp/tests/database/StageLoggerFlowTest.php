@@ -71,8 +71,9 @@ final class StageLoggerFlowTest extends CIUnitTestCase
         $logger->log($appId, 'online_assessment', 'entered');
         $logger->log($appId, 'online_assessment', 'passed', 'system', 'nilai=0.70');
 
-        $gate = GateOne::evaluate(0.82, 0.70); // dummy score utk minggu 2
-        $logger->log($appId, 'gate_1', $gate['decision'], 'system', "skor_gabungan={$gate['score']}", $email);
+        // Gate 1 diputus assessment, bukan skor CV
+        $logger->log($appId, 'gate_1', GateOne::dariAssessment(true), 'system',
+            'Keputusan dari hasil assessment', $email);
 
         $logger->log($appId, 'penjadwalan', 'entered', 'recruiter', null,
             $email + ['jadwal' => 'Senin, 27 Juli 2026 10:00 WIB', 'join_url' => 'https://zoom.us/j/123']);
@@ -83,7 +84,7 @@ final class StageLoggerFlowTest extends CIUnitTestCase
             ['upload_cv', 'ai_verification', 'ai_verification', 'online_assessment', 'online_assessment', 'gate_1', 'penjadwalan'],
             array_column($rows, 'stage')
         );
-        $this->assertSame('passed', $gate['decision']);
+        $this->assertSame('passed', array_column($rows, 'status')[5], 'gate_1 lolos karena assessment lulus');
 
         // 3 email terpicu (konfirmasi, hasil gate, undangan) dan semuanya terkirim
         $sent = (new EmailQueueWorker(dryRun: true))->process();

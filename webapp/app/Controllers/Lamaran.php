@@ -362,7 +362,7 @@ class Lamaran extends BaseController
         // hanya bila callback belum mendarat / belum bisa dinilai, supaya alur
         // demo tidak terhenti. Keduanya tercatat di screening_results (A7)
         // sehingga pembaca skor tetap satu jalur.
-        [$skorCv, $noteSkorCv, $skorNyata] = $this->skorCv($appId);
+        [$skorCv, $noteSkorCv] = $this->skorCv($appId);
 
         // Callback screening biasanya sudah mencatat tahap ini (Screening::callback).
         // Hanya dicatat di sini bila belum ada, supaya riwayat tidak dobel.
@@ -370,27 +370,29 @@ class Lamaran extends BaseController
             $logger->log($appId, 'ai_verification', 'entered');
             $logger->log($appId, 'ai_verification', 'passed', 'system', $noteSkorCv);
         }
+        $lulus = $nilai >= 1.0;
         $logger->log($appId, 'online_assessment', 'entered');
-        $logger->log($appId, 'online_assessment', $nilai >= 1.0 ? 'passed' : 'failed', 'system', "nilai={$nilai}");
+        $logger->log($appId, 'online_assessment', $lulus ? 'passed' : 'failed', 'system',
+            'Hasil assessment: ' . ($lulus ? 'lulus' : 'tidak lulus'));
 
-        // konfigurasi gate per posisi dari jobs.bobot_json/threshold_json (docs/gate-logic.md)
-        $gate = GateOne::evaluate($skorCv, $nilai, GateOne::configFromJob($app['bobot_json'], $app['threshold_json']));
-
-        // Tanpa skor CV nyata, keputusan otomatis dipaksa flagged: angka dummy tidak
-        // boleh meloloskan atau menggugurkan siapa pun. Menggugurkan kandidat karena
-        // datanya tak terbaca adalah bug yang menjatuhkan 1.839 orang di pipeline DS.
-        $keputusan = $skorNyata ? $gate['decision'] : 'flagged';
-        $catatan   = "skor_gabungan={$gate['score']}" . ($skorNyata ? '' : ' (skor CV belum nyata - wajib review)');
-
-        $logger->log($appId, 'gate_1', $keputusan, 'system', $catatan, $email);
+        // Gate 1 diputus MURNI oleh assessment. Skor CV tidak ikut - ia sudah
+        // tersimpan di screening_results dan baru dipakai di Gate 2 bersama skor
+        // interview (lihat GateOne dan docs/kalibrasi-gate.md).
+        $logger->log($appId, 'gate_1', GateOne::dariAssessment($lulus), 'system',
+            'Keputusan dari hasil assessment' . ($skorCv === null ? '' : '. Skor CV ' . skor_100($skorCv) . '/100 dipakai di Tahap 2'),
+            $email);
 
         return redirect()->to('/status')->with('sukses', 'Assessment terkirim - lihat status terbaru di bawah.');
     }
 
     /**
-     * Skor CV untuk Gate 1: hasil screening nyata bila sudah ada, dummy bila belum.
+     * Skor kecocokan CV dari hasil screening ai-service.
      *
-     * @return array{0: float, 1: string, 2: bool} [skor 0..1, catatan riwayat, nyata?]
+     * Tidak ada fallback dummy lagi: skor CV kini hanya dipakai di Gate 2, jadi
+     * belum tersedianya skor TIDAK memblokir alur Gate 1. Mengarang angka acak
+     * untuk mengisi kekosongan justru berbahaya - itu masuk ke keputusan akhir.
+     *
+     * @return array{0: float|null, 1: string} [skor 0..1 atau null, catatan riwayat]
      */
     private function skorCv(int $appId): array
     {
@@ -398,23 +400,10 @@ class Lamaran extends BaseController
         if ($sr !== null && $sr['score_overall'] !== null) {
             $skor = (float) $sr['score_overall'];
 
-            return [$skor, "skor_cv={$skor} (ai-service, {$sr['model_version']})", true];
+            return [$skor, 'Skor kecocokan CV ' . skor_100($skor) . '/100 (' . $sr['model_version'] . ')'];
         }
 
-        // Belum ada skor nyata: bisa karena callback belum tiba, ekstraksi gagal,
-        // atau tidak ada bidang yang bisa dinilai. Dummy dipakai agar alur jalan,
-        // dan sumbernya ditulis apa adanya di catatan supaya tidak menyesatkan.
-        $skor = mt_rand(30, 90) / 100;
-        (new ScreeningResultModel())->insert([
-            'application_id'   => $appId,
-            'screening_job_id' => 'dummy-' . bin2hex(random_bytes(8)),
-            'status'           => 'success',
-            'score_overall'    => $skor,
-            'provider'         => 'dummy',
-            'model_version'    => 'dummy-mt_rand',
-        ]);
-
-        return [$skor, "skor_cv={$skor} (dummy - skor screening belum tersedia)", false];
+        return [null, 'Screening CV belum menghasilkan skor - akan ditinjau recruiter di Tahap 2'];
     }
 
     /** @return array|null lamaran + judul + config gate, hanya milik kandidat yang login */

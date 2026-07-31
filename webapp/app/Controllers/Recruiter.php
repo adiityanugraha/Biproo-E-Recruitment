@@ -2,7 +2,6 @@
 
 namespace App\Controllers;
 
-use App\Libraries\GateOne;
 use App\Libraries\GateTwo;
 use App\Libraries\StageLogger;
 use App\Libraries\ZoomException;
@@ -17,13 +16,6 @@ use DateTime;
 
 class Recruiter extends BaseController
 {
-    /**
-     * Dipakai bila lamaran tidak punya hasil screening sama sekali, mis. gate_1
-     * diputus lewat jalur lain atau data seed. Angka netral di zona flagged,
-     * bukan hasil perhitungan - sengaja konservatif.
-     */
-    private const SKOR_GATE1_DEFAULT = 0.7;
-
     public function login()
     {
         if ($this->request->is('post')) {
@@ -294,7 +286,9 @@ class Recruiter extends BaseController
             $app['status_akhir'] = $terakhir['status'] ?? '-';
             $gate1               = $history->where(['application_id' => $app['id'], 'stage' => 'gate_1'])->orderBy('id', 'DESC')->first();
             $app['gate1']        = $gate1['status'] ?? null;
-            $app['skor']         = $gate1['note'] ?? '';
+            // skor kecocokan CV sebagai ANGKA dari screening_results, bukan teks
+            // catatan riwayat - itu yang bikin note mentah bocor ke tabel
+            $app['skor_cv']      = $this->skorCv((int) $app['id']);
             // ajuan/jadwal interview terkini (kandidat yang mengajukan, recruiter meng-acc)
             $app['interview']    = $interview->forApplication($app['id']);
         }
@@ -408,46 +402,50 @@ class Recruiter extends BaseController
             return redirect()->to($kembali)->with('error', 'Kandidat ini sudah diputuskan.');
         }
 
-        $skor = max(0, min(100, (int) $this->request->getPost('skor')));
-        // keputusan DIKALKULASI: GateTwo gabungkan skor interview + skor gate1 (memuat skor CV)
-        $rec    = GateTwo::recommend($this->skorGate1($app), $skor / 100);
+        $skorInterview = max(0, min(100, (int) $this->request->getPost('skor')));
+        $skorCv        = $this->skorCv($appId);
+
+        // Gate 2 = skor CV digabung skor interview (bobot per posisi dari jobs).
+        // Tanpa skor CV, bobotnya dialihkan seluruhnya ke interview - bukan diisi
+        // angka karangan yang ikut menentukan kelulusan orang.
+        $config = GateTwo::configFromJob($app['bobot_json'] ?? null, $app['threshold_json'] ?? null);
+        $rec    = $skorCv === null
+            ? GateTwo::recommend($skorInterview / 100, $skorInterview / 100, $config)
+            : GateTwo::recommend($skorCv, $skorInterview / 100, $config);
+
         $lolos  = $rec['recommendation'] === 'hire';
         $logger = new StageLogger();
         $actor  = 'recruiter:' . session('recruiter_nama');
         $email  = ['to' => $app['email'], 'nama' => $app['nama'], 'posisi' => $app['judul']];
 
-        $logger->log($appId, 'interview_online', 'passed', $actor, "skor_interview={$skor}");
-        $logger->log($appId, 'gate_2', $lolos ? 'passed' : 'failed', $actor, "skor_interview={$skor}, skor_akhir={$rec['score']}", $email);
+        $rincian = 'Skor interview ' . $skorInterview . '/100'
+            . ($skorCv === null
+                ? ', skor CV belum tersedia (bobot dialihkan ke interview)'
+                : ', skor CV ' . skor_100($skorCv) . '/100')
+            . '. Skor akhir ' . skor_100($rec['score']) . '/100';
+
+        $logger->log($appId, 'interview_online', 'passed', $actor, 'Skor interview ' . $skorInterview . '/100');
+        $logger->log($appId, 'gate_2', $lolos ? 'passed' : 'failed', $actor, $rincian, $email);
         if ($lolos) {
             $logger->log($appId, 'berkas_kontrak', 'entered', $actor);
         }
 
-        return redirect()->to($kembali)->with('sukses', 'Skor tersimpan. Keputusan akhir: ' . ($lolos ? 'LOLOS' : 'TIDAK LOLOS') . ' - kandidat dikabari via email.');
+        return redirect()->to($kembali)->with('sukses', 'Skor tersimpan. Keputusan akhir: '
+            . ($lolos ? 'LOLOS' : 'TIDAK LOLOS') . ' (skor akhir ' . skor_100($rec['score']) . '/100)'
+            . ' - kandidat dikabari via email.');
     }
 
     /**
-     * Skor gabungan Gate 1, dipakai GateTwo untuk merekomendasikan keputusan akhir.
+     * Skor kecocokan CV untuk Gate 2, dibaca dari screening_results.
      *
-     * Dihitung ulang dari sumber terstruktur: skor CV di screening_results dan
-     * hasil assessment di stage_history.status. GateOne fungsi murni, jadi input
-     * yang sama menghasilkan angka yang sama persis dengan saat Gate 1 diputus.
-     * Sebelumnya angka ini ditarik dari kolom note pakai regex - satu perubahan
-     * kata di kalimat catatan cukup untuk membuatnya jatuh ke nilai default.
+     * Bila screening belum menghasilkan skor, kembalikan null: Gate 2 lalu
+     * diputuskan recruiter tanpa komponen CV, bukan memakai angka karangan.
      */
-    private function skorGate1(array $app): float
+    private function skorCv(int $appId): ?float
     {
-        $sr = (new ScreeningResultModel())->latestFor((int) $app['id']);
-        if ($sr === null || $sr['score_overall'] === null) {
-            return self::SKOR_GATE1_DEFAULT;
-        }
+        $sr = (new ScreeningResultModel())->latestFor($appId);
 
-        $nilai = (new StageHistoryModel())->latestStatus((int) $app['id'], 'online_assessment') === 'passed' ? 1.0 : 0.0;
-
-        return GateOne::evaluate(
-            (float) $sr['score_overall'],
-            $nilai,
-            GateOne::configFromJob($app['bobot_json'] ?? null, $app['threshold_json'] ?? null),
-        )['score'];
+        return $sr === null || $sr['score_overall'] === null ? null : (float) $sr['score_overall'];
     }
 
     /** Format jadwal ramah Bahasa Indonesia untuk email undangan. */
@@ -473,7 +471,7 @@ class Recruiter extends BaseController
 
             $keputusan = $this->request->getPost('keputusan') === 'approve' ? 'passed' : 'failed';
             (new StageLogger())->log($appId, 'gate_1', $keputusan, 'recruiter:' . session('recruiter_nama'),
-                'review manual zona abu-abu', ['to' => $app['email'], 'nama' => $app['nama'], 'posisi' => $app['judul']]);
+                'Keputusan manual recruiter', ['to' => $app['email'], 'nama' => $app['nama'], 'posisi' => $app['judul']]);
 
             return redirect()->to('/recruiter/kandidat')
                 ->with('sukses', 'Keputusan tersimpan: kandidat ' . ($keputusan === 'passed' ? 'diloloskan' : 'tidak diloloskan') . '.');
@@ -481,6 +479,7 @@ class Recruiter extends BaseController
 
         return view('recruiter/review', [
             'app'     => $app,
+            'skorCv'  => $this->skorCv($appId),
             'riwayat' => (new StageHistoryModel())->where('application_id', $appId)->orderBy('id')->findAll(),
             'flagged' => $this->statusGate1($appId) === 'flagged',
         ]);

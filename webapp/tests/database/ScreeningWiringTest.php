@@ -95,7 +95,7 @@ final class ScreeningWiringTest extends CIUnitTestCase
             'application_id' => $aid,
             'stage'          => 'ai_verification',
             'status'         => 'passed',
-            'note'           => 'skor_cv=0.7412 (ai-service, fase4-embedding-cosine-v1)',
+            'note'           => 'Skor kecocokan CV 74/100 (fase4-embedding-cosine-v1)',
         ]);
     }
 
@@ -161,35 +161,34 @@ final class ScreeningWiringTest extends CIUnitTestCase
         }
     }
 
-    public function testSkorNyataDariCallbackDipakaiGate1BukanDummy(): void
+    public function testSkorNyataDariCallbackTercatatSebagaiAngkaTerbaca(): void
     {
         [$cid, $aid] = $this->fixture();
         $body                      = $this->bodySukses($aid);
         $body['scores']['overall'] = 0.8123;
         $this->kirimCallback($body)->assertStatus(200);
 
-        // kandidat mengerjakan assessment -> Gate 1 harus memakai 0.8123, bukan acak
-        $this->withSession(['candidate_id' => $cid, 'candidate_nama' => 'Sinta'])
-            ->post("assessment/{$aid}", ['jawaban' => 'ya']);
-
+        // callback mencatat skor sebagai 81/100, bukan "skor_cv=0.8123"
         $this->seeInDatabase('candidate_stage_history', [
             'application_id' => $aid,
             'stage'          => 'ai_verification',
-            'note'           => 'skor_cv=0.8123 (ai-service, fase4-embedding-cosine-v1)',
-        ]);
-        // gate1 = 0.5*0.8123 + 0.5*1.0 = 0.9062 (bobot default) -> lolos otomatis
-        $this->seeInDatabase('candidate_stage_history', [
-            'application_id' => $aid,
-            'stage'          => 'gate_1',
             'status'         => 'passed',
-            'note'           => 'skor_gabungan=0.9062',
+            'note'           => 'Skor kecocokan CV 81/100 (fase4-embedding-cosine-v1)',
+        ]);
+
+        // Gate 1 tetap diputus assessment, bukan skor 0.8123 itu
+        $this->withSession(['candidate_id' => $cid, 'candidate_nama' => 'Sinta'])
+            ->post("assessment/{$aid}", ['jawaban' => 'tidak']);
+
+        $this->seeInDatabase('candidate_stage_history', [
+            'application_id' => $aid, 'stage' => 'gate_1', 'status' => 'failed',
         ]);
     }
 
-    public function testTanpaSkorNyataGate1DipaksaFlaggedBukanDiputusDummy(): void
+    public function testTanpaSkorCvGate1TetapDiputusAssessment(): void
     {
-        // Tidak ada callback sama sekali -> skorCv jatuh ke dummy acak. Apa pun
-        // angkanya, keputusan otomatis TIDAK boleh diambil.
+        // Tidak ada callback sama sekali. Gate 1 tidak lagi bergantung skor CV,
+        // jadi alur tetap jalan tanpa mengarang angka apa pun.
         [$cid, $aid] = $this->fixture();
 
         $this->withSession(['candidate_id' => $cid, 'candidate_nama' => 'Sinta'])
@@ -197,15 +196,15 @@ final class ScreeningWiringTest extends CIUnitTestCase
 
         $r = (new StageHistoryModel())
             ->where(['application_id' => $aid, 'stage' => 'gate_1'])->first();
-        $this->assertSame('flagged', $r['status'], 'skor dummy tidak boleh memutus otomatis');
-        $this->assertStringContainsString('belum nyata', $r['note']);
+        $this->assertSame('passed', $r['status']);
 
         $ai = (new StageHistoryModel())
             ->where(['application_id' => $aid, 'stage' => 'ai_verification', 'status' => 'passed'])->first();
-        $this->assertStringContainsString('dummy', $ai['note'], 'sumber dummy wajib jujur tertulis di riwayat');
+        $this->assertStringContainsString('belum menghasilkan skor', (string) $ai['note']);
+        $this->dontSeeInDatabase('screening_results', ['application_id' => $aid, 'provider' => 'dummy']);
     }
 
-    public function testCallbackTidakMenimpaRiwayatAiVerificationYangSudahAda(): void
+    public function testCallbackSusulanMenambahBarisSkorTanpaMengulangEntered(): void
     {
         [$cid, $aid] = $this->fixture();
         // kandidat lebih cepat: assessment jalan sebelum callback tiba
@@ -216,14 +215,55 @@ final class ScreeningWiringTest extends CIUnitTestCase
         $body['scores']['overall'] = 0.9;
         $this->kirimCallback($body)->assertStatus(200);
 
-        // hanya satu pasang entered/passed - riwayat append-only tidak dobel
-        $n = (new StageHistoryModel())
-            ->where(['application_id' => $aid, 'stage' => 'ai_verification'])->countAllResults();
-        $this->assertSame(2, $n);
+        $rows = (new StageHistoryModel())
+            ->where(['application_id' => $aid, 'stage' => 'ai_verification'])->orderBy('id')->findAll();
+
+        // 'entered' TIDAK diulang - tahapnya sudah dimulai
+        $this->assertSame(1, count(array_filter($rows, fn ($r) => $r['status'] === 'entered')));
+        // skor susulan MUNCUL sebagai baris baru, bukan menimpa yang lama.
+        // Tanpa ini recruiter melihat "belum ada skor" padahal skornya sudah tiba.
+        $this->assertStringContainsString('90/100', (string) end($rows)['note']);
     }
 
     // Jalur "upload tetap sukses saat ai-service mati" diverifikasi lewat e2e
     // HTTP nyata (upload multipart sungguhan dengan ai-service dimatikan) -
     // feature test CI4 tidak praktis untuk multipart, dan menguji mock yang
     // melempar exception buatan sendiri tidak membuktikan apa pun.
+
+    public function testResendMencatatSkorBaruWalauRiwayatSudahAdaBarisTanpaSkor(): void
+    {
+        // Skenario nyata: ai-service mati saat upload, kandidat lanjut assessment
+        // (riwayat memuat "belum ada skor"), lalu screening:resend berhasil.
+        // Skor baru WAJIB muncul sebagai baris baru - kalau tidak, recruiter
+        // melihat "belum ada skor" padahal skornya sudah ada.
+        [$cid, $aid] = $this->fixture();
+        $this->withSession(['candidate_id' => $cid, 'candidate_nama' => 'Sinta'])
+            ->post("assessment/{$aid}", ['jawaban' => 'ya']);
+
+        $b                      = $this->bodySukses($aid);
+        $b['scores']['overall'] = 0.6551;
+        $this->kirimCallback($b)->assertStatus(200);
+
+        $this->seeInDatabase('candidate_stage_history', [
+            'application_id' => $aid,
+            'stage'          => 'ai_verification',
+            'status'         => 'passed',
+            'note'           => 'Skor kecocokan CV 66/100 (fase4-embedding-cosine-v1)',
+        ]);
+    }
+
+    public function testCallbackKeduaDenganSkorSamaTidakMenambahBarisLagi(): void
+    {
+        [, $aid] = $this->fixture();
+        $b                      = $this->bodySukses($aid);
+        $b['scores']['overall'] = 0.70;
+
+        $this->kirimCallback($b)->assertStatus(200);
+        $this->kirimCallback($b)->assertStatus(200);
+
+        // entered + passed sekali saja, bukan dua kali
+        $n = (new StageHistoryModel())
+            ->where(['application_id' => $aid, 'stage' => 'ai_verification'])->countAllResults();
+        $this->assertSame(2, $n);
+    }
 }

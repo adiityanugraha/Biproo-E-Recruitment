@@ -8,14 +8,14 @@
     <p>Belum ada pelamar.</p>
   <?php else: ?>
     <table>
-      <tr><th>Nama</th><th>Posisi</th><th>Tahap Terkini</th><th>Skor</th><th>Gate 1</th><th>Interview</th><th></th></tr>
+      <tr><th>Nama</th><th>Posisi</th><th>Tahap Terkini</th><th>Skor CV</th><th>Gate 1</th><th>Interview</th><th></th></tr>
       <?php foreach ($daftar as $a): ?>
         <tr>
           <td><?= esc($a['nama']) ?><br><small style="color:#666"><?= esc($a['email']) ?></small></td>
           <td><span class="badge badge-netral"><?= esc($a['posisi']) ?></span></td>
           <td><?= esc(Lamaran::STAGE_LABEL[$a['stage_akhir']] ?? $a['stage_akhir']) ?>
               <?= badge_status($a['status_akhir']) ?></td>
-          <td><small><?= esc($a['skor']) ?></small></td>
+          <td><?= badge_skor($a['skor_cv']) ?></td>
           <td><?= badge_status($a['gate1']) ?></td>
           <td>
             <?php $iv = $a['interview']; ?>

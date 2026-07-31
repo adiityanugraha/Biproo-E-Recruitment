@@ -80,19 +80,45 @@ final class ScreeningScoreTest extends CIUnitTestCase
         return (string) $r['note'];
     }
 
-    public function testAlurAssessmentMenyimpanSkorKeScreeningResults(): void
+    public function testAssessmentTidakLagiMengarangSkorDummy(): void
     {
+        // Dulu alur assessment menyisipkan skor acak ke screening_results supaya
+        // Gate 1 punya angka. Gate 1 kini diputus assessment, jadi tidak ada lagi
+        // alasan mengarang skor - dan angka karangan itu ikut ke keputusan akhir.
         [$cid, $aid] = $this->fixture();
 
         $this->withSession(['candidate_id' => $cid, 'candidate_nama' => 'Sinta'])
             ->post("assessment/{$aid}", ['jawaban' => 'ya']);
 
-        $sr = (new ScreeningResultModel())->latestFor($aid);
-        $this->assertNotNull($sr, 'alur assessment wajib membuat baris screening_results');
-        $this->assertSame('success', $sr['status']);
-        $this->assertSame('dummy', $sr['provider']);
-        $this->assertGreaterThanOrEqual(0.30, (float) $sr['score_overall']);
-        $this->assertLessThanOrEqual(0.90, (float) $sr['score_overall']);
+        $this->assertNull((new ScreeningResultModel())->latestFor($aid));
+        $this->dontSeeInDatabase('screening_results', ['application_id' => $aid, 'provider' => 'dummy']);
+    }
+
+    public function testGate1DiputusAssessmentBukanSkorCv(): void
+    {
+        // skor CV sangat rendah, tapi assessment lulus -> Gate 1 LOLOS
+        [$cid, $aid] = $this->fixture();
+        $this->screening($aid, 0.05);
+
+        $this->withSession(['candidate_id' => $cid, 'candidate_nama' => 'Sinta'])
+            ->post("assessment/{$aid}", ['jawaban' => 'ya']);
+
+        $this->seeInDatabase('candidate_stage_history', [
+            'application_id' => $aid, 'stage' => 'gate_1', 'status' => 'passed',
+        ]);
+    }
+
+    public function testAssessmentTidakLulusMenggugurkanWalauSkorCvTinggi(): void
+    {
+        [$cid, $aid] = $this->fixture();
+        $this->screening($aid, 0.95);
+
+        $this->withSession(['candidate_id' => $cid, 'candidate_nama' => 'Sinta'])
+            ->post("assessment/{$aid}", ['jawaban' => 'tidak']);
+
+        $this->seeInDatabase('candidate_stage_history', [
+            'application_id' => $aid, 'stage' => 'gate_1', 'status' => 'failed',
+        ]);
     }
 
     public function testLatestForMengambilBarisTerbaru(): void
@@ -104,48 +130,63 @@ final class ScreeningScoreTest extends CIUnitTestCase
         $this->assertSame(0.85, round((float) (new ScreeningResultModel())->latestFor($aid)['score_overall'], 2));
     }
 
-    public function testSkorCvTinggiMenghasilkanRekomendasiLolos(): void
+    public function testGate2SkorCvTinggiMenghasilkanLolos(): void
     {
         [, $aid] = $this->fixture();
         $this->screening($aid, 0.90);
         $this->siapDiputus($aid, 'passed');
 
-        // gate1 = 0.5*0.90 + 0.5*1.0 = 0.95 ; gate2 = 0.4*0.95 + 0.6*0.70 = 0.80 -> hire
+        // gate2 = 0.4*0.90 (CV) + 0.6*0.70 (interview) = 0.78 >= 0.7 -> LOLOS
         $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '70']);
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'passed']);
-        $this->assertStringContainsString('skor_akhir=0.8', $this->skorAkhir($aid));
+        $this->assertStringContainsString('Skor akhir 78/100', $this->skorAkhir($aid));
+        $this->assertStringContainsString('skor CV 90/100', $this->skorAkhir($aid));
     }
 
-    public function testSkorCvRendahMenghasilkanTidakLolosWalauInterviewSama(): void
+    public function testGate2SkorCvRendahMenggugurkanWalauInterviewSama(): void
     {
         [, $aid] = $this->fixture();
         $this->screening($aid, 0.30);
-        $this->siapDiputus($aid, 'failed');
+        $this->siapDiputus($aid, 'passed');
 
-        // gate1 = 0.5*0.30 + 0.5*0.0 = 0.15 ; gate2 = 0.4*0.15 + 0.6*0.70 = 0.48 -> no-hire
-        // skor interview IDENTIK dengan test di atas -> yang membedakan hanya skor CV
+        // gate2 = 0.4*0.30 + 0.6*0.70 = 0.54 < 0.7 -> TIDAK LOLOS
+        // skor interview IDENTIK dengan test di atas; yang membedakan hanya skor CV
         $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '70']);
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'failed']);
-        $this->assertStringContainsString('skor_akhir=0.48', $this->skorAkhir($aid));
+        $this->assertStringContainsString('Skor akhir 54/100', $this->skorAkhir($aid));
     }
 
-    /**
-     * Regresi jalur lama: note yang mengaku skor tinggi TIDAK boleh dipercaya lagi.
-     * Tanpa baris screening_results, sistem memakai default konservatif 0.7.
-     * Jalur regex lama akan membaca 0.99 dari note dan memutus LOLOS di sini.
-     */
-    public function testNoteYangMengakuSkorTinggiDiabaikan(): void
+    public function testGate2TanpaSkorCvMengalihkanBobotKeInterview(): void
     {
+        // Tidak ada baris screening_results -> tidak ada skor CV. Bobot CV
+        // dialihkan ke interview, BUKAN diisi angka karangan.
         [, $aid] = $this->fixture();
-        $this->siapDiputus($aid, 'passed', 'skor_gabungan=0.99');
+        $this->siapDiputus($aid, 'passed');
 
-        // default 0.7 -> gate2 = 0.4*0.7 + 0.6*0.6 = 0.64 -> no-hire
-        // regex lama (0.99) -> 0.4*0.99 + 0.36 = 0.756 -> LOLOS (perilaku yang dibuang)
         $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '60']);
 
+        $catatan = $this->skorAkhir($aid);
+        $this->assertStringContainsString('skor CV belum tersedia', $catatan);
+        $this->assertStringContainsString('Skor akhir 60/100', $catatan);
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'failed']);
-        $this->assertStringContainsString('skor_akhir=0.64', $this->skorAkhir($aid));
+    }
+
+    public function testCatatanRiwayatTidakLagiMemuatTeksMentah(): void
+    {
+        // UI menampilkan catatan ini apa adanya, jadi tidak boleh berbentuk
+        // "skor_gabungan=0.915" yang tak terbaca manusia.
+        [$cid, $aid] = $this->fixture();
+        $this->screening($aid, 0.68);
+
+        $this->withSession(['candidate_id' => $cid, 'candidate_nama' => 'Sinta'])
+            ->post("assessment/{$aid}", ['jawaban' => 'ya']);
+
+        $r = (new StageHistoryModel())
+            ->where(['application_id' => $aid, 'stage' => 'gate_1'])->orderBy('id', 'DESC')->first();
+        $this->assertStringNotContainsString('skor_gabungan', (string) $r['note']);
+        $this->assertStringNotContainsString('=0.', (string) $r['note']);
+        $this->assertStringContainsString('assessment', (string) $r['note']);
     }
 }

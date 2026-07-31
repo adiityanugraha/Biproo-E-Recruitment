@@ -66,7 +66,14 @@ class Screening extends BaseController
         }
 
         $scores = (array) ($b['scores'] ?? []);
-        (new ScreeningResultModel())->insert([
+        $sr     = new ScreeningResultModel();
+
+        // Dicek SEBELUM insert: apakah lamaran ini sudah pernah punya skor nyata?
+        // Menentukan apakah callback ini membawa kabar baru bagi riwayat.
+        $sebelumnya  = $sr->latestFor($appId);
+        $sudahBerskor = $sebelumnya !== null && $sebelumnya['score_overall'] !== null;
+
+        $sr->insert([
             'application_id'   => $appId,
             'screening_job_id' => (string) ($b['screening_job_id'] ?? ''),
             'status'           => $status,
@@ -85,23 +92,29 @@ class Screening extends BaseController
         // yang langsung mengerjakan assessment beberapa detik setelah upload akan
         // dinilai memakai skor dummy walaupun skor nyata menyusul sesaat kemudian.
         $logger = new StageLogger();
-        $sudah  = (new StageHistoryModel())->latestStatus($appId, 'ai_verification') !== null;
+        $skor   = $scores['overall'] ?? null;
+        $adaAI  = (new StageHistoryModel())->latestStatus($appId, 'ai_verification') !== null;
 
         if ($status !== 'success') {
             // Gagal ekstraksi -> "diproses ulang", kandidat TIDAK digugurkan
             // (A3.2 antrian proses ulang; pelajaran bug umur-nan tim DS).
             $catatan = (string) (($b['extracted_fields']['catatan'] ?? '') ?: $status);
             $logger->log($appId, 'ai_verification', 'retry_queued', 'system', $catatan);
-        } elseif (! $sudah) {
-            $skor = $scores['overall'] ?? null;
-            if ($skor === null) {
-                // Terekstrak, tapi tak ada bidang yang bisa dinilai -> minta mata
-                // manusia, bukan diberi angka karangan.
-                $logger->log($appId, 'ai_verification', 'flagged', 'system', 'screening selesai tanpa skor: ' . implode(', ', (array) ($b['flags'] ?? [])));
-            } else {
+        } elseif ($skor !== null && ! $sudahBerskor) {
+            // Skor NYATA yang pertama tiba. Selalu dicatat, termasuk saat riwayat
+            // sudah memuat baris "belum ada skor" dari percobaan sebelumnya
+            // (screening:resend). Riwayat append-only: baris lama tidak diubah,
+            // koreksinya muncul sebagai baris baru supaya jejaknya jujur.
+            if (! $adaAI) {
                 $logger->log($appId, 'ai_verification', 'entered', 'system');
-                $logger->log($appId, 'ai_verification', 'passed', 'system', 'skor_cv=' . $skor . ' (ai-service, ' . self::MODEL_VERSION . ')');
             }
+            $logger->log($appId, 'ai_verification', 'passed', 'system',
+                'Skor kecocokan CV ' . skor_100($skor) . '/100 (' . self::MODEL_VERSION . ')');
+        } elseif ($skor === null && ! $adaAI) {
+            // Terekstrak, tapi tak ada bidang yang bisa dihitung -> minta mata
+            // manusia, bukan diberi angka karangan.
+            $logger->log($appId, 'ai_verification', 'flagged', 'system',
+                'Screening selesai tanpa skor yang bisa dihitung. Perlu ditinjau recruiter.');
         }
 
         return $this->response->setJSON(['ok' => true]);

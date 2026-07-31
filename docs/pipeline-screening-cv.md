@@ -66,27 +66,45 @@ antrian ulang, dan skor dummy di alur tergantikan skor nyata end-to-end.
 Bukti end-to-end pada app#20:
 
 ```
-ai_verification    passed   skor_cv=0.6798 (ai-service, fase4-embedding-cosine-v1)
-online_assessment  passed   nilai=1
-gate_1             passed   skor_gabungan=0.8399
+ai_verification    passed   Skor kecocokan CV 68/100 (fase4-embedding-cosine-v1)
+online_assessment  passed   Hasil assessment: lulus
+gate_1             passed   Keputusan dari hasil assessment. Skor CV 68/100 dipakai di Tahap 2
 baris screening_results provider='dummy': 0
 ```
 
+Baris `gate_1` sengaja tidak memuat skor gabungan: sejak kalibrasi, Gate 1
+diputus assessment dan skor CV hanya ikut sebagai informasi (docs/gate-logic.md).
+
 ## Perbandingan jumlah teks terhadap ekstraksi tim DS
 
-| Metode | Rasio karakter kita / DS |
-|---|---|
-| text-layer | 1,37x |
-| ocr | 1,24x |
-| mixed | 2,94x |
+620 CV yang sama, dicocokkan per nama berkas terhadap `hasil_ekstraksi_cv (2).xlsx`
+(kolom `Jml Karakter`). Dua kolom rasio karena keduanya menjawab pertanyaan
+berbeda, dan jawabannya memang berbeda:
 
-Keunggulan pada `mixed` berasal dari deteksi per halaman: dokumen lolos ambang
-total, tapi 70-93% halamannya lampiran scan tanpa teks. Ambang tingkat-dokumen
-melewatkan halaman-halaman itu tanpa jejak.
+| Metode | n | Median kita | Median DS | Rasio median | Rasio total korpus |
+|---|---|---|---|---|---|
+| text-layer | 392 | 1.912 | 1.931 | 0,99x | 1,00x |
+| ocr | 164 | 1.484 | 1.570 | 0,95x | 1,31x |
+| mixed | 64 | 4.849 | 3.162 | 1,53x | 1,50x |
+| **seluruhnya** | **620** | | | | **1,14x** |
+
+Bacaan jujurnya: **pada CV yang khas, ekstraksi kita setara dengan DS, bukan
+lebih unggul.** Hanya pada 28,2% CV teks kita lebih banyak. Rasio total 1,14x
+didorong dokumen panjang, bukan perbaikan merata.
+
+Satu-satunya keunggulan nyata ada di `mixed` (1,5x, konsisten pada median maupun
+total) dan sebabnya jelas: deteksi per halaman. Dokumen jenis ini lolos ambang
+karakter tingkat-dokumen, padahal 70-93% halamannya lampiran scan tanpa teks.
+Ambang tingkat-dokumen melewatkan halaman-halaman itu tanpa jejak; ambang per
+halaman menangkapnya.
+
+> Koreksi: versi awal dokumen ini memuat tabel 1,37x / 1,24x / 2,94x dari
+> benchmark 15 CV. Angka itu SALAH, sampelnya terlalu kecil dan kebetulan
+> memihak. Tabel di atas menggantikannya.
 
 ## Dua batasan yang belum selesai
 
-### 1. Ambang gate belum terkalibrasi
+### 1. Skor ini tidak cukup kuat untuk menggugurkan orang (SUDAH DITINDAKLANJUTI)
 
 Skor cosine absolut terkumpul di rentang sempit. Dari 12 CV di atas:
 
@@ -94,21 +112,25 @@ Skor cosine absolut terkumpul di rentang sempit. Dari 12 CV di atas:
 min 0,6411 | median 0,6798 | max 0,7117
 ```
 
-Ambang `GateOne` bawaan (lolos >= 0,75, gagal < 0,45) membuat **semua**
-kandidat masuk zona flagged, sehingga otomasi gate praktis mati.
+Ambang `GateOne` lama (lolos >= 0,75, gagal < 0,45) membuat **semua** kandidat
+masuk zona flagged, sehingga otomasi gate praktis mati.
 
-Skornya valid, hanya skalanya berbeda. Uji daya beda 4 CV retail terhadap 3
-lowongan:
+Skornya bukan asal: uji daya beda 4 CV retail terhadap 3 lowongan menempatkan
+urutannya benar tanpa kecuali, dengan celah relevan versus tidak relevan
+0,096-0,152.
 
 | CV | Frontliner Retail | Backend Developer | Dokter Anestesi |
 |---|---|---|---|
 | rata-rata | 0,689 | 0,591 | 0,564 |
 
-Urutannya benar untuk keempat CV tanpa kecuali. Celah relevan versus tidak
-relevan 0,096-0,152.
+Tapi bisa membedakan LOWONGAN tidak sama dengan bisa membedakan KANDIDAT.
+Kalibrasi terhadap 7.815 kandidat berlabel (docs/kalibrasi-gate.md) menunjukkan
+di dalam satu posisi daya bedanya jatuh ke AUC ~0,50, dan tidak ada ambang
+gugur-otomatis yang aman.
 
-Kalibrasi ambang dijadwalkan Fase 5 dan butuh distribusi dari lebih banyak CV.
-Angka awal yang tersedia: median 0,68 dan celah sekitar 0,10-0,15.
+Tindak lanjutnya bukan menggeser ambang, melainkan mencabut skor CV dari Gate 1.
+Gate 1 sekarang diputus assessment; skor CV dipakai di Gate 2 bersama skor
+interview. Lihat `docs/gate-logic.md`.
 
 ### 2. Bobot 50/30/20 jarang berlaku utuh
 
@@ -145,6 +167,24 @@ cd app/webapp && php spark serve --port 8080
 
 Butuh di `webapp/.env`: `aiservice.sharedToken` (token bersama jalur internal;
 kosong = kedua endpoint internal menolak semua request).
+
+**ai-service harus hidup saat kandidat melamar.** `Lamaran::kirim` sengaja tidak
+menggagalkan lamaran bila ai-service mati, tapi job screening-nya ikut hilang dan
+kandidat berakhir tanpa skor. Ini bukan hipotesis: pernah terjadi di basis data
+lokal, 7 lamaran tanpa skor dan 4 warning "screening tidak terkirim" di log.
+
+Jaring pengamannya:
+
+```bash
+php spark screening:resend          # kirim ulang semua lamaran yang belum berskor
+php spark screening:resend --dry    # lihat dulu, tidak mengirim apa pun
+php spark screening:resend --id 37  # satu lamaran saja
+```
+
+Idempoten: lamaran yang sudah punya skor nyata dilewati, jadi aman dijalankan
+berulang. Skor susulan masuk sebagai baris BARU di `candidate_stage_history`,
+bukan menimpa baris "belum ada skor" yang lama, supaya koreksinya terlihat di
+riwayat.
 
 Butuh Tesseract terpasang. Di mesin dev ini `ind.traineddata` berada di
 `%LOCALAPPDATA%\tessdata` karena Program Files menolak tulis tanpa admin;

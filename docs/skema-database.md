@@ -115,9 +115,8 @@ FastAPI tidak menulis DB (stateless).
 | Callback: `failed_extraction` (antri proses ulang) | `ai_verification` | `retry_queued` | system |
 | Kandidat mulai assessment | `online_assessment` | `entered` | system |
 | Hasil assessment masuk | `online_assessment` | `passed`/`failed` | system |
-| Evaluasi Gate 1: lolos/tidak otomatis | `gate_1` | `passed`/`failed` | system |
-| Evaluasi Gate 1: zona tengah | `gate_1` | `flagged` | system |
-| Recruiter memutuskan kandidat ber-flag | `gate_1` | `passed`/`failed` | recruiter |
+| Callback sukses tapi tak ada bidang yang bisa dinilai | `ai_verification` | `flagged` | system |
+| Keputusan Gate 1 (dari hasil assessment) | `gate_1` | `passed`/`failed` | system |
 | Recruiter menjadwalkan interview (meeting dibuat) | `penjadwalan` | `entered` | recruiter |
 | Jadwal interview tiba / interview berlangsung | `interview_online` | `entered` | system |
 | Recruiter isi hasil interview | `interview_online` | `passed`/`failed` | recruiter |
@@ -129,7 +128,10 @@ Catatan:
 
 - `ai_verification` bisa punya beberapa siklus `retry_queued` → `passed`
   untuk CV yang diproses ulang; baris terakhir = status berlaku.
-- `gate_1/flagged` lalu keputusan recruiter menghasilkan **dua baris** - jejak
-  human-in-the-loop terlihat di audit (siapa memutuskan, berapa lama review).
+- `flagged` tidak lagi dipakai di `gate_1`: sejak kalibrasi, Gate 1 diputus
+  hasil assessment tanpa zona tengah (docs/gate-logic.md). Status ini tetap ada
+  di CHECK constraint karena masih dipakai `ai_verification/flagged`, yaitu CV
+  yang terbaca tapi tidak punya bidang yang bisa dinilai - itu minta mata
+  manusia, bukan angka karangan.
 - KPI #1 (waktu screening) = `ai_verification/entered` → `passed`;
   KPI #4/#5 = `upload_cv/entered` → `gate_1`/`gate_2` final.

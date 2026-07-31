@@ -42,9 +42,9 @@ class DemoFlow extends BaseCommand
         $steps = [
             ['upload_cv', 'entered', 'system', null, $email],
             ['ai_verification', 'entered', 'system', null, null],
-            ['ai_verification', 'passed', 'system', 'skor_cv=0.82 (dummy, skor nyata di minggu 4)', null],
+            ['ai_verification', 'passed', 'system', 'Skor kecocokan CV 82/100 (demo)', null],
             ['online_assessment', 'entered', 'system', null, null],
-            ['online_assessment', 'passed', 'system', 'nilai=0.70', null],
+            ['online_assessment', 'passed', 'system', 'Hasil assessment: lulus', null],
         ];
 
         foreach ($steps as [$stage, $status, $actor, $note, $mail]) {
@@ -52,9 +52,11 @@ class DemoFlow extends BaseCommand
             CLI::write("  {$stage} / {$status}" . ($mail ? '  [email terpicu]' : ''));
         }
 
-        $gate = GateOne::evaluate(0.82, 0.70);
-        $logger->log($appId, 'gate_1', $gate['decision'], 'system', "skor_gabungan={$gate['score']}", $email);
-        CLI::write("  gate_1 / {$gate['decision']} (skor {$gate['score']})  [email terpicu]", 'green');
+        // Gate 1 diputus assessment, bukan skor CV (lihat GateOne)
+        $keputusan = GateOne::dariAssessment(true);
+        $logger->log($appId, 'gate_1', $keputusan, 'system',
+            'Keputusan dari hasil assessment. Skor CV 82/100 dipakai di Tahap 2', $email);
+        CLI::write("  gate_1 / {$keputusan} (dari assessment)  [email terpicu]", 'green');
 
         $logger->log($appId, 'penjadwalan', 'entered', 'recruiter', null,
             $email + ['jadwal' => 'Senin, 27 Juli 2026 10:00 WIB', 'join_url' => 'https://zoom.us/j/contoh']);
