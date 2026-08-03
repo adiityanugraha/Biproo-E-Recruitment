@@ -33,6 +33,7 @@ $routes->group('recruiter', ['filter' => 'recruiterauth'], static function ($rou
     $routes->get('report', 'Recruiter::report');
     $routes->get('tahap/(:segment)', 'Recruiter::tahap/$1');
     $routes->get('kandidat', 'Recruiter::kandidat');
+    $routes->get('cv/(:num)', 'Recruiter::cvKandidat/$1');
     $routes->post('interview/reschedule/(:num)', 'Recruiter::rescheduleInterview/$1');
     $routes->post('interview/putus/(:num)', 'Recruiter::putusInterview/$1');
     $routes->match(['GET', 'POST'], 'review/(:num)', 'Recruiter::review/$1');

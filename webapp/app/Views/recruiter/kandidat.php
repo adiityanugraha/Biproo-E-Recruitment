@@ -22,21 +22,21 @@
             <?php if ($iv && $iv['status'] === 'approved'): ?>
               <small>📅 <?= esc(date('d M Y H:i', strtotime($iv['scheduled_at']))) ?></small><br>
               <a href="<?= esc($iv['join_url'], 'attr') ?>" target="_blank" rel="noopener" style="color:#2F6FED">Link Zoom</a>
+            <?php elseif ($iv && $iv['status'] === 'rescheduled'): ?>
+              <small style="color:#a5771a">🔁 menunggu kandidat pilih slot baru</small>
             <?php elseif ($iv && $iv['status'] === 'requested'): ?>
-              <small>Ajuan: <?= esc(date('d M Y H:i', strtotime($iv['scheduled_at']))) ?></small><br>
-              <form method="post" action="<?= site_url('recruiter/interview/acc/' . $a['id']) ?>" style="display:inline;margin:0">
-                <?= csrf_field() ?><button style="margin:2px 0;padding:5px 12px;font-size:12px;background:#2E9E5B">Acc</button>
-              </form>
-              <form method="post" action="<?= site_url('recruiter/interview/tolak/' . $a['id']) ?>" style="display:inline;margin:0">
-                <?= csrf_field() ?><button style="margin:2px 0;padding:5px 12px;font-size:12px;background:#E23B4E">Tolak</button>
-              </form>
+              <?php // sisa alur lama sebelum slot otomatis disetujui; tidak ada aksi lagi ?>
+              <small style="color:#999">ajuan lama: <?= esc(date('d M Y H:i', strtotime($iv['scheduled_at']))) ?></small>
             <?php elseif ($a['gate1'] === 'passed'): ?>
-              <small style="color:#999">menunggu ajuan kandidat</small>
+              <small style="color:#999">menunggu kandidat memilih slot</small>
             <?php else: ?>
               <small style="color:#999">-</small>
             <?php endif ?>
           </td>
-          <td>
+          <td style="white-space:nowrap">
+            <a href="<?= site_url('recruiter/cv/' . $a['id']) ?>" target="_blank" rel="noopener"
+               style="color:#2F6FED" title="Buka CV di tab baru">CV</a>
+            &nbsp;
             <?php if ($a['gate1'] === 'flagged'): ?>
               <a href="<?= site_url('recruiter/review/' . $a['id']) ?>" style="color:#2F6FED"><b>Review</b></a>
             <?php else: ?>

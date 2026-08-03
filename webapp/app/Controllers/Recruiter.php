@@ -303,6 +303,57 @@ class Recruiter extends BaseController
         ]);
     }
 
+    /**
+     * Recruiter membuka berkas CV kandidat (arahan atasan 3 Agustus 2026).
+     *
+     * Sebelum ini tombol CV di tabel cuma memunculkan modal "segera hadir",
+     * sehingga recruiter tidak punya cara melihat CV sebelum interview.
+     *
+     * Berbeda dari Screening::cvFile yang melayani ai-service lewat token
+     * bersama: jalur ini memakai sesi recruiter (filter recruiterauth), jadi
+     * keduanya sengaja dipisah supaya kebocoran token internal tidak otomatis
+     * membuka seluruh CV, dan sebaliknya.
+     */
+    public function cvKandidat(int $appId)
+    {
+        $app = (new ApplicationModel())
+            ->select('applications.id, applications.cv_path, candidates.nama')
+            ->join('candidates', 'candidates.id = applications.candidate_id')
+            ->where('applications.id', $appId)
+            ->first();
+
+        if ($app === null) {
+            return redirect()->to('/recruiter/kandidat')->with('error', 'Lamaran tidak ditemukan.');
+        }
+
+        // cv_path selalu buatan Lamaran::kirim (nama acak), tapi tetap dipastikan
+        // berada DI DALAM folder unggahan. Satu baris database yang tercemar tidak
+        // boleh berubah jadi pembaca berkas sembarang di server.
+        $dasar = realpath(WRITEPATH . 'uploads/cv');
+        $path  = realpath(WRITEPATH . $app['cv_path']);
+        if ($dasar === false || $path === false || ! str_starts_with($path, $dasar . DIRECTORY_SEPARATOR)) {
+            return redirect()->back()->with('error', 'Berkas CV tidak ditemukan di server.');
+        }
+
+        // Nama kandidat masuk header Content-Disposition, jadi karakter yang bisa
+        // menyisipkan header baru atau menutup tanda kutip dibuang lebih dulu.
+        $aman = preg_replace('/[^A-Za-z0-9 _.-]/', '', $app['nama']) ?: 'Kandidat';
+        $ext  = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $nama = 'CV - ' . trim($aman) . '.' . $ext;
+
+        // PDF ditampilkan langsung di browser supaya recruiter bisa membacanya
+        // sambil menyiapkan interview tanpa mengunduh dulu. DOCX tidak bisa
+        // dirender browser, jadi tetap diunduh.
+        if ($ext === 'pdf') {
+            return $this->response
+                ->setHeader('Content-Type', 'application/pdf')
+                ->setHeader('Content-Disposition', 'inline; filename="' . $nama . '"')
+                ->setBody((string) file_get_contents($path));
+        }
+
+        return $this->response->download($path, null)->setFileName($nama);
+    }
+
     /** Daftar SEMUA kandidat lintas posisi: stage terkini + skor + flag + label posisi. */
     public function kandidat()
     {

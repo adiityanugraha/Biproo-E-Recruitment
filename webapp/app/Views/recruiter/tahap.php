@@ -105,7 +105,12 @@ foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
               <?php endif ?>
             <?php endif ?>
           </td>
-          <td><button class="btn-view" style="background:#DCE9FF;color:#2F6FED" onclick="segera('Lihat File CV')">CV</button></td>
+          <td>
+            <a href="<?= site_url('recruiter/cv/' . $a['id']) ?>" target="_blank" rel="noopener"
+               title="Buka CV <?= esc($a['nama'], 'attr') ?> di tab baru">
+              <button class="btn-view" style="background:#DCE9FF;color:#2F6FED">CV</button>
+            </a>
+          </td>
           <td><button class="btn-view" style="background:#f0f0f0;color:#888" onclick="segera('Summary')">-</button></td>
           <td>
             <?php if (! empty($a['jadwal'])): ?>

@@ -6,10 +6,16 @@
   <h2><?= esc($app['nama']) ?> - <?= esc($app['judul']) ?></h2>
   <p style="color:#666;font-size:13px;margin-top:-8px"><?= esc($app['email']) ?></p>
 
-  <p style="margin:14px 0 4px">Kemiripan CV terhadap lowongan: <?= badge_skor($skorCv ?? null) ?>
-    <small style="color:#888">dari 100</small></p>
-  <p style="color:#888;font-size:12px;margin:0 0 14px">Skor ini tidak menentukan Tahap 1 - ia dipakai
+  <p style="margin:14px 0 4px">Kemiripan CV terhadap lowongan: <?= badge_skor($skorCv ?? null) ?></p>
+  <p style="color:#888;font-size:12px;margin:0 0 12px">Skor ini tidak menentukan Tahap 1 - ia dipakai
     bersama skor interview untuk keputusan akhir di Tahap 2.</p>
+
+  <p style="margin:0 0 16px">
+    <a href="<?= site_url('recruiter/cv/' . $app['id']) ?>" target="_blank" rel="noopener">
+      <button type="button" style="background:#DCE9FF;color:#2F6FED">📄 Buka CV Kandidat</button>
+    </a>
+    <small style="color:#888;margin-left:8px">terbuka di tab baru</small>
+  </p>
 
   <table>
     <tr><th>Tahap</th><th>Status</th><th>Catatan</th><th>Oleh</th><th>Waktu</th></tr>
