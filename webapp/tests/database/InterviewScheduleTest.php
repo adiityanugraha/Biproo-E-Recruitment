@@ -1,5 +1,6 @@
 <?php
 
+use App\Libraries\SlotJadwal;
 use App\Libraries\StageLogger;
 use App\Libraries\ZoomService;
 use App\Models\ApplicationModel;
@@ -8,13 +9,18 @@ use App\Models\EmailQueueModel;
 use App\Models\InterviewModel;
 use App\Models\JobModel;
 use CodeIgniter\Config\Services;
+use CodeIgniter\Database\Exceptions\DatabaseException;
 use CodeIgniter\Test\CIUnitTestCase;
 use CodeIgniter\Test\DatabaseTestTrait;
 use CodeIgniter\Test\FeatureTestTrait;
 
 /**
- * Alur interview (Fase 3): kandidat ajukan jadwal -> recruiter acc/tolak.
- * Acc -> meeting Zoom (di-mock) + email undangan. Tolak -> kandidat ajukan ulang.
+ * Alur interview sejak 3 Agustus 2026: kandidat memilih SLOT tetap dan
+ * pilihannya langsung terjadwal (meeting Zoom dibuat seketika, di-mock di sini).
+ * Recruiter tidak lagi menyetujui; yang bisa ia lakukan adalah melepas jadwal
+ * (reschedule) supaya kandidat memilih slot lain.
+ *
+ * Tab Interview HRD: On Progress -> Rescheduled -> Completed.
  *
  * @internal
  */
@@ -28,7 +34,29 @@ final class InterviewScheduleTest extends CIUnitTestCase
     protected $namespace = 'App';
 
     private array $sesiRec = ['recruiter_id' => 1, 'recruiter_nama' => 'Irpan'];
-    private const JADWAL   = '2027-01-15T10:00'; // jauh di depan (lolos cek min 1 jam)
+
+    /**
+     * Slot sah ke-$ke. Diambil dari sumber yang sama dengan yang dipakai
+     * controller, jadi uji ini tetap benar hari apa pun ia dijalankan.
+     */
+    private function slot(int $ke = 0): string
+    {
+        return SlotJadwal::tersedia()[$ke];
+    }
+
+    /** Kandidat memilih slot lewat HTTP, seperti menekan tombol di halaman jadwal. */
+    private function pilihSlot(int $cid, int $aid, ?string $slot = null)
+    {
+        return $this->withSession($this->sesiKandidat($cid))
+            ->post("interview/ajukan/{$aid}", ['jadwal' => $slot ?? $this->slot()]);
+    }
+
+    /** Recruiter melepas jadwal supaya kandidat memilih slot lain. */
+    private function reschedule(int $aid, string $alasan = 'bentrok rapat direksi')
+    {
+        return $this->withSession($this->sesiRec)
+            ->post("recruiter/interview/reschedule/{$aid}", ['alasan' => $alasan]);
+    }
 
     private function fakeZoom(): void
     {
@@ -46,12 +74,17 @@ final class InterviewScheduleTest extends CIUnitTestCase
         });
     }
 
-    /** @return array{0:int,1:int} [candidateId, applicationId] */
-    private function fixture(string $gate1): array
+    /**
+     * @param string $email beda email = kandidat kedua, untuk menguji rebutan slot
+     *
+     * @return array{0:int,1:int} [candidateId, applicationId]
+     */
+    private function fixture(string $gate1, string $email = 'sinta@example.com'): array
     {
-        $cid = (new CandidateModel())->insert(['nama' => 'Sinta', 'email' => 'sinta@example.com', 'password_hash' => 'x']);
-        $jid = (new JobModel())->insert(['judul' => 'Backend Developer', 'req_skill' => 'PHP', 'req_pendidikan' => 'S1', 'req_pengalaman' => '2th']);
-        $aid = (int) (new ApplicationModel())->insert(['candidate_id' => $cid, 'job_id' => $jid, 'cv_path' => 'uploads/cv/x.pdf']);
+        $nama = $email === 'sinta@example.com' ? 'Sinta' : 'Budi';
+        $cid  = (new CandidateModel())->insert(['nama' => $nama, 'email' => $email, 'password_hash' => 'x']);
+        $jid  = (new JobModel())->insert(['judul' => 'Backend Developer', 'req_skill' => 'PHP', 'req_pendidikan' => 'S1', 'req_pengalaman' => '2th']);
+        $aid  = (int) (new ApplicationModel())->insert(['candidate_id' => $cid, 'job_id' => $jid, 'cv_path' => 'uploads/cv/x.pdf']);
 
         (new StageLogger())->log($aid, 'gate_1', $gate1, 'system', 'skor=0.8');
 
@@ -63,35 +96,86 @@ final class InterviewScheduleTest extends CIUnitTestCase
         return ['candidate_id' => $cid, 'candidate_nama' => 'Sinta'];
     }
 
-    public function testKandidatAjukanMembuatRequested(): void
+    public function testKandidatPilihSlotLangsungTerjadwalTanpaMenungguAcc(): void
     {
+        $this->fakeZoom();
         [$cid, $aid] = $this->fixture('passed');
 
-        $this->withSession($this->sesiKandidat($cid))->post("interview/ajukan/{$aid}", ['jadwal' => self::JADWAL]);
+        $this->pilihSlot($cid, $aid);
 
-        $this->seeInDatabase('interviews', ['application_id' => $aid, 'status' => 'requested', 'meeting_id' => null]);
+        // langsung approved + meeting Zoom sudah ada, tidak mampir ke 'requested'
+        $this->seeInDatabase('interviews', ['application_id' => $aid, 'status' => 'approved', 'meeting_id' => '99999999999']);
+        $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'penjadwalan', 'status' => 'entered']);
+        $this->seeInDatabase('email_queue', ['to_email' => 'sinta@example.com', 'template' => 'undangan_interview']);
     }
 
     public function testKandidatBelumLolosTidakBisaAjukan(): void
     {
         [$cid, $aid] = $this->fixture('flagged');
 
-        $this->withSession($this->sesiKandidat($cid))->post("interview/ajukan/{$aid}", ['jadwal' => self::JADWAL]);
+        $this->pilihSlot($cid, $aid);
 
         $this->assertSame(0, (new InterviewModel())->where('application_id', $aid)->countAllResults());
     }
 
-    public function testRecruiterAccBuatMeetingDanKirimUndangan(): void
+    public function testSlotDiLuarDaftarDitolak(): void
     {
         $this->fakeZoom();
         [$cid, $aid] = $this->fixture('passed');
-        $this->withSession($this->sesiKandidat($cid))->post("interview/ajukan/{$aid}", ['jadwal' => self::JADWAL]);
+        $hari = substr($this->slot(), 0, 10);
 
-        $this->withSession($this->sesiRec)->post("recruiter/interview/acc/{$aid}");
+        // jam di luar 10.00-16.00, menit tidak bulat, tanggal lampau, format ngawur
+        foreach (["{$hari} 09:00:00", "{$hari} 17:00:00", "{$hari} 10:30:00", '2020-01-06 10:00:00', 'besok pagi'] as $ngawur) {
+            $this->pilihSlot($cid, $aid, $ngawur);
+        }
 
-        $this->seeInDatabase('interviews', ['application_id' => $aid, 'status' => 'approved', 'meeting_id' => '99999999999']);
-        $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'penjadwalan', 'status' => 'entered']);
-        $this->seeInDatabase('email_queue', ['to_email' => 'sinta@example.com', 'template' => 'undangan_interview']);
+        $this->assertSame(0, (new InterviewModel())->where('application_id', $aid)->countAllResults(),
+            'hanya slot dari daftar yang boleh diterima, termasuk untuk POST langsung tanpa lewat halaman');
+    }
+
+    public function testSlotYangSudahDiambilTidakBisaDipilihKandidatLain(): void
+    {
+        $this->fakeZoom();
+        [$cid, $aid]   = $this->fixture('passed');
+        [$cid2, $aid2] = $this->fixture('passed', 'budi@example.com');
+        $slot = $this->slot();
+
+        $this->pilihSlot($cid, $aid, $slot);
+        $this->pilihSlot($cid2, $aid2, $slot);   // kandidat kedua mengincar jam yang sama
+
+        $this->assertSame(1, (new InterviewModel())->where('scheduled_at', $slot)->countAllResults(),
+            'satu slot hanya boleh dipegang satu kandidat');
+        $this->assertSame(0, (new InterviewModel())->where('application_id', $aid2)->countAllResults());
+    }
+
+    public function testSlotTerpakaiDitampilkanTapiTidakBisaDiklik(): void
+    {
+        $this->fakeZoom();
+        [$cid, $aid]   = $this->fixture('passed');
+        [$cid2, $aid2] = $this->fixture('passed', 'budi@example.com');
+        $slot = $this->slot();
+        $this->pilihSlot($cid, $aid, $slot);
+
+        $html = (string) $this->withSession($this->sesiKandidat($cid2))->get('jadwal')->getBody();
+
+        // jamnya tetap terlihat (biar kandidat tahu memang terisi) tapi tanpa radio
+        $this->assertStringContainsString('Sudah dipilih kandidat lain', $html);
+        $this->assertStringNotContainsString('value="' . $slot . '"', $html);
+    }
+
+    public function testIndeksUnikMenolakSlotGandaWalaupunPengecekanDilewati(): void
+    {
+        // Pengecekan controller punya celah antara "dicek kosong" dan "disimpan".
+        // Uji ini melewati controller dan menulis langsung ke tabel, memastikan
+        // database sendiri yang menolak, bukan cuma sopan santun aplikasi.
+        [, $aid]  = $this->fixture('passed');
+        [, $aid2] = $this->fixture('passed', 'budi@example.com');
+        $slot = $this->slot();
+        $iv   = new InterviewModel();
+        $iv->insert(['application_id' => $aid, 'status' => 'approved', 'scheduled_at' => $slot]);
+
+        $this->expectException(DatabaseException::class);
+        $iv->insert(['application_id' => $aid2, 'status' => 'approved', 'scheduled_at' => $slot]);
     }
 
     /** interview yang sudah di-acc & jadwalnya lewat (siap dinilai di tab Completed). */
@@ -139,87 +223,182 @@ final class InterviewScheduleTest extends CIUnitTestCase
         $this->dontSeeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'berkas_kontrak']);
     }
 
-    public function testTabPassedTampilkanApprovedDenganLinkZoom(): void
+    public function testTabOnProgressBerisiInterviewTerjadwalBesertaLinkZoom(): void
     {
         $this->fakeZoom();
         [$cid, $aid] = $this->fixture('passed');
-        $this->withSession($this->sesiKandidat($cid))->post("interview/ajukan/{$aid}", ['jadwal' => self::JADWAL]);
-        $this->withSession($this->sesiRec)->post("recruiter/interview/acc/{$aid}");
+        $this->pilihSlot($cid, $aid);
 
-        $res = $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=passed');
-        $res->assertSee('Sinta');      // masuk tab Passed
-        $res->assertSee('Link Zoom');  // link Zoom tercantum
+        $res = $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online');
+
+        $res->assertSee('Sinta');
+        $res->assertSee('Link Zoom');
+        $res->assertSee('Reschedule');   // tombol pelepas jadwal ikut di sini
     }
 
-    public function testTabFailedTampilkanRejected(): void
+    public function testTabInterviewHrdHanyaTigaTanpaPassedDanFailed(): void
     {
-        [$cid, $aid] = $this->fixture('passed');
-        $this->withSession($this->sesiKandidat($cid))->post("interview/ajukan/{$aid}", ['jadwal' => self::JADWAL]);
-        $this->withSession($this->sesiRec)->post("recruiter/interview/tolak/{$aid}");
+        [$cid] = $this->fixture('passed');
 
-        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=failed')->assertSee('Sinta');
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online')->getBody();
+
+        $this->assertStringContainsString('On Progress', $html);
+        $this->assertStringContainsString('Rescheduled', $html);
+        $this->assertStringContainsString('Completed', $html);
+        $this->assertStringNotContainsString('>Passed<', $html);
+        $this->assertStringNotContainsString('>Failed<', $html);
+        // tombol Acc/Tolak sudah dicabut bersama alur persetujuan manual
+        $this->assertStringNotContainsString('interview/acc/', $html);
+        $this->assertStringNotContainsString('interview/tolak/', $html);
     }
 
-    public function testTolakMengirimEmailKeKandidat(): void
+    public function testTautanTabLamaDiarahkanKePenggantinya(): void
     {
+        // bookmark lama ?status=passed / ?status=failed tidak boleh jatuh diam-diam
+        // ke daftar yang salah
+        $this->fakeZoom();
         [$cid, $aid] = $this->fixture('passed');
-        $this->withSession($this->sesiKandidat($cid))->post("interview/ajukan/{$aid}", ['jadwal' => self::JADWAL]);
+        $this->pilihSlot($cid, $aid);
 
-        $this->withSession($this->sesiRec)->post("recruiter/interview/tolak/{$aid}");
+        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=passed')
+            ->assertSee('Sinta');   // diarahkan ke On Progress
 
-        $this->seeInDatabase('email_queue', ['to_email' => 'sinta@example.com', 'template' => 'jadwal_ditolak']);
+        $this->reschedule($aid);
+        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=failed')
+            ->assertSee('Sinta');   // diarahkan ke Rescheduled
     }
 
-    public function testHalamanJadwalTampilUntukKandidatLolos(): void
+    public function testHalamanJadwalMenampilkanDaftarSlot(): void
     {
-        [$cid, $aid] = $this->fixture('passed');
+        [$cid] = $this->fixture('passed');
 
         $res = $this->withSession($this->sesiKandidat($cid))->get('jadwal');
 
         $res->assertStatus(200);
-        $res->assertSee('Backend Developer'); // posisi yang lolos muncul
-        $res->assertSee('Ajukan Jadwal');     // form pengajuan tersedia
+        $res->assertSee('Backend Developer');   // posisi yang lolos muncul
+        $res->assertSee('Kunci Jadwal Ini');    // tombol pilih slot
+        $res->assertDontSee('datetime-local');  // tidak ada lagi input waktu bebas
     }
 
-    public function testHanyaAjuanPendingMunculDiInterviewHrd(): void
+    public function testSemuaSlotYangDirenderMemangSah(): void
+    {
+        [$cid] = $this->fixture('passed');
+
+        $html = (string) $this->withSession($this->sesiKandidat($cid))->get('jadwal')->getBody();
+
+        preg_match_all('/name="jadwal" value="([^"]+)"/', $html, $m);
+        $this->assertNotEmpty($m[1], 'harus ada slot yang bisa dipilih');
+        foreach ($m[1] as $slot) {
+            $this->assertTrue(SlotJadwal::sah($slot), "slot {$slot} dirender padahal tidak sah");
+        }
+    }
+
+    // --- Reschedule: recruiter melepas jadwal yang sudah terkunci ---
+
+    public function testRescheduleMelepasSlotDanKandidatDikabari(): void
     {
         $this->fakeZoom();
         [$cid, $aid] = $this->fixture('passed');
-        $this->withSession($this->sesiKandidat($cid))->post("interview/ajukan/{$aid}", ['jadwal' => self::JADWAL]);
+        $this->pilihSlot($cid, $aid);
 
-        // masih requested -> muncul di halaman Interview HRD
-        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online')->assertSee('Sinta');
+        $this->reschedule($aid);
 
-        // setelah di-acc (approved) -> tak lagi di daftar "menunggu acc"
-        $this->withSession($this->sesiRec)->post("recruiter/interview/acc/{$aid}");
+        $this->seeInDatabase('interviews', ['application_id' => $aid, 'status' => 'rescheduled']);
+        // riwayat append-only: baris penjadwalan lama tetap, koreksinya menyusul
+        $this->seeInDatabase('candidate_stage_history', [
+            'application_id' => $aid, 'stage' => 'penjadwalan', 'status' => 'failed',
+            'note'           => 'Diminta jadwal ulang: bentrok rapat direksi',
+        ]);
+        $this->seeInDatabase('email_queue', ['to_email' => 'sinta@example.com', 'template' => 'jadwal_reschedule']);
+    }
+
+    public function testSlotYangDilepasBisaDipakaiKandidatLain(): void
+    {
+        $this->fakeZoom();
+        [$cid, $aid]   = $this->fixture('passed');
+        [$cid2, $aid2] = $this->fixture('passed', 'budi@example.com');
+        $slot = $this->slot();
+        $this->pilihSlot($cid, $aid, $slot);
+
+        $this->reschedule($aid);
+
+        // inti fiturnya: slot kembali ke daftar tanpa kode pelepasan khusus
+        $this->pilihSlot($cid2, $aid2, $slot);
+        $this->seeInDatabase('interviews', ['application_id' => $aid2, 'status' => 'approved', 'scheduled_at' => $slot]);
+    }
+
+    public function testKandidatBisaMemilihSlotLainSetelahDireschedule(): void
+    {
+        $this->fakeZoom();
+        [$cid, $aid] = $this->fixture('passed');
+        $this->pilihSlot($cid, $aid, $this->slot(0));
+        $this->reschedule($aid);
+
+        // halaman kandidat menjelaskan sebabnya, bukan cuma menampilkan daftar lagi
+        $html = (string) $this->withSession($this->sesiKandidat($cid))->get('jadwal')->getBody();
+        $this->assertStringContainsString('Jadwal perlu diatur ulang', $html);
+        $this->assertStringContainsString('Lamaran Anda tetap berjalan', $html);
+
+        $this->pilihSlot($cid, $aid, $this->slot(1));
+
+        $this->assertSame(1, (new InterviewModel())->where('application_id', $aid)->countAllResults(),
+            'baris yang sama dipakai ulang, tidak menumpuk');
+        $this->seeInDatabase('interviews', ['application_id' => $aid, 'status' => 'approved', 'scheduled_at' => $this->slot(1)]);
+    }
+
+    public function testKandidatYangDireschedulePindahKeTabRescheduled(): void
+    {
+        $this->fakeZoom();
+        [$cid, $aid] = $this->fixture('passed');
+        $this->pilihSlot($cid, $aid);
+
+        $this->reschedule($aid);
+
+        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=rescheduled')->assertSee('Sinta');
+        // dan TIDAK ikut tertinggal di On Progress
         $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online')->assertDontSee('Sinta');
     }
 
-    public function testAccDariInterviewHrdBuatMeetingDanKembaliKeSana(): void
+    public function testRescheduleDitolakBilaSesinyaSudahLewat(): void
     {
-        $this->fakeZoom();
-        [$cid, $aid] = $this->fixture('passed');
-        $this->withSession($this->sesiKandidat($cid))->post("interview/ajukan/{$aid}", ['jadwal' => self::JADWAL]);
+        // wawancaranya mungkin benar-benar terjadi; mengubahnya akan mengacaukan
+        // tab Completed dan penilaian Gate 2
+        [, $aid] = $this->fixture('passed');
+        $this->pastApprovedInterview($aid);
 
-        $res = $this->withSession($this->sesiRec)->post("recruiter/interview/acc/{$aid}", ['kembali' => 'interview_hrd']);
+        $this->reschedule($aid);
 
-        $res->assertRedirectTo(site_url('recruiter/tahap/interview_online'));
         $this->seeInDatabase('interviews', ['application_id' => $aid, 'status' => 'approved']);
+        $this->dontSeeInDatabase('candidate_stage_history', [
+            'application_id' => $aid, 'stage' => 'penjadwalan', 'status' => 'failed',
+        ]);
     }
 
-    public function testTolakLaluKandidatAjukanUlang(): void
+    public function testRescheduleMenutupGerbangZoom(): void
     {
         [$cid, $aid] = $this->fixture('passed');
-        $this->withSession($this->sesiKandidat($cid))->post("interview/ajukan/{$aid}", ['jadwal' => self::JADWAL]);
+        $this->approvedInterviewPada($aid, 'now');   // jendela sedang terbuka
 
-        // recruiter tolak -> rejected
-        $this->withSession($this->sesiRec)->post("recruiter/interview/tolak/{$aid}");
-        $this->seeInDatabase('interviews', ['application_id' => $aid, 'status' => 'rejected']);
+        // dilepas lewat model karena guard controller menolak jadwal yang sudah tiba
+        $iv = (new InterviewModel())->forApplication($aid);
+        (new InterviewModel())->update($iv['id'], ['status' => 'rescheduled']);
 
-        // kandidat ajukan ulang -> requested lagi (baris sama, tak menumpuk)
-        $this->withSession($this->sesiKandidat($cid))->post("interview/ajukan/{$aid}", ['jadwal' => '2027-02-20T14:00']);
-        $this->assertSame(1, (new InterviewModel())->where('application_id', $aid)->countAllResults());
-        $this->seeInDatabase('interviews', ['application_id' => $aid, 'status' => 'requested']);
+        $res = $this->withSession($this->sesiKandidat($cid))->get("interview/masuk/{$aid}");
+
+        $res->assertRedirectTo(site_url('jadwal'));
+        $this->assertStringNotContainsString('zoom.us', (string) $res->getBody());
+    }
+
+    public function testBarisRequestedPeninggalanTetapTerlihatDiOnProgress(): void
+    {
+        // Alur sekarang tidak pernah membuat 'requested' lagi, tapi kalau ada
+        // baris lama ia tidak boleh hilang dari pandangan recruiter.
+        [, $aid] = $this->fixture('passed');
+        (new InterviewModel())->insert([
+            'application_id' => $aid, 'status' => 'requested', 'scheduled_at' => $this->slot(),
+        ]);
+
+        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online')->assertSee('Sinta');
     }
 
     /** interview approved dengan jadwal relatif ke sekarang, untuk uji gerbang link. */
@@ -368,67 +547,32 @@ final class InterviewScheduleTest extends CIUnitTestCase
             'Keputusan Akhir harus terhubung ke Status Lamaran untuk lamaran ini');
     }
 
-    public function testUrutanTabSidebarFailedSebelumCompleted(): void
+    public function testUrutanTabMengikutiAlurInterview(): void
     {
         $html = (string) $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online')->getBody();
 
-        $this->assertLessThan(
-            strpos($html, '>Completed<'),
-            strpos($html, '>Failed<'),
-            'Failed harus berada di atas Completed'
-        );
+        // On Progress -> Rescheduled -> Completed, mengikuti perjalanan kandidat
+        $this->assertLessThan(strpos($html, '>Rescheduled<'), strpos($html, '>On Progress<'));
+        $this->assertLessThan(strpos($html, '>Completed<'), strpos($html, '>Rescheduled<'));
     }
 
     /**
-     * Tab Failed = ajuan jadwal yang DITOLAK recruiter, bukan kandidat yang gugur.
-     * Perbedaannya penting: kandidat yang ditolak jadwalnya masih dalam proses,
-     * ia cuma perlu mengajukan jadwal lain.
+     * Jadwal yang dilepas berhenti di Rescheduled walaupun tanggalnya sudah lewat.
+     * Kandidatnya tidak pernah diwawancarai, jadi tidak ada yang bisa dinilai
+     * di Gate 2 dan ia tidak boleh muncul di Completed.
      */
-    public function testTabFailedBerisiAjuanJadwalYangDitolakRecruiter(): void
+    public function testJadwalDilepasTidakIkutKeCompletedWalaupunTanggalnyaLewat(): void
     {
-        [$cid, $aid] = $this->fixture('passed');
-        $this->withSession($this->sesiKandidat($cid))->post("interview/ajukan/{$aid}", ['jadwal' => self::JADWAL]);
-
-        $this->withSession($this->sesiRec)->post("recruiter/interview/tolak/{$aid}");
-
-        $this->seeInDatabase('interviews', ['application_id' => $aid, 'status' => 'rejected']);
-        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=failed')->assertSee('Sinta');
-        // dan TIDAK ikut muncul di tab lain
-        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online')->assertDontSee('Sinta');
-    }
-
-    public function testKandidatYangMengajukanUlangKeluarDariTabFailed(): void
-    {
-        [$cid, $aid] = $this->fixture('passed');
-        $sesi = $this->sesiKandidat($cid);
-        $this->withSession($sesi)->post("interview/ajukan/{$aid}", ['jadwal' => self::JADWAL]);
-        $this->withSession($this->sesiRec)->post("recruiter/interview/tolak/{$aid}");
-
-        // kandidat mengajukan jadwal lain
-        $this->withSession($sesi)->post("interview/ajukan/{$aid}", ['jadwal' => '2027-02-20T09:00']);
-
-        // Failed bukan riwayat: ia harus kosong lagi, dan kandidat kembali menunggu acc
-        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=failed')->assertDontSee('Sinta');
-        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online')->assertSee('Sinta');
-    }
-
-    /**
-     * Hanya ajuan yang DISETUJUI yang boleh sampai ke Completed. Ajuan yang
-     * ditolak berhenti di Failed walaupun tanggalnya sudah lewat - kandidatnya
-     * tidak pernah diinterview, jadi tidak ada yang bisa dinilai di Gate 2.
-     */
-    public function testAjuanDitolakTidakIkutKeCompletedWalaupunTanggalnyaLewat(): void
-    {
-        [$cid, $aid] = $this->fixture('passed');
+        [, $aid] = $this->fixture('passed');
         (new InterviewModel())->insert([
             'application_id' => $aid,
-            'status'         => 'rejected',
+            'status'         => 'rescheduled',
             'scheduled_at'   => '2020-01-01 10:00:00', // jelas sudah lewat
         ]);
 
         $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=completed')
             ->assertDontSee('Sinta');
-        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=failed')
+        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=rescheduled')
             ->assertSee('Sinta');
     }
 
@@ -443,29 +587,40 @@ final class InterviewScheduleTest extends CIUnitTestCase
     }
 
     /**
-     * Keempat tab Interview HRD saling lepas: satu kandidat hanya boleh muncul
-     * di satu tab. Sebelumnya Passed menampilkan SEMUA yang di-acc tanpa
-     * memandang tanggal, sehingga kandidat yang jadwalnya sudah lewat nongol
-     * di Passed dan Completed sekaligus - recruiter mengerjakan orang yang sama
-     * dua kali dan mengira ada yang belum ditangani.
+     * Ketiga tab Interview HRD saling lepas: satu kandidat hanya boleh muncul di
+     * satu tab, kalau tidak recruiter mengerjakan orang yang sama dua kali.
      */
-    public function testJadwalLewatPindahDariPassedKeCompletedBukanDiKeduanya(): void
+    public function testSesiSelesaiPindahDariOnProgressKeCompleted(): void
     {
-        [$cid, $aid] = $this->fixture('passed');
+        [, $aid] = $this->fixture('passed');
         $this->pastApprovedInterview($aid);
 
-        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=passed')
+        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online')
             ->assertDontSee('Sinta');
         $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=completed')
             ->assertSee('Sinta');
     }
 
-    public function testJadwalBelumLewatTetapDiPassedDanBelumMasukCompleted(): void
+    public function testSesiBelumSelesaiTetapDiOnProgress(): void
     {
-        [$cid, $aid] = $this->fixture('passed');
+        [, $aid] = $this->fixture('passed');
         $this->approvedInterviewPada($aid, '+2 days');
 
-        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=passed')
+        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online')
+            ->assertSee('Sinta');
+        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=completed')
+            ->assertDontSee('Sinta');
+    }
+
+    public function testSesiYangSedangBerlangsungMasihDiOnProgress(): void
+    {
+        // Batasnya akhir sesi, bukan jam mulai: slot 10.00 baru pindah ke
+        // Completed pukul 10.30, supaya recruiter tidak melihat slider penilaian
+        // untuk wawancara yang sedang berjalan.
+        [, $aid] = $this->fixture('passed');
+        $this->approvedInterviewPada($aid, '-10 minutes');   // mulai 10 menit lalu
+
+        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online')
             ->assertSee('Sinta');
         $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=completed')
             ->assertDontSee('Sinta');
@@ -488,7 +643,7 @@ final class InterviewScheduleTest extends CIUnitTestCase
         $res = $this->withSession($this->sesiKandidat($cid))->get('jadwal');
 
         $res->assertSee('Penjadwalan Berhasil');
-        $res->assertDontSee('Pendaftaran Jadwal Interview');
+        $res->assertDontSee('Pilih Jadwal Interview');
     }
 
     public function testHalamanJadwalTetapPendaftaranSelamaRuangBelumTerbuka(): void
@@ -498,7 +653,7 @@ final class InterviewScheduleTest extends CIUnitTestCase
 
         $res = $this->withSession($this->sesiKandidat($cid))->get('jadwal');
 
-        $res->assertSee('Pendaftaran Jadwal Interview');
+        $res->assertSee('Pilih Jadwal Interview');
         $res->assertDontSee('Penjadwalan Berhasil');
     }
 
@@ -520,9 +675,8 @@ final class InterviewScheduleTest extends CIUnitTestCase
     {
         $this->fakeZoom();
         [$cid, $aid] = $this->fixture('passed');
-        $this->withSession($this->sesiKandidat($cid))->post("interview/ajukan/{$aid}", ['jadwal' => self::JADWAL]);
 
-        $this->withSession($this->sesiRec)->post("recruiter/interview/acc/{$aid}");
+        $this->pilihSlot($cid, $aid);
 
         $baris   = (new EmailQueueModel())->where('template', 'undangan_interview')->first();
         $payload = json_decode($baris['payload_json'], true);

@@ -29,16 +29,21 @@ if (($stage ?? '') === 'upload_cv') {
     // Tidak ada keputusan lolos/gagal di tahap unggah - satu tab saja
     $tabs = ['uploaded' => ['Uploaded', '📥', $base]];
 } else {
-    // Urutan mengikuti alur ajuan: menunggu -> disetujui -> ditolak, baru
-    // Completed yang berada di ujung karena menandai proses yang sudah tuntas.
-    $tabs = [
-        'progress' => ['On Progress', '🔄', $base],
-        'passed'   => ['Passed', '✅', $base . '?status=passed'],
-        'failed'   => ['Failed', '❌', $base . '?status=failed'],
-    ];
-    // tab Completed (keputusan Gate 2) hanya relevan di Interview HRD
     if (($stage ?? '') === 'interview_online') {
-        $tabs['completed'] = ['Completed', '🏁', $base . '?status=completed'];
+        // Interview HRD punya alurnya sendiri: terjadwal -> (dilepas) -> selesai.
+        // Tidak ada "Passed"/"Failed" di sini, karena interview yang terjadwal
+        // belum lolos apa-apa dan jadwal yang dilepas bukan kandidat yang gugur.
+        $tabs = [
+            'progress'    => ['On Progress', '🔄', $base],
+            'rescheduled' => ['Rescheduled', '🔁', $base . '?status=rescheduled'],
+            'completed'   => ['Completed', '🏁', $base . '?status=completed'],
+        ];
+    } else {
+        $tabs = [
+            'progress' => ['On Progress', '🔄', $base],
+            'passed'   => ['Passed', '✅', $base . '?status=passed'],
+            'failed'   => ['Failed', '❌', $base . '?status=failed'],
+        ];
     }
 }
 foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
@@ -67,16 +72,20 @@ foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
           <td style="white-space:nowrap">
             <a href="<?= site_url('recruiter/review/' . $a['id']) ?>"><button class="btn-view">View</button></a>
             <?php if ($stage === 'interview_online' && $status === 'progress'): ?>
-              <form method="post" action="<?= site_url('recruiter/interview/acc/' . $a['id']) ?>" style="display:inline;margin:0">
-                <?= csrf_field() ?><input type="hidden" name="kembali" value="interview_hrd">
-                <button class="btn-view" style="background:#2E9E5B;color:#fff">Acc</button>
+              <?php if (! empty($a['join_url'])): ?>
+                <a href="<?= esc($a['join_url'], 'attr') ?>" target="_blank" rel="noopener"><button class="btn-view" style="background:#2F6FED;color:#fff">🎥 Link Zoom</button></a>
+              <?php endif ?>
+              <?php // Melepas jadwal: slot kembali ke daftar, kandidat memilih ulang.
+                    // Bukan menggugurkan kandidat, jadi warnanya netral bukan merah. ?>
+              <form method="post" action="<?= site_url('recruiter/interview/reschedule/' . $a['id']) ?>" style="margin:6px 0 0">
+                <?= csrf_field() ?>
+                <input type="text" name="alasan" placeholder="Alasan (opsional)" maxlength="200"
+                       style="width:150px;padding:4px 8px;font-size:11px;border:1px solid #e2e6ee;border-radius:6px">
+                <button class="btn-view" style="background:#F5B301;color:#5a3d00;margin-top:4px"
+                        onclick="return confirm('Lepas jadwal ini? Kandidat akan diminta memilih slot lain.')">🔁 Reschedule</button>
               </form>
-              <form method="post" action="<?= site_url('recruiter/interview/tolak/' . $a['id']) ?>" style="display:inline;margin:0">
-                <?= csrf_field() ?><input type="hidden" name="kembali" value="interview_hrd">
-                <button class="btn-view" style="background:#E23B4E;color:#fff">Tolak</button>
-              </form>
-            <?php elseif ($stage === 'interview_online' && $status === 'passed' && ! empty($a['join_url'])): ?>
-              <a href="<?= esc($a['join_url'], 'attr') ?>" target="_blank" rel="noopener"><button class="btn-view" style="background:#2F6FED;color:#fff">🎥 Link Zoom</button></a>
+            <?php elseif ($stage === 'interview_online' && $status === 'rescheduled'): ?>
+              <span style="font-size:11px;color:#a5771a">menunggu kandidat memilih slot baru</span>
             <?php elseif ($stage === 'interview_online' && $status === 'completed'): ?>
               <?php if ($a['gate2'] === 'passed'): ?>
                 <span style="color:#1d6b3d;font-weight:700">✅ Lolos</span>

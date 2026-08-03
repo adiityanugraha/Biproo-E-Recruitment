@@ -21,6 +21,8 @@ class StageLogger
         'gate_2:passed'       => 'hasil_gate',
         'gate_2:failed'       => 'hasil_gate',
         'penjadwalan:entered' => 'undangan_interview',
+        // recruiter melepas jadwal, kandidat diminta memilih slot lain
+        'penjadwalan:failed'  => 'jadwal_reschedule',
     ];
 
     /**

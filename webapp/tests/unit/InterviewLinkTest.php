@@ -4,7 +4,8 @@ use App\Models\InterviewModel;
 use CodeIgniter\Test\CIUnitTestCase;
 
 /**
- * Jendela link Zoom kandidat: aktif 15 menit sebelum jadwal sampai 1 jam sesudahnya.
+ * Jendela link Zoom kandidat: aktif 15 menit sebelum jadwal sampai 30 menit sesudahnya
+ * (satu sesi interview 30 menit, arahan atasan 3 Agustus 2026).
  * Fungsi murni, waktu "sekarang" disuntik - jadi batas jendela diuji tepat di
  * detiknya tanpa DB dan tanpa menunggu waktu nyata.
  *
@@ -36,12 +37,12 @@ final class InterviewLinkTest extends CIUnitTestCase
 
     public function testTepatDiBatasTutupMasihAktif(): void
     {
-        $this->assertTrue($this->pada('2026-08-10 11:00:00'));
+        $this->assertTrue($this->pada('2026-08-10 10:30:00'));
     }
 
     public function testSedetikSetelahJendelaTutupSudahMati(): void
     {
-        $this->assertFalse($this->pada('2026-08-10 11:00:01'));
+        $this->assertFalse($this->pada('2026-08-10 10:30:01'));
     }
 
     /**

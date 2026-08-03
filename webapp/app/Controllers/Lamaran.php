@@ -4,13 +4,16 @@ namespace App\Controllers;
 
 use App\Libraries\AiServiceException;
 use App\Libraries\GateOne;
+use App\Libraries\SlotJadwal;
 use App\Libraries\StageLogger;
+use App\Libraries\ZoomException;
 use App\Models\ApplicationModel;
 use App\Models\CandidateModel;
 use App\Models\InterviewModel;
 use App\Models\JobModel;
 use App\Models\ScreeningResultModel;
 use App\Models\StageHistoryModel;
+use CodeIgniter\Database\Exceptions\DatabaseException;
 use DateTime;
 
 class Lamaran extends BaseController
@@ -329,43 +332,120 @@ class Lamaran extends BaseController
             }
         }
 
-        return view('lamaran/jadwal', ['apps' => $lolos]);
+        return view('lamaran/jadwal', [
+            'apps' => $lolos,
+            // slot yang sudah dipegang kandidat lain ikut ditampilkan tapi mati,
+            // supaya kandidat tahu jam itu memang sudah terisi - bukan hilang
+            // begitu saja seolah sistemnya tidak menawarkan jam tersebut
+            'slot' => SlotJadwal::perTanggal($interview->slotTerpakai()),
+        ]);
     }
 
-    /** Kandidat mengajukan jadwal interview (setelah lolos Gate 1). Recruiter yang meng-acc. */
+    /**
+     * Kandidat memilih slot interview (setelah lolos Gate 1).
+     *
+     * Sejak 3 Agustus 2026 kandidat TIDAK lagi mengetik waktu bebas melainkan
+     * memilih dari daftar slot tetap, dan pilihannya LANGSUNG terjadwal tanpa
+     * menunggu persetujuan: slot yang ditawarkan sudah berarti recruiter siap
+     * di jam itu, jadi langkah acc cuma menunda kandidat tanpa menambah
+     * keputusan apa pun. Meeting Zoom dibuat saat itu juga.
+     */
     public function ajukanInterview(int $appId)
     {
-        if ($this->lamaranMilikSendiri($appId) === null) {
+        $app = $this->lamaranDetailMilikSendiri($appId);
+        if ($app === null) {
             return redirect()->to('/jadwal')->with('error', 'Lamaran tidak ditemukan.');
         }
         if ((new StageHistoryModel())->latestStatus($appId, 'gate_1') !== 'passed') {
-            return redirect()->to('/jadwal')->with('error', 'Ajukan interview hanya setelah lolos Tahap 1.');
+            return redirect()->to('/jadwal')->with('error', 'Pilih jadwal interview hanya setelah lolos Tahap 1.');
         }
 
         $interview = new InterviewModel();
         $iv        = $interview->forApplication($appId);
         if ($iv !== null && in_array($iv['status'], ['requested', 'approved'], true)) {
-            return redirect()->to('/jadwal')->with('error', 'Sudah ada ajuan/jadwal interview untuk lamaran ini.');
+            return redirect()->to('/jadwal')->with('error', 'Sudah ada jadwal interview untuk lamaran ini.');
         }
 
-        $jadwal = (string) $this->request->getPost('jadwal');
-        $dt     = DateTime::createFromFormat('Y-m-d\TH:i', $jadwal) ?: DateTime::createFromFormat('Y-m-d\TH:i:s', $jadwal);
-        if ($dt === false) {
-            return redirect()->to('/jadwal')->with('error', 'Jadwal tidak valid.');
+        // Satu pemeriksaan menutup format, jam, hari kerja, dan waktu lampau.
+        // Kandidat yang mem-POST langsung tanpa lewat halaman tetap tersaring.
+        $slot = (string) $this->request->getPost('jadwal');
+        if (! SlotJadwal::sah($slot)) {
+            return redirect()->to('/jadwal')->with('error', 'Slot itu tidak tersedia. Silakan pilih dari daftar.');
         }
-        if ($dt <= new DateTime('+1 hour')) {
-            return redirect()->to('/jadwal')->with('error', 'Pilih jadwal minimal 1 jam ke depan.');
-        }
-
-        $data = ['application_id' => $appId, 'status' => 'requested', 'scheduled_at' => $dt->format('Y-m-d H:i:s')];
-        if ($iv !== null) {
-            // sebelumnya rejected -> ajukan ulang: pakai baris sama, bersihkan meeting lama
-            $interview->update($iv['id'], $data + ['meeting_id' => null, 'join_url' => null, 'start_url' => null]);
-        } else {
-            $interview->insert($data);
+        if (in_array($slot, $interview->slotTerpakai(), true)) {
+            return redirect()->to('/jadwal')->with('error', 'Slot itu baru saja diambil kandidat lain. Silakan pilih jam lain.');
         }
 
-        return redirect()->to('/jadwal')->with('sukses', 'Ajuan jadwal interview terkirim, menunggu persetujuan recruiter.');
+        $dt = new DateTime($slot);
+
+        try {
+            $meeting = service('zoomService')->createMeeting(
+                'Interview - ' . $app['nama'] . ' - ' . $app['judul'],
+                $dt->format('Y-m-d\TH:i:s'),
+            );
+        } catch (ZoomException $e) {
+            log_message('error', 'Zoom createMeeting gagal: {m}', ['m' => $e->getMessage()]);
+
+            return redirect()->to('/jadwal')->with('error', 'Gagal menyiapkan ruang interview. Coba lagi sebentar.');
+        }
+
+        $data = [
+            'application_id' => $appId,
+            'status'         => 'approved',
+            'scheduled_at'   => $dt->format('Y-m-d H:i:s'),
+            'meeting_id'     => $meeting['meeting_id'],
+            'join_url'       => $meeting['join_url'],
+            'start_url'      => $meeting['start_url'],
+        ];
+
+        try {
+            if ($iv !== null) {
+                // pernah ditolak lalu memilih ulang: pakai baris yang sama
+                $interview->update($iv['id'], $data);
+            } else {
+                $interview->insert($data);
+            }
+        } catch (DatabaseException $e) {
+            // Indeks unik menolak: kandidat lain menang balapan di detik yang sama.
+            // Pengecekan di atas punya celah, indeks database yang menutupnya.
+            log_message('info', 'slot {s} bentrok utk lamaran {id}', ['s' => $slot, 'id' => $appId]);
+
+            return redirect()->to('/jadwal')->with('error', 'Slot itu baru saja diambil kandidat lain. Silakan pilih jam lain.');
+        }
+
+        (new StageLogger())->log($appId, 'penjadwalan', 'entered', 'system', 'kandidat memilih slot ' . $slot, [
+            'to'     => $app['email'],
+            'nama'   => $app['nama'],
+            'posisi' => $app['judul'],
+            'jadwal' => $this->jadwalIndo($dt),
+            // gerbang aplikasi, bukan join_url mentah: link yang diteruskan ke
+            // orang lain tidak berguna di luar jendela interview
+            'join_url' => site_url("interview/masuk/{$appId}"),
+        ]);
+
+        return redirect()->to('/jadwal')->with('sukses', 'Jadwal interview terkunci. Undangan sudah dikirim ke email Anda.');
+    }
+
+    /** Nama hari + tanggal Indonesia untuk isi email undangan. */
+    private function jadwalIndo(DateTime $dt): string
+    {
+        $hari  = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'][(int) $dt->format('w')];
+        $bulan = [1 => 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli',
+            'Agustus', 'September', 'Oktober', 'November', 'Desember'][(int) $dt->format('n')];
+
+        return $hari . ', ' . $dt->format('j') . ' ' . $bulan . ' ' . $dt->format('Y') . ', ' . $dt->format('H:i') . ' WIB';
+    }
+
+    /** Lamaran milik kandidat yang login, lengkap dengan nama/email/posisi. */
+    private function lamaranDetailMilikSendiri(int $appId): ?array
+    {
+        return (new ApplicationModel())
+            ->select('applications.id, candidates.nama, candidates.email, jobs.judul')
+            ->join('candidates', 'candidates.id = applications.candidate_id')
+            ->join('jobs', 'jobs.id = applications.job_id')
+            ->where('applications.id', $appId)
+            ->where('applications.candidate_id', session('candidate_id'))
+            ->first();
     }
 
     /**

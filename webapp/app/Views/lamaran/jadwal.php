@@ -13,8 +13,9 @@ $adaSesiTerbuka = (bool) array_filter($apps, static fn (array $a): bool => $a['l
     <h2>Penjadwalan Berhasil</h2>
     <p style="color:#666;font-size:14px;margin-top:-6px">Jadwal interview Anda sudah disetujui recruiter dan ruang Zoom-nya sudah dibuka. Silakan masuk lewat tombol di bawah.</p>
   <?php else: ?>
-    <h2>Pendaftaran Jadwal Interview</h2>
-    <p style="color:#666;font-size:14px;margin-top:-6px">Ajukan jadwal interview untuk lamaran yang sudah lolos Tahap 1. Recruiter akan menyetujui atau menolak ajuan Anda.</p>
+    <h2>Pilih Jadwal Interview</h2>
+    <p style="color:#666;font-size:14px;margin-top:-6px">Pilih slot interview untuk lamaran yang sudah lolos Tahap 1.
+      Slot yang Anda pilih langsung terkunci dan ruang Zoom dibuatkan saat itu juga.</p>
   <?php endif ?>
 </div>
 
@@ -32,7 +33,7 @@ $adaSesiTerbuka = (bool) array_filter($apps, static fn (array $a): bool => $a['l
 
     <?php if ($iv && $iv['status'] === 'approved'): ?>
       <div style="padding:14px;background:#F3FBF5;border:1px solid #2E9E5B;border-radius:10px">
-        <b style="color:#1d6b3d">✅ Ajuan diterima - Interview dijadwalkan</b>
+        <b style="color:#1d6b3d">✅ Jadwal terkunci - Interview dijadwalkan</b>
         <p style="margin:8px 0 0">🗓️ <b><?= esc(date('d M Y, H:i', strtotime($iv['scheduled_at']))) ?> WIB</b></p>
         <?php if ($app['link_aktif']): ?>
           <?php
@@ -49,7 +50,7 @@ $adaSesiTerbuka = (bool) array_filter($apps, static fn (array $a): bool => $a['l
           </a>
         <?php else: ?>
           <p style="margin:10px 0 0;font-size:13px;color:#666">Link Zoom aktif mulai 15 menit sebelum jadwal,
-            dan tidak bisa dipakai lagi 1 jam setelah jadwal berakhir.</p>
+            dan mati 30 menit setelah jam mulai (durasi satu sesi).</p>
         <?php endif ?>
       </div>
 
@@ -60,19 +61,59 @@ $adaSesiTerbuka = (bool) array_filter($apps, static fn (array $a): bool => $a['l
       </div>
 
     <?php else: ?>
-      <?php if ($iv && $iv['status'] === 'rejected'): ?>
+      <?php if ($iv && $iv['status'] === 'rescheduled'): ?>
+        <?php // Warna kuning, bukan merah: kandidat TIDAK gugur, hanya jamnya
+              // berubah. Merah akan membuatnya mengira lamarannya berakhir. ?>
+        <div style="padding:12px 14px;background:#FFF9EC;border:1px solid #F3B94A;border-radius:10px;margin-bottom:14px">
+          <b style="color:#a5771a">🔁 Jadwal perlu diatur ulang</b>
+          <p style="margin:6px 0 0;font-size:14px">Jadwal <b><?= esc(date('d M Y, H:i', strtotime($iv['scheduled_at']))) ?> WIB</b>
+            dilepas oleh recruiter. <b>Lamaran Anda tetap berjalan</b> - silakan pilih slot lain di bawah ini.</p>
+        </div>
+      <?php elseif ($iv && $iv['status'] === 'rejected'): ?>
         <div style="padding:12px 14px;background:#FDECEC;border:1px solid #E23B4E;border-radius:10px;margin-bottom:14px">
           <b style="color:#a12734">❌ Ajuan ditolak recruiter</b>
-          <p style="margin:6px 0 0;font-size:14px">Jadwal <b><?= esc(date('d M Y, H:i', strtotime($iv['scheduled_at']))) ?> WIB</b> tidak disetujui. Silakan ajukan jadwal lain di bawah ini.</p>
+          <p style="margin:6px 0 0;font-size:14px">Jadwal <b><?= esc(date('d M Y, H:i', strtotime($iv['scheduled_at']))) ?> WIB</b> tidak disetujui. Silakan pilih jadwal lain di bawah ini.</p>
         </div>
       <?php endif ?>
 
-      <form method="post" action="<?= site_url('interview/ajukan/' . $app['id']) ?>">
-        <?= csrf_field() ?>
-        <label>Pilih tanggal &amp; jam interview</label>
-        <input type="datetime-local" name="jadwal" required>
-        <button style="margin-top:14px">Ajukan Jadwal</button>
-      </form>
+      <?php $adaSlot = false; foreach ($slot as $isi) { foreach ($isi as $s) { if (! $s['terpakai']) { $adaSlot = true; break 2; } } } ?>
+
+      <?php if (! $adaSlot): ?>
+        <p style="color:#666;font-size:14px">Semua slot dalam 7 hari kerja ke depan sudah terisi. Silakan cek lagi besok.</p>
+      <?php else: ?>
+        <p style="color:#666;font-size:14px;margin:0 0 10px">Pilih satu slot. Sesi berlangsung 30 menit, dan slot yang sudah
+          dipilih kandidat lain tidak bisa diambil lagi.</p>
+
+        <form method="post" action="<?= site_url('interview/ajukan/' . $app['id']) ?>">
+          <?= csrf_field() ?>
+          <?php foreach ($slot as $tanggal => $jamJam): ?>
+            <div style="margin-bottom:12px">
+              <div style="font-size:13px;font-weight:600;margin-bottom:6px">
+                <?= esc(date('l, d M Y', strtotime($tanggal))) ?>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px">
+                <?php foreach ($jamJam as $s): ?>
+                  <?php if ($s['terpakai']): ?>
+                    <span title="Sudah dipilih kandidat lain"
+                          style="padding:8px 14px;border:1px solid #eef0f5;border-radius:10px;background:#f4f4f6;color:#aaa;font-size:13px;text-decoration:line-through">
+                      <?= esc($s['jam']) ?>
+                    </span>
+                  <?php else: ?>
+                    <label style="padding:8px 14px;border:1px solid #e2e6ee;border-radius:10px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px">
+                      <?php // esc() konteks html, bukan 'attr': nilainya cuma angka, strip,
+                            // titik dua, dan spasi. 'attr' mengubahnya jadi &#x20;&#x3A;
+                            // sehingga HTML-nya tidak terbaca tanpa menambah keamanan ?>
+                      <input type="radio" name="jadwal" value="<?= esc($s['waktu']) ?>" required style="width:auto;margin:0">
+                      <?= esc($s['jam']) ?>
+                    </label>
+                  <?php endif ?>
+                <?php endforeach ?>
+              </div>
+            </div>
+          <?php endforeach ?>
+          <button style="margin-top:6px">Kunci Jadwal Ini</button>
+        </form>
+      <?php endif ?>
     <?php endif ?>
   </div>
 <?php endforeach ?>

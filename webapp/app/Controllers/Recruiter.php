@@ -211,36 +211,51 @@ class Recruiter extends BaseController
         $req    = $this->request->getGet('status');
         $status = $satuTab
             ? 'uploaded'
-            : (in_array($req, ['passed', 'failed', 'completed'], true) ? $req : 'progress');
+            : (in_array($req, ['passed', 'failed', 'rescheduled', 'completed'], true) ? $req : 'progress');
+
+        // Interview HRD: tab 'passed' dan 'failed' dihapus 3 Agustus 2026.
+        // Tautan lama diarahkan ke penggantinya, bukan dibiarkan jatuh diam-diam
+        // ke On Progress dan menampilkan daftar yang salah.
+        if ($stage === 'interview_online') {
+            $status = ['passed' => 'progress', 'failed' => 'rescheduled'][$status] ?? $status;
+        }
 
         $ivMap = [];
         if ($stage === 'interview_online') {
-            // Tab Interview HRD berdasar status ajuan + waktu. Keempatnya SALING
+            // Tab Interview HRD (arahan atasan 3 Agustus 2026). Ketiganya SALING
             // LEPAS - satu kandidat hanya boleh berada di satu tab, kalau tidak
             // recruiter mengerjakan orang yang sama dua kali:
-            //   On Progress = requested (menunggu acc)
-            //   Passed      = approved & jadwal BELUM lewat (interview akan datang)
-            //   Failed      = rejected (recruiter menolak ajuan jadwal kandidat)
-            //   Completed   = approved & jadwal SUDAH lewat (siap dinilai Gate 2)
+            //   On Progress = approved & sesi BELUM selesai (akan datang / berlangsung)
+            //   Rescheduled = jadwal dilepas, menunggu kandidat memilih slot lain
+            //   Completed   = approved & sesi SUDAH selesai (siap dinilai Gate 2)
             //
-            // Passed dan Completed dipisah tanggal, bukan status: kandidat pindah
-            // sendiri dari Passed ke Completed begitu jadwalnya terlewat.
+            // On Progress dan Completed dipisah WAKTU, bukan status: kandidat
+            // berpindah sendiri begitu sesi 30 menitnya berakhir, tanpa ada yang
+            // perlu menekan apa pun.
             //
-            // Failed bukan riwayat: mengajukan ulang memakai BARIS YANG SAMA
-            // (Lamaran::ajukanInterview), jadi kandidat yang mengajukan jadwal
-            // baru langsung pindah ke On Progress dan tidak tertinggal di sini.
-            //
-            // Tanggal dibandingkan di SQL (CURRENT_TIMESTAMP), bukan date() PHP -
-            // scheduled_at disimpan dalam jam lokal mesin, sama dgn jam DB.
-            // CURRENT_TIMESTAMP portabel SQLSRV + SQLite test, tidak seperti GETDATE.
+            // Rescheduled bukan riwayat: memilih slot baru memakai BARIS YANG SAMA
+            // (Lamaran::ajukanInterview), jadi kandidat langsung kembali ke
+            // On Progress dan tidak tertinggal di sini.
             $q = new InterviewModel();
+
+            // Batas dihitung di PHP, bukan CURRENT_TIMESTAMP. Sejak appTimezone
+            // diperbaiki ke Asia/Jakarta, jam PHP dan jam DB sama, sedangkan
+            // CURRENT_TIMESTAMP berbeda arti di SQLite (UTC) dan SQL Server (WIB)
+            // sehingga uji dan produksi tidak sepakat.
+            $selesai = (new DateTime())->modify('-' . InterviewModel::TUTUP_MENIT . ' minutes')->format('Y-m-d H:i:s');
+
             if ($status === 'completed') {
-                $rows = $q->where('status', 'approved')->where(new RawSql('scheduled_at <= CURRENT_TIMESTAMP'))->findAll();
-            } elseif ($status === 'passed') {
-                $rows = $q->where('status', 'approved')->where(new RawSql('scheduled_at > CURRENT_TIMESTAMP'))->findAll();
+                $rows = $q->where('status', 'approved')->where('scheduled_at <=', $selesai)->findAll();
+            } elseif ($status === 'rescheduled') {
+                // 'rejected' ikut di sini: peninggalan alur lama yang sama-sama
+                // berarti jadwalnya lepas dan kandidat perlu memilih ulang
+                $rows = $q->whereIn('status', ['rescheduled', 'rejected'])->findAll();
             } else {
-                $ivStatus = ['progress' => 'requested', 'failed' => 'rejected'][$status];
-                $rows     = $q->where('status', $ivStatus)->findAll();
+                // 'requested' ikut ditampilkan: sisa alur lama sebelum slot otomatis
+                // disetujui. Tidak ada yang membuatnya lagi, tapi kalau ada baris
+                // peninggalan ia tidak boleh hilang dari pandangan recruiter.
+                $rows = $q->whereIn('status', ['approved', 'requested'])
+                    ->where('scheduled_at >', $selesai)->findAll();
             }
             foreach ($rows as $iv) {
                 $ivMap[$iv['application_id']] = $iv;
@@ -318,84 +333,62 @@ class Recruiter extends BaseController
         return view('recruiter/kandidat', ['daftar' => $daftar]);
     }
 
-    /** Recruiter meng-ACC ajuan jadwal kandidat: buat meeting Zoom -> approved -> log + email undangan. */
-    public function accInterview(int $appId)
+
+
+    /**
+     * Recruiter meminta kandidat memilih slot lain (reschedule).
+     *
+     * Bukan pembatalan proses: kandidatnya tetap jalan, cuma jamnya diganti.
+     * Slot yang dilepas otomatis kembali ke daftar pilihan karena penyaring slot
+     * dan indeks unik sama-sama hanya mengunci status requested/approved.
+     *
+     * Meeting Zoom lama SENGAJA tidak dihapus. Gerbang interview/masuk menolak
+     * begitu status bukan 'approved', dan email undangan hanya memuat URL gerbang
+     * bukan link Zoom mentah, jadi kandidat tidak bisa masuk lewat jalur normal.
+     * Yang tidak tercabut: link Zoom asli yang mungkin tersimpan di riwayat
+     * browser kandidat bila ia pernah membuka gerbang saat jendelanya terbuka.
+     * Mencabutnya butuh DELETE meeting ke Zoom API - belum dikerjakan.
+     */
+    public function rescheduleInterview(int $appId)
     {
         $app = $this->lamaranDetail($appId);
         if ($app === null) {
             return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
         }
-        $kembali   = $this->request->getPost('kembali') === 'interview_hrd'
-            ? '/recruiter/tahap/interview_online'
-            : '/recruiter/kandidat';
+        $kembali = '/recruiter/tahap/interview_online?status=passed';
+
         $interview = new InterviewModel();
         $iv        = $interview->forApplication($appId);
-        if ($iv === null || $iv['status'] !== 'requested') {
-            return redirect()->to($kembali)->with('error', 'Tidak ada ajuan interview yang menunggu persetujuan.');
+        if ($iv === null || $iv['status'] !== 'approved') {
+            return redirect()->to($kembali)->with('error', 'Tidak ada jadwal interview aktif untuk lamaran ini.');
         }
 
         $dt = new DateTime($iv['scheduled_at']);
-        try {
-            $meeting = service('zoomService')->createMeeting(
-                'Interview - ' . $app['nama'] . ' - ' . $app['judul'],
-                $dt->format('Y-m-d\TH:i:s'),
-            );
-        } catch (ZoomException $e) {
-            log_message('error', 'Zoom createMeeting gagal: {m}', ['m' => $e->getMessage()]);
-
-            return redirect()->to($kembali)->with('error', 'Gagal membuat meeting Zoom. Coba lagi sebentar.');
+        // Jadwal yang sudah tiba tidak boleh diubah: wawancaranya mungkin benar-benar
+        // terjadi, dan mengubahnya akan mengacaukan tab Completed serta Gate 2.
+        if ($dt <= new DateTime()) {
+            return redirect()->to($kembali)->with('error', 'Jadwal ini sudah berlangsung, tidak bisa dijadwalkan ulang.');
         }
 
-        $interview->update($iv['id'], [
-            'status'     => 'approved',
-            'meeting_id' => $meeting['meeting_id'],
-            'join_url'   => $meeting['join_url'],
-            'start_url'  => $meeting['start_url'],
-        ]);
+        $alasan = trim((string) $this->request->getPost('alasan'));
+        $alasan = $alasan === '' ? 'tidak disebutkan' : mb_substr($alasan, 0, 200);
 
-        (new StageLogger())->log($appId, 'penjadwalan', 'entered', 'recruiter:' . session('recruiter_nama'), 'ajuan interview disetujui', [
-            'to'       => $app['email'],
-            'nama'     => $app['nama'],
-            'posisi'   => $app['judul'],
-            'jadwal'   => $this->jadwalIndo($dt),
-            // gerbang aplikasi, bukan join_url mentah: link yang diteruskan ke orang
-            // lain tidak berguna di luar jendela interview (Lamaran::masukInterview)
-            'join_url' => site_url("interview/masuk/{$appId}"),
-        ]);
+        $interview->update($iv['id'], ['status' => 'rescheduled']);
 
-        return redirect()->to($kembali)->with('sukses', 'Ajuan disetujui, undangan interview dikirim ke ' . $app['email'] . '.');
-    }
-
-    /** Recruiter menolak ajuan jadwal: kandidat boleh mengajukan jadwal lain. */
-    public function tolakInterview(int $appId)
-    {
-        $app = $this->lamaranDetail($appId);
-        if ($app === null) {
-            return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
-        }
-        $kembali   = $this->request->getPost('kembali') === 'interview_hrd'
-            ? '/recruiter/tahap/interview_online'
-            : '/recruiter/kandidat';
-        $interview = new InterviewModel();
-        $iv        = $interview->forApplication($appId);
-        if ($iv === null || $iv['status'] !== 'requested') {
-            return redirect()->to($kembali)->with('error', 'Tidak ada ajuan interview yang menunggu.');
-        }
-
-        $interview->update($iv['id'], ['status' => 'rejected']);
-
-        // kabari kandidat lewat email (reject bukan transisi stage, jadi antre langsung)
-        (new EmailQueueModel())->insert([
-            'to_email'     => $app['email'],
-            'template'     => 'jadwal_ditolak',
-            'payload_json' => json_encode([
+        // penjadwalan/failed memicu email jadwal_reschedule lewat StageLogger,
+        // sekaligus membuat tahap Penjadwalan menyala merah di stepper kandidat
+        // supaya ia tahu harus memilih ulang tanpa menunggu membaca email
+        (new StageLogger())->log($appId, 'penjadwalan', 'failed', 'recruiter:' . session('recruiter_nama'),
+            'Diminta jadwal ulang: ' . $alasan, [
+                'to'     => $app['email'],
                 'nama'   => $app['nama'],
                 'posisi' => $app['judul'],
-                'jadwal' => $this->jadwalIndo(new DateTime($iv['scheduled_at'])),
-            ]),
-        ]);
+                'jadwal' => $this->jadwalIndo($dt),
+                'alasan' => $alasan,
+            ]);
 
-        return redirect()->to($kembali)->with('sukses', 'Ajuan jadwal ditolak, kandidat dikabari via email.');
+        return redirect()->to($kembali)->with('sukses',
+            'Jadwal dilepas. ' . $app['nama'] . ' diminta memilih slot lain via email.');
     }
 
     /**
@@ -410,15 +403,18 @@ class Recruiter extends BaseController
         }
         $kembali = '/recruiter/tahap/interview_online?status=completed';
 
-        // approved & jadwal sudah lewat (dibandingkan di SQL supaya konsisten timezone)
-        $iv = (new InterviewModel())
+        // Syaratnya HARUS sama persis dengan tab Completed, kalau tidak kandidat
+        // muncul di daftar siap dinilai tapi penilaiannya ditolak: sesi 30 menit
+        // sudah berakhir, bukan sekadar jam mulai terlewat.
+        $selesai = (new DateTime())->modify('-' . InterviewModel::TUTUP_MENIT . ' minutes')->format('Y-m-d H:i:s');
+        $iv      = (new InterviewModel())
             ->where('application_id', $appId)
             ->where('status', 'approved')
-            ->where(new RawSql('scheduled_at <= CURRENT_TIMESTAMP'))
+            ->where('scheduled_at <=', $selesai)
             ->orderBy('id', 'DESC')
             ->first();
         if ($iv === null) {
-            return redirect()->to($kembali)->with('error', 'Interview belum bisa dinilai (jadwal belum terlewat).');
+            return redirect()->to($kembali)->with('error', 'Interview belum bisa dinilai (sesinya belum selesai).');
         }
         if ((new StageHistoryModel())->latestStatus($appId, 'gate_2') !== null) {
             return redirect()->to($kembali)->with('error', 'Kandidat ini sudah diputuskan.');
