@@ -14,5 +14,10 @@ echo  Biarkan jendela ini terbuka. Ctrl+C berhenti.
 echo ============================================
 :loop
 php spark email:send
-timeout /t 30 /nobreak >nul
+REM Jeda 30 detik. Sengaja TIDAK memakai "timeout": perintah itu butuh konsol
+REM dengan stdin sungguhan, dan gagal diam-diam ("Input redirection is not
+REM supported") ketika jendela ini dibuka oleh proses lain, bukan diklik dua
+REM kali. Akibatnya loop berhenti di putaran pertama tanpa pesan apa pun.
+REM "ping" ke localhost tidak butuh stdin dan bekerja di kedua cara.
+ping -n 31 127.0.0.1 >nul
 goto loop

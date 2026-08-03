@@ -141,6 +141,140 @@ terukur sekitar 0,50 (docs/kalibrasi-gate.md). Itu sebabnya pita tiga tingkat,
 bukan angka dua digit: model ini sanggup memisahkan "jelas tidak relevan" dari
 "cocok betul", tapi tidak sanggup mengurutkan kandidat ke-1 versus ke-2.
 
+## Yang diukur skor ini: kosakata, bukan kompetensi
+
+Pertanyaan yang wajar: kalau pelamar backend melamar lowongan backend, apakah
+skornya tinggi? Diukur pada embedding produksi (`gemini-embedding-001`) terhadap
+lowongan Backend Developer PHP/Laravel/MySQL:
+
+| CV | overall | skill | pendidikan | pengalaman |
+|---|---|---|---|---|
+| Backend, stack sama | 0,9042 | 0,9754 | 0,8281 | 0,8362 |
+| Backend, stack beda (Node/Postgres) | 0,7268 | 0,6586 | 0,8119 | 0,7837 |
+| Frontend (React) | 0,6876 | 0,6296 | 0,8261 | 0,6920 |
+| Perawat | 0,5905 | 0,5578 | 0,6540 | 0,6026 |
+| Sales retail | 0,5785 | 0,5574 | 0,6160 | 0,5887 |
+
+Urutannya benar, jadi jawabannya ya. Tapi backend Node.js cuma unggul 0,039 dari
+frontend React, dan itu terlalu tipis untuk sesuatu yang katanya "paham konsep
+backend". Uji lanjutan menunjukkan apa yang sebenarnya diukur:
+
+| CV | overall | skill | pengalaman |
+|---|---|---|---|
+| Penyalin kata kunci, **nol pengalaman** | **0,9592** | 1,0000 | 0,8640 |
+| Magang backend **1 bulan**, SMK | 0,7706 | 0,8592 | 0,6610 |
+| Backend **5 tahun di Gojek**, kosakata beda (Go, gRPC, 40rb rps) | 0,6819 | 0,6082 | 0,6936 |
+
+CV yang isinya menyalin kata dari iklan lowongan plus kalimat "Backend Developer
+adalah cita-cita saya" mengalahkan backend sungguhan berpengalaman 3 tahun
+(0,9042). Engineer 5 tahun yang memecah monolit dan menangani 40 ribu permintaan
+per detik jatuh di bawah frontend. Urutan kompetensi sebenarnya Gojek > magang >
+penyalin; model memberi urutan terbalik sempurna.
+
+Kesimpulannya: **skor ini mengukur tumpang tindih kosakata antara CV dan teks
+lowongan**, bukan kemampuan kandidat. Konsisten dengan AUC 0,589 di
+docs/kalibrasi-gate.md. Untuk lowongan BIPROO (sales, staf gerai) ia tetap
+berguna sebagai penyaring kasar, karena pelamar memang menulis "melayani
+pelanggan" dan "target penjualan" persis seperti di iklannya.
+
+Dua modus gagalnya terpisah dan ditangani terpisah.
+
+### Modus 1: kompeten tapi kosakatanya beda (ditangani lewat teks lowongan)
+
+Nol baris kode. Tulis **kegiatannya** dulu di kolom lowongan, merek jadi contoh:
+
+> Pengembangan perangkat lunak sisi peladen: merancang dan membangun antarmuka
+> layanan (API), memodelkan dan mengelola basis data, mengoptimalkan performa,
+> kontrol versi, kontainerisasi, dan pengujian otomatis. Stack tim saat ini PHP,
+> Laravel, MySQL, Git, Docker; pengalaman setara di bahasa dan basis data lain
+> tetap dipertimbangkan.
+
+Bukan: `PHP, Laravel, MySQL, REST API, Git, Docker`.
+
+| kandidat | lowongan merek | lowongan konsep | delta |
+|---|---|---|---|
+| Backend stack sama | 0,9042 | 0,7649 | -0,139 |
+| Backend stack beda | 0,7268 | 0,6916 | -0,035 |
+| Backend senior Gojek | 0,6819 | **0,6870** | +0,005 |
+| Frontend | 0,6876 | **0,6393** | -0,048 |
+| Sales retail | 0,5785 | 0,5804 | +0,002 |
+
+Sebelumnya frontend mengalahkan senior Gojek. Sesudahnya ketiga backend berada di
+atas frontend tanpa tumpang tindih.
+
+Perhatikan semua angka absolut turun, karena teks lowongan jadi lebih panjang dan
+umum. **Ambang skor tidak bisa dipindah antar gaya penulisan lowongan** dan harus
+dikalibrasi ulang kalau gayanya berubah.
+
+### Modus 2: kosakata benar tapi kosong isinya (ditangani lewat bukti)
+
+Tidak ada teks lowongan yang bisa mengalahkan penyalinan - penyalin menyalin apa
+pun yang tertulis. Penyalin tetap peringkat 1 di kedua versi (0,9592 dan 0,7888).
+
+Yang membedakan penyalin dari CV asli bukan makna, tapi **bukti**: nama tempat
+kerja dan rentang waktu. Cosine tidak bisa melihat itu, tapi LLM yang sudah
+membaca CV untuk memisah tiga bidang bisa - jadi diminta di panggilan yang sama,
+tanpa kuota tambahan (`structure.py`, `SYSTEM_STRUKTUR` butir 5-8).
+
+Diuji pada teks CV mentah lewat jalur produksi (LLM sungguhan, bukan tiruan):
+
+| CV | riwayat terekstrak | hasil |
+|---|---|---|
+| Penyalin kata kunci | 0 | flag `tanpa_riwayat_kerja` |
+| Backend asli | 2 (PT Sinar Digital `Maret 2022 - Januari 2025`, asisten praktikum `2021-2022`) | lolos |
+| Sales retail asli | 1 (gerai Erafone Semarang `Agustus 2019 - sekarang`) | lolos |
+| Magang sebulan | 1 (CV Mitra Solusi `Juli 2024, 1 bulan`) | lolos |
+
+Syarat "punya bukti" ditegakkan di kode (`structure._riwayat`), bukan dititipkan
+ke kepatuhan LLM: entri tanpa perusahaan DAN tanpa periode dibuang walau
+jabatannya terisi. Pola yang sama dengan `sanitize.bersihkan()`.
+
+**Skor penyalin sebenarnya 1,0000, bukan 0,9592.** Uji jalur produksi penuh
+memperlihatkan hal yang tidak terlihat saat bidang CV dipisah tangan: LLM
+mengosongkan bidang `pengalaman` penyalin, karena ia benar menilai "Backend
+Developer adalah cita-cita saya" bukan pengalaman. Bidang kosong tidak dinilai
+dan bobotnya dinormalkan ulang ke skill dan pendidikan - dua bidang yang persis
+disalin dari iklan lowongan. Hasilnya skor sempurna, sementara backend sungguhan
+di lowongan yang sama dapat 0,8917. Jadi renormalisasi bobot yang melindungi dari
+bug "umur nan" justru menaikkan skor penyalin; keduanya benar dan tidak
+saling meniadakan, tapi harus diketahui.
+
+Karena itu syarat flag-nya `not riwayat` saja, bukan `pengalaman terisi AND not
+riwayat`. Syarat kedua tidak pernah menyala di kasus yang paling perlu ditangkap.
+
+Fresh graduate jujur ikut tertandai, dan itu memang benar: "CV ini tidak memuat
+riwayat kerja" adalah fakta yang perlu dilihat recruiter, bukan tuduhan. Teks
+peringatannya menyebut kedua kemungkinan dan menyuruh recruiter membuka CV-nya.
+
+Skornya **tidak diturunkan** oleh flag ini. Menghukum lewat angka berarti menebak
+seberapa besar hukumannya; yang dilakukan cuma menampilkan riwayatnya di halaman
+review recruiter berikut peringatan.
+
+### Yang sengaja tidak dilakukan
+
+**Membandingkan periode dengan syarat "minimal N tahun" secara otomatis.** Format
+periode di CV asli liar: `2021-2022`, `Maret 2022 - Januari 2025`, `Juli 2024, 1
+bulan`, sebagian tanpa tahun sama sekali. Parser yang gagal membaca menghasilkan
+0 tahun dan menggugurkan kandidat berpengalaman karena format tanggalnya aneh -
+persis bug "umur nan" tim DS yang menjatuhkan 1.888 orang. Riwayatnya ditampilkan
+apa adanya, manusia yang menilai.
+
+**Melatih model skoring sendiri (A3.4).** Buntu, bukan dugaan: tiga pengukuran
+independen memberi AUC 0,510 sampai 0,595 dan AUC di dalam satu posisi sekitar
+0,50 (docs/kalibrasi-gate.md). Labelnya tidak memuat sinyal untuk dipelajari.
+
+**LLM sebagai juri** ("apakah CV ini memenuhi syarat, sebutkan buktinya"). Ini
+bisa membedakan menyebut dari memakai, tapi hasilnya tidak deterministik, sulit
+dipertanggungjawabkan ke kandidat yang protes, dan kuota Gemini gratis sudah
+pernah habis (429). Opsi bila pindah ke tier berbayar.
+
+### Yang masih terbuka
+
+Magang 1 bulan tetap berskor 0,7706, di atas senior Gojek. Riwayatnya lolos flag
+karena memang ada tempat dan waktunya. Penutupnya bukan perubahan skor, melainkan
+baris `Magang @ CV Mitra Solusi [Juli 2024, 1 bulan]` yang kini terbaca recruiter
+dalam dua detik di halaman review.
+
 ## Ketersediaan bidang: skill hilang di separuh CV
 
 Dari 6.319 CV yang berhasil diekstrak tim DS (`hasil_ekstraksi_cv (2).xlsx`):
@@ -197,6 +331,66 @@ Yang dilakukan sekarang:
   polos menulis kredensial ke berkas. Ini sempat terjadi di `uvicorn.log`, sudah
   dibersihkan, dan ada test yang menjaganya.
 
+## Kuota LLM habis: jalur cadangan dan mutunya
+
+Batas tier gratis, dibaca langsung dari balasan 429 (3 Agustus 2026):
+
+```
+LLM  gemini-2.5-flash     -> GenerateRequestsPerDayPerProjectPerModel-FreeTier | batas: 20
+EMB  gemini-embedding-001 -> HTTP 200 (kuota model terpisah, tidak ikut habis)
+```
+
+**20 permintaan per HARI**, bukan per menit. Satu CV memakai 1 panggilan, atau 2
+bila percobaan pertama gagal, jadi atap sebenarnya sekitar 10-20 CV per hari.
+Endpoint `/chat` memakai model yang sama sehingga ikut memotong jatah itu.
+
+Embedding tidak terpengaruh: mesin skornya tetap hidup, yang mati pembacaan CV-nya.
+
+### Mutu parser heading, diukur pada 299 CV korpus
+
+Saat LLM gagal, `strukturkan_kontekstual()` jatuh ke `strukturkan()` berbasis
+heading. Sebaran flagnya:
+
+| flag | jumlah | % |
+|---|---|---|
+| `tanpa_heading` (seluruh teks ditumpahkan ke pengalaman) | 65 | 21,7% |
+| `skill_kosong` (bobot 50% dibuang) | 93 | 31,1% |
+| `pendidikan_kosong` | 58 | 19,4% |
+| `pengalaman_kosong` | 47 | 15,7% |
+| tiga bidang lengkap | 92 | **30,8%** |
+
+Hanya 3 dari 10 CV terbaca utuh. Akibatnya pada skor, lowongan Admin Gudang
+dengan CV yang sama:
+
+| CV | kuota habis | kuota sehat |
+|---|---|---|
+| Berkaitan - admin/stok | **0,6298** | **0,7025** |
+| Berkaitan - clerk distribution center | 0,7034 | 0,6567 |
+| Tidak berkaitan - S1 Teknik Mesin | 0,6346 | 0,6295 |
+| Tidak berkaitan - S1 Biologi | 0,6239 | 0,6254 |
+
+Urutan benar `admin/stok > clerk > Mesin > Biologi` berubah jadi
+`clerk > Mesin > admin/stok > Biologi`. Kandidat paling relevan jatuh ke
+peringkat 3, di bawah lulusan Teknik Mesin, karena parser heading tidak
+menemukan section skill di CV-nya lalu membuang bobot 50%.
+
+### Yang diperbaiki, dan yang sengaja tidak
+
+Skor jalur cadangan dulu tampil **persis sama** dengan skor sehat: `sedang (0,70)`
+tanpa penanda apa pun. Sekarang halaman review menandainya `pembacaan kasar`,
+menyebutkan bidang mana yang tidak terbaca, dan meminta recruiter tidak
+membandingkannya dengan kandidat lain.
+
+Sengaja TIDAK dilakukan: memaksa skor jadi `null` saat `llm_gagal` +
+`tanpa_heading`. Sempat diusulkan karena resep rendang mendapat 0,5400 di jalur
+ini, tapi 0,54 memang lantai skala yang sudah terukur di bagian "Skala skor" dan
+UI menampilkannya sebagai `rendah` - sistemnya sudah menjawab benar. Memaksa null
+akan membuang 21,7% CV ke antrian manual selama kuota habis, termasuk CV naratif
+sungguhan yang teksnya masih memuat riwayat karier nyata.
+
+Akar masalahnya tetap kuota, bukan kode. Tier berbayar menaikkan batas 20/hari
+itu drastis; selama masih gratis, jalankan screening demo di awal hari.
+
 ## Dokumen tanpa isi CV tidak diberi skor
 
 Bila LLM mengembalikan ketiga bidang kosong, itu **jawaban**, bukan kegagalan:
@@ -249,7 +443,7 @@ Tindak lanjutnya bukan menggeser ambang, melainkan mencabut skor CV dari Gate 1.
 Gate 1 sekarang diputus assessment; skor CV dipakai di Gate 2 bersama skor
 interview. Lihat `docs/gate-logic.md`.
 
-### 2. Bobot 50/30/20 jarang berlaku utuh (BELUM DIPUTUSKAN)
+### 2. Bobot 50/30/20 hampir tidak pernah berlaku (TERUKUR, KEPUTUSAN TERBUKA)
 
 Dari 12 CV uji, hanya 3 yang ketiga bidangnya terisi:
 
@@ -259,9 +453,52 @@ Dari 12 CV uji, hanya 3 yang ketiga bidangnya terisi:
 | 2 bidang | 6 |
 | 1 bidang | 3 |
 
-Sampel kecil ini sejalan dengan ukuran pada 6.319 CV di bagian "Ketersediaan
-bidang" di atas, jadi bukan kebetulan sampel: bobot penuh memang jarang berlaku.
-Keputusan penanganannya masih terbuka.
+Diukur ulang pada **3.391 lamaran berlabel** yang punya teks lowongan
+(`kalibrasi/bobot_bidang.py`, kunci join email). Sebuah bidang hanya dinilai bila
+KEDUA sisi terisi - sisi CV dan sisi lowongan:
+
+| Bidang | dinilai | % |
+|---|---|---|
+| pengalaman | 3.391 | 99,9% |
+| pendidikan | 640 | 18,8% |
+| **skill** | **240** | **7,1%** |
+
+| Jumlah bidang per lamaran | | |
+|---|---|---|
+| 1 bidang | 2.544 | **75,0%** |
+| 2 bidang | 814 | 24,0% |
+| 3 bidang | 33 | 1,0% |
+
+Konsekuensinya tajam. Saat cuma satu bidang yang dinilai, renormalisasi membuat
+skor akhir **sama persis dengan cosine bidang itu, berapa pun bobotnya**. Dan
+bidang tunggal itu selalu `pengalaman` - 2.544 dari 2.544 kasus.
+
+> **Untuk 75% lamaran, bobot 50/30/20 tidak berpengaruh sama sekali. Skornya
+> adalah kemiripan pengalaman, titik.** Bobot baru mengikat di 847 lamaran (25%,
+> 57 di antaranya Hired).
+
+Ironisnya skill memegang bobot terbesar (50%) tapi paling jarang bisa dipakai
+(7,1%). Sisi lowongan ikut menyumbang: kolom `Requirements` kosong justru pada
+posisi terbanyak - Sales Assistant Retail Gadget (770 lamaran), Sales Advisor
+(293), Sales Assistant Erafone (196).
+
+Ini juga menjelaskan celah penyalin kata kunci dari arah lain. Skor 1,0000 itu
+lahir dari pola yang KEBALIKAN dari data nyata: pengalaman kosong sementara skill
+dan pendidikan terisi. Di lapangan yang lazim justru sebaliknya.
+
+**Kunci join nama diganti email.** Nama hanya mempertemukan 1.766 orang antara
+berkas label dan berkas ekstraksi; email mempertemukan 2.780 (+57%), karena
+ejaan, gelar, dan urutan kata berbeda antar berkas. `experience_data` dan
+`education_data` tetap terpaksa lewat nama - kolom emailnya kosong total.
+
+Yang belum: AUC per bidang dan pencarian bobot terbaik pada 847 lamaran yang
+mengikat itu. Terhalang kuota, bukan metode - lihat catatan kuota di bawah.
+
+**Kuota embedding: 1.000 per hari.** `EmbedContentRequestsPerDayPerUserPerProject
+PerModel-FreeTier`, dan `batchEmbedContents` dihitung PER ITEM bukan per
+panggilan. Analisis ini butuh 1.775 teks unik, jadi minimal dua hari di tier
+gratis. Vektornya di-cache ke `kalibrasi-out/cache_embedding.pkl` sehingga
+menjalankan ulang melanjutkan, bukan membayar ulang.
 
 Bidang kosong sengaja TIDAK dinilai 0. Menilai 0 karena data tidak terbaca
 adalah pola bug yang menggugurkan kandidat di pipeline tim DS. Angkanya

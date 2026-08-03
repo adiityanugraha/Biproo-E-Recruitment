@@ -29,6 +29,27 @@ review recruiter.
 
 Atribut sensitif dibuang terpisah oleh sanitize.bersihkan() setelah
 strukturisasi - jaminan deterministik, tidak bergantung kepatuhan LLM.
+
+Kenapa riwayat ada
+------------------
+Skor kita = cosine similarity, dan itu mengukur tumpang tindih MAKNA, bukan
+kompetensi. Terukur: CV yang isinya cuma menyalin kata dari iklan lowongan
+("tertarik pada REST API, Backend Developer adalah cita-cita saya") mendapat
+0,9592 - lebih tinggi daripada backend sungguhan berpengalaman 3 tahun (0,9042).
+Embedding apa pun akan begitu, karena "menyebut Laravel" dan "memakai Laravel
+3 tahun" memang mirip maknanya.
+
+Yang membedakan keduanya bukan makna, tapi BUKTI: nama tempat kerja dan rentang
+waktu. Itu tidak bisa dilihat cosine, tapi bisa dibaca LLM yang sudah membaca CV
+ini untuk memisah tiga bidang - jadi diminta di panggilan yang SAMA, tanpa kuota
+tambahan.
+
+Sengaja TIDAK dilakukan: membandingkan periode dengan syarat "minimal N tahun"
+secara otomatis. Format periode di CV asli liar ("2021-2022", "Maret 2022 -
+Januari 2025", "Juli 2024, 1 bulan", sebagian tanpa tahun). Parser yang gagal
+membaca akan menghasilkan 0 tahun dan menggugurkan kandidat berpengalaman karena
+format tanggalnya aneh - persis bug "umur nan" tim DS yang menjatuhkan 1.888
+orang. Riwayatnya ditampilkan apa adanya ke recruiter, biar manusia yang menilai.
 """
 
 import json
@@ -67,6 +88,10 @@ class Terstruktur(NamedTuple):
     pendidikan: str
     lain: str  # header/kontak/biodata - berhenti di sini, tidak di-embed
     flags: tuple[str, ...] = ()
+    # Riwayat kerja bertanda bukti (nama tempat / rentang waktu). TIDAK di-embed
+    # dan TIDAK mengubah skor - hanya ditampilkan ke recruiter dan dipakai untuk
+    # flag tanpa_riwayat_kerja. Lihat blok "Kenapa riwayat ada" di bawah.
+    riwayat: tuple[dict[str, str], ...] = ()
 
     def _replace_flags(self, *tambahan: str) -> "Terstruktur":
         """Salinan dengan flag tambahan di depan (jejak jalur yang dipakai)."""
@@ -126,9 +151,20 @@ SYSTEM_STRUKTUR = (
     "2. Teks lampiran hasil scan (transkrip nilai, sertifikat, surat) yang bukan "
     "riwayat kerja/pendidikan/skill: BUANG, jangan dipaksa masuk salah satu bidang.\n"
     "3. Data pribadi (nama, alamat, kontak, usia, gender, agama, status): BUANG.\n"
-    "4. Bidang tanpa isi di CV ini: kembalikan string kosong.\n"
-    "5. Jawab HANYA JSON: "
-    '{"pengalaman": "...", "skill": "...", "pendidikan": "..."}'
+    "4. Bidang tanpa isi di CV ini: kembalikan string kosong.\n\n"
+    "Selain itu keluarkan 'riwayat': daftar posisi yang BENAR-BENAR pernah "
+    "dijalani kandidat, satu objek {jabatan, perusahaan, periode} per posisi.\n"
+    "5. Masukkan hanya posisi yang punya BUKTI berupa nama tempat kerja atau "
+    "rentang waktu. Magang dan pengalaman organisasi termasuk, asal ada tempat "
+    "atau waktunya.\n"
+    "6. Minat, cita-cita, tujuan karier, dan daftar kemampuan BUKAN riwayat "
+    'kerja. Kalimat seperti "tertarik pada X" atau "menguasai Y" jangan '
+    "dimasukkan. CV tanpa riwayat kerja: kembalikan daftar kosong.\n"
+    "7. Jangan mengarang perusahaan atau periode yang tidak tertulis di CV. "
+    "Tidak tertulis = string kosong.\n"
+    "8. Jawab HANYA JSON: "
+    '{"pengalaman": "...", "skill": "...", "pendidikan": "...", '
+    '"riwayat": [{"jabatan": "...", "perusahaan": "...", "periode": "..."}]}'
 )
 
 
@@ -143,6 +179,39 @@ def _json_pertama(s: str) -> dict | None:
         return None
 
     return d if isinstance(d, dict) else None
+
+
+# Pagar terhadap LLM kabur, BUKAN penyaring CV panjang. Batas 20 yang semula
+# dipakai memotong CV nyata: satu mahasiswa dengan banyak kepanitiaan dan asisten
+# praktikum menghasilkan 22 posisi berbukti, dua di antaranya hilang diam-diam.
+# CV kandidat memang bisa sepanjang itu; yang tidak wajar adalah ratusan.
+MAKS_RIWAYAT = 60
+
+KUNCI_RIWAYAT = ("jabatan", "perusahaan", "periode")
+
+
+def _riwayat(nilai: object) -> tuple[dict[str, str], ...]:
+    """
+    Bersihkan daftar riwayat dari LLM.
+
+    Syarat "punya bukti" DITEGAKKAN DI SINI, bukan dititipkan ke kepatuhan LLM:
+    entri tanpa perusahaan DAN tanpa periode dibuang, walau jabatannya terisi.
+    Tanpa ini penyalin kata kunci cukup membuat LLM menulis
+    {"jabatan": "Backend Developer", "perusahaan": "", "periode": ""} untuk lolos.
+    Pola yang sama dengan sanitize.bersihkan(): jaminan deterministik.
+    """
+    if not isinstance(nilai, list):
+        return ()
+
+    hasil: list[dict[str, str]] = []
+    for item in nilai[:MAKS_RIWAYAT]:
+        if not isinstance(item, dict):
+            continue
+        entri = {k: str(item.get(k) or "").strip() for k in KUNCI_RIWAYAT}
+        if entri["perusahaan"] or entri["periode"]:
+            hasil.append(entri)
+
+    return tuple(hasil)
 
 
 RETRY_LLM = 2  # sekali coba + sekali ulang
@@ -203,6 +272,7 @@ def strukturkan_kontekstual(teks: str, provider) -> Terstruktur:
 
     ambil = lambda k: str(d.get(k) or "").strip()
     peng, skill, didik = ambil("pengalaman"), ambil("skill"), ambil("pendidikan")
+    riwayat = _riwayat(d.get("riwayat"))
 
     if not (peng or skill or didik):
         # LLM sudah membaca dan memutuskan dokumen ini tidak memuat isi CV.
@@ -217,4 +287,23 @@ def strukturkan_kontekstual(teks: str, provider) -> Terstruktur:
         f"{n}_kosong" for n, v in (("pengalaman", peng), ("skill", skill), ("pendidikan", didik)) if not v
     )
 
-    return Terstruktur(peng, skill, didik, "", ("kontekstual", *flags))
+    # Tak satu pun posisi punya tempat kerja atau rentang waktu. Sampai di sini
+    # berarti CV-nya ADA isinya (kasus kosong total sudah keluar lewat
+    # tanpa_isi_cv di atas), jadi ini pantas ditandai.
+    #
+    # Syaratnya sengaja TIDAK "peng and not riwayat". Diuji dengan LLM sungguhan,
+    # CV penyalin kata kunci justru membuat bidang pengalaman KOSONG - LLM benar
+    # menilai "Backend Developer adalah cita-cita saya" bukan pengalaman. Syarat
+    # lama tidak pernah menyala di kasus yang paling perlu ditangkap, dan skornya
+    # malah melonjak ke 1,0000 (bobot pengalaman yang kosong dinormalkan ke skill
+    # dan pendidikan, dua bidang yang persis disalin dari iklan) sementara backend
+    # sungguhan dapat 0,8917.
+    #
+    # Fresh graduate jujur ikut tertandai, dan itu memang benar: "CV ini tidak
+    # memuat riwayat kerja" adalah fakta yang perlu dilihat recruiter, bukan
+    # tuduhan. Skor TIDAK diturunkan - menghukum lewat angka berarti menebak
+    # besar hukumannya.
+    if not riwayat:
+        flags += ("tanpa_riwayat_kerja",)
+
+    return Terstruktur(peng, skill, didik, "", ("kontekstual", *flags), riwayat)

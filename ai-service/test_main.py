@@ -360,3 +360,74 @@ def test_embedding_gagal_tetap_kirim_callback_failed_provider(wiring, monkeypatc
     (_, _, body), = wiring
     assert body["status"] == "failed_provider"
     assert body["scores"]["overall"] is None
+
+
+# --- Riwayat kerja bertanda bukti ikut ke CI4 ---
+
+def test_callback_membawa_riwayat_kerja(wiring):
+    """
+    CI4 menampilkan riwayat ini di halaman review recruiter sebagai penyeimbang
+    skor kemiripan (BuktiPengalamanTest di sisi CI4). Kalau ia tidak ikut di
+    extracted_fields, kolom di halaman itu diam-diam kosong selamanya.
+    """
+    class LLMRiwayat:
+        def generate(self, system, history, question):
+            return (
+                '{"pengalaman":"Kasir di Toko Maju 2020-2022","skill":"Excel",'
+                '"pendidikan":"SMK Negeri 1","riwayat":['
+                '{"jabatan":"Kasir","perusahaan":"Toko Maju","periode":"2020-2022"}]}'
+            )
+
+    app.state.chat_provider = LLMRiwayat()
+    app.state.provider = FakeProvider()
+    with TestClient(app) as client:
+        job_id = client.post("/screening", json=VALID_BODY).json()["screening_job_id"]
+        wait_done(client, job_id)
+
+    (_, _, body), = wiring
+    riwayat = body["extracted_fields"]["riwayat"]
+    assert riwayat == [{"jabatan": "Kasir", "perusahaan": "Toko Maju", "periode": "2020-2022"}]
+    assert "tanpa_riwayat_kerja" not in body["flags"]
+
+
+def test_callback_membawa_flag_tanpa_riwayat_kerja(wiring):
+    """Penyalin kata kunci: skornya tetap dikirim, flagnya yang memberi konteks."""
+    class LLMPenyalin:
+        def generate(self, system, history, question):
+            return '{"pengalaman":"","skill":"PHP, Laravel, MySQL","pendidikan":"S1 TI"}'
+
+    app.state.chat_provider = LLMPenyalin()
+    app.state.provider = FakeProvider()
+    with TestClient(app) as client:
+        job_id = client.post("/screening", json=VALID_BODY).json()["screening_job_id"]
+        wait_done(client, job_id)
+
+    (_, _, body), = wiring
+    assert "tanpa_riwayat_kerja" in body["flags"]
+    assert body["extracted_fields"]["riwayat"] == []
+    assert body["scores"]["overall"] is not None   # skor TIDAK diturunkan flag
+
+
+def test_strukturisasi_memakai_budget_token_besar_bukan_default_chatbot(wiring, monkeypatch):
+    """
+    Regresi: strukturisasi memakai provider yang sama dengan chatbot status, dan
+    batas 600 token chatbot memotong jawaban di tengah JSON. Pada CV asli 4.893
+    karakter jawabannya putus persis di tengah array riwayat, parser gagal, dan
+    pipeline diam-diam jatuh ke parser heading yang jauh lebih buruk.
+    """
+    import main as m
+    dicatat = []
+    monkeypatch.setattr(m, "get_chat_provider", lambda maks=None, *a, **k: dicatat.append(maks) or _LLMBiasa())
+    app.state.chat_provider = None
+    app.state.provider = FakeProvider()
+    with TestClient(app) as client:
+        job_id = client.post("/screening", json=VALID_BODY).json()["screening_job_id"]
+        wait_done(client, job_id)
+
+    assert dicatat == [m.MAKS_TOKEN_CV]
+    assert m.MAKS_TOKEN_CV >= 4096
+
+
+class _LLMBiasa:
+    def generate(self, system, history, question):
+        return '{"pengalaman":"Kasir 2020-2022","skill":"Excel","pendidikan":"SMK","riwayat":[{"jabatan":"Kasir","perusahaan":"Toko Maju","periode":"2020-2022"}]}'

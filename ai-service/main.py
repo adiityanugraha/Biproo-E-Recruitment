@@ -8,7 +8,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, HttpUrl
 
-from chat import get_chat_provider, tanpa_kunci
+from chat import MAKS_TOKEN_CV, get_chat_provider, tanpa_kunci
 from embeddings import get_provider
 from extract import ekstrak_bytes
 from ocr import ocr_lengkapi
@@ -152,7 +152,9 @@ async def process_jobs():
 
         # 3. strukturisasi 3 bidang berbasis konteks (A3.2a), lalu buang atribut
         #    sensitif SEBELUM embedding (fairness-by-design A3.2)
-        llm = getattr(app.state, "chat_provider", None) or get_chat_provider()
+        # Budget keluaran BESAR, bukan default chatbot: strukturisasi menyalin isi
+        # CV ke JSON, jadi jawabannya sepanjang CV-nya (lihat MAKS_TOKEN_CV).
+        llm = getattr(app.state, "chat_provider", None) or get_chat_provider(MAKS_TOKEN_CV)
         t   = await asyncio.to_thread(strukturkan_kontekstual, hasil.teks, llm)
         cv_bidang = {
             "skill":      bersihkan(t.skill),
@@ -161,6 +163,9 @@ async def process_jobs():
         }
         job["flags"] = list(t.flags)
         job["extracted"]["bidang_karakter"] = {k: len(v) for k, v in cv_bidang.items()}
+        # Riwayat kerja ikut ke CI4 untuk DITAMPILKAN ke recruiter, tidak di-embed
+        # dan tidak mengubah skor (lihat "Kenapa riwayat ada" di structure.py).
+        job["extracted"]["riwayat"] = [dict(r) for r in t.riwayat]
 
         # 4. embedding CV vs job requirement, lalu cosine + skor agregat berbobot.
         #    Bidang yang salah satu sisinya kosong tidak di-embed (hemat kuota)

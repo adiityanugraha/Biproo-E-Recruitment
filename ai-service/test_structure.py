@@ -5,7 +5,7 @@ import logging
 import pytest
 
 import structure
-from structure import MAX_TEKS_LLM, strukturkan, strukturkan_kontekstual
+from structure import MAKS_RIWAYAT, MAX_TEKS_LLM, strukturkan, strukturkan_kontekstual
 
 
 @pytest.fixture(autouse=True)
@@ -237,3 +237,126 @@ def test_api_key_tidak_pernah_masuk_log(caplog):
     assert "RAHASIA123" not in caplog.text
     assert "key=***" in caplog.text
     assert "429" in caplog.text  # sisa pesannya tetap berguna untuk diagnosis
+
+
+# --- Riwayat kerja bertanda bukti (penangkal penyalin kata kunci) ---
+
+def _jawab(peng="Backend Developer di PT Sinar", riwayat=None):
+    import json as _json
+    d = {"pengalaman": peng, "skill": "PHP", "pendidikan": "S1 TI"}
+    if riwayat is not None:
+        d["riwayat"] = riwayat
+    return _json.dumps(d)
+
+
+def test_riwayat_terekstrak_dari_jawaban_llm():
+    llm = FakeLLM(_jawab(riwayat=[
+        {"jabatan": "Backend Developer", "perusahaan": "PT Sinar Digital", "periode": "2022-2025"},
+    ]))
+
+    t = strukturkan_kontekstual("teks cv", llm)
+
+    assert len(t.riwayat) == 1
+    assert t.riwayat[0]["perusahaan"] == "PT Sinar Digital"
+    assert "tanpa_riwayat_kerja" not in t.flags
+
+
+def test_penyalin_kata_kunci_ditandai():
+    """
+    Inti perbaikan: CV berisi istilah teknis tapi tanpa satu pun tempat kerja.
+    Terukur mendapat 0,9592 - di atas backend sungguhan (0,9042).
+    """
+    llm = FakeLLM(_jawab(peng="Tertarik pada REST API. Backend Developer cita-cita saya.", riwayat=[]))
+
+    t = strukturkan_kontekstual("teks cv", llm)
+
+    assert t.riwayat == ()
+    assert "tanpa_riwayat_kerja" in t.flags
+
+
+def test_penyalin_ditandai_walau_llm_mengosongkan_bidang_pengalaman():
+    """
+    Kasus yang BENAR-BENAR terjadi dengan LLM sungguhan: untuk CV penyalin, LLM
+    mengosongkan bidang pengalaman karena "cita-cita saya" memang bukan
+    pengalaman. Syarat lama (peng AND not riwayat) tidak menyala di sini, padahal
+    justru di sini skornya melonjak ke 1,0000 - bobot pengalaman yang kosong
+    dinormalkan ke skill dan pendidikan, dua bidang yang persis disalin dari
+    iklan lowongan, sementara backend sungguhan cuma dapat 0,8917.
+    """
+    llm = FakeLLM(_jawab(peng="", riwayat=[]))
+
+    t = strukturkan_kontekstual("teks cv", llm)
+
+    assert "tanpa_riwayat_kerja" in t.flags
+
+
+def test_jabatan_tanpa_perusahaan_dan_periode_bukan_bukti():
+    """Syarat bukti ditegakkan di kode, bukan dititipkan ke kepatuhan LLM."""
+    llm = FakeLLM(_jawab(riwayat=[{"jabatan": "Backend Developer", "perusahaan": "", "periode": ""}]))
+
+    t = strukturkan_kontekstual("teks cv", llm)
+
+    assert t.riwayat == ()
+    assert "tanpa_riwayat_kerja" in t.flags
+
+
+def test_periode_saja_sudah_cukup_jadi_bukti():
+    """CV yang menulis tahun tanpa nama tempat tidak boleh dihukum."""
+    llm = FakeLLM(_jawab(riwayat=[{"jabatan": "Kasir", "perusahaan": "", "periode": "2019-2021"}]))
+
+    t = strukturkan_kontekstual("teks cv", llm)
+
+    assert len(t.riwayat) == 1
+    assert "tanpa_riwayat_kerja" not in t.flags
+
+
+def test_dokumen_tanpa_isi_cv_tidak_dituduh_tanpa_riwayat():
+    """
+    Tidak ada isi CV sama sekali != terbukti tidak punya riwayat kerja. Yang
+    pertama sudah punya flag sendiri (tanpa_isi_cv) dan tidak boleh ditambahi
+    tuduhan yang datanya memang tidak ada.
+    """
+    t = strukturkan_kontekstual("14 halaman transkrip", FakeLLM('{"pengalaman":"","skill":"","pendidikan":""}'))
+
+    assert t.flags == ("tanpa_isi_cv",)
+
+
+def test_riwayat_bentuk_aneh_tidak_menjatuhkan_parser():
+    for aneh in (None, "bukan list", 42, ["string", 7, {"jabatan": "x", "periode": "2020"}]):
+        t = strukturkan_kontekstual("teks cv", FakeLLM(_jawab(riwayat=aneh)))
+        assert isinstance(t.riwayat, tuple)
+    assert len(t.riwayat) == 1  # hanya entri dict yang berbukti yang lolos
+
+
+def test_riwayat_dibatasi_supaya_llm_kabur_tidak_membanjiri_db():
+    banyak = [{"jabatan": f"j{i}", "perusahaan": "PT X", "periode": "2020"} for i in range(500)]
+
+    t = strukturkan_kontekstual("teks cv", FakeLLM(_jawab(riwayat=banyak)))
+
+    assert len(t.riwayat) == MAKS_RIWAYAT
+
+
+def test_cv_mahasiswa_dengan_banyak_kepanitiaan_tidak_terpotong():
+    """
+    Batas 20 yang semula dipakai memotong CV nyata: satu mahasiswa Biologi
+    menghasilkan 22 posisi berbukti (asisten praktikum + kepanitiaan), dua
+    di antaranya hilang tanpa jejak. Pagarnya untuk LLM kabur, bukan untuk
+    kandidat yang memang aktif.
+    """
+    dua_puluh_dua = [{"jabatan": f"Staff Divisi {i}", "perusahaan": "BEM FMIPA", "periode": "2023"} for i in range(22)]
+
+    t = strukturkan_kontekstual("teks cv", FakeLLM(_jawab(riwayat=dua_puluh_dua)))
+
+    assert len(t.riwayat) == 22
+
+
+def test_jalur_heading_tidak_pernah_menandai_tanpa_bukti():
+    """
+    LLM gagal = kita tidak tahu isi CV-nya. Ketiadaan riwayat di jalur cadangan
+    bukan bukti apa-apa, jadi tidak boleh jadi tuduhan ke kandidat.
+    """
+    t = strukturkan_kontekstual(CV_HEADING, FakeLLM(RuntimeError("kuota habis")))
+
+    assert "llm_gagal" in t.flags
+    assert "tanpa_riwayat_kerja" not in t.flags
+    assert t.riwayat == ()

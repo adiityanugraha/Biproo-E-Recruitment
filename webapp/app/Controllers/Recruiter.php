@@ -549,9 +549,38 @@ class Recruiter extends BaseController
         return view('recruiter/review', [
             'app'     => $app,
             'skorCv'  => $this->skorCv($appId),
+            'bukti'   => $this->buktiCv($appId),
             'riwayat' => (new StageHistoryModel())->where('application_id', $appId)->orderBy('id')->findAll(),
             'flagged' => $this->statusGate1($appId) === 'flagged',
         ]);
+    }
+
+    /**
+     * Riwayat kerja bertanda bukti + flag dari hasil screening.
+     *
+     * Skor kemiripan mengukur tumpang tindih makna, bukan kompetensi: CV yang
+     * cuma menyalin kata dari iklan lowongan terukur mendapat 0,9592, di atas
+     * backend sungguhan berpengalaman 3 tahun (0,9042). Yang membedakan bukan
+     * makna tapi bukti - nama tempat kerja dan rentang waktu. Ditampilkan apa
+     * adanya di sini biar recruiter yang menilai; sistem tidak menghitung durasi
+     * sendiri (format periode di CV asli terlalu liar, lihat structure.py).
+     *
+     * @return array{riwayat: list<array<string,string>>, flags: list<string>}
+     */
+    private function buktiCv(int $appId): array
+    {
+        $sr = (new ScreeningResultModel())->latestFor($appId);
+        if ($sr === null) {
+            return ['riwayat' => [], 'flags' => []];
+        }
+
+        $ex = json_decode((string) ($sr['extracted_json'] ?? ''), true);
+        $fl = json_decode((string) ($sr['flags_json'] ?? ''), true);
+
+        return [
+            'riwayat' => is_array($ex) && is_array($ex['riwayat'] ?? null) ? $ex['riwayat'] : [],
+            'flags'   => is_array($fl) ? $fl : [],
+        ];
     }
 
     /** Status gate_1 terkini sebuah lamaran (baris terakhir yang berlaku). */
