@@ -5,11 +5,13 @@ namespace App\Controllers;
 use App\Libraries\AiServiceException;
 use App\Libraries\GateTwo;
 use App\Libraries\KategoriPosisi;
+use App\Libraries\PenilaianRubrik;
 use App\Libraries\StageLogger;
 use App\Libraries\ZoomException;
 use App\Models\ApplicationModel;
 use App\Models\EmailQueueModel;
 use App\Models\InterviewModel;
+use App\Models\InterviewPenilaianModel;
 use App\Models\JobModel;
 use App\Models\ScreeningResultModel;
 use App\Models\StageHistoryModel;
@@ -659,6 +661,35 @@ class Recruiter extends BaseController
      * Keputusan akhir (Gate 2) di tab Completed: recruiter beri skor interview
      * (slider) + putuskan Lolos/Tidak. Selalu manual - sistem hanya merekomendasi.
      */
+    /**
+     * Form penilaian interview per kompetensi.
+     *
+     * Menggantikan slider 0-100 yang dulu menempel di sel tabel tab Completed.
+     * Lima belas butir rubrik tidak muat di sana, dan yang lebih penting: angka
+     * slider itu tidak punya dasar apa pun sementara ia ikut menentukan Gate 2.
+     *
+     * Lowongan tanpa rubrik (3 dari 34) tetap memakai slider - lebih baik jalur
+     * lama yang jujur daripada rubrik karangan.
+     */
+    public function formNilai(int $appId)
+    {
+        $app = $this->lamaranDetail($appId);
+        if ($app === null) {
+            return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
+        }
+
+        $job    = (new JobModel())->find($app['job_id']);
+        $rubrik = $job === null ? [] : $this->pertanyaanJob($job);
+        return view('recruiter/nilai', [
+            'judul'     => 'Penilaian Interview',
+            'app'       => $app,
+            'rubrik'    => $rubrik,
+            'sudah'     => (new StageHistoryModel())->latestStatus($appId, 'gate_2') !== null,
+            'penilaian' => (new InterviewPenilaianModel())->untukLamaran($appId),
+            'skorCv'    => $this->skorCv($appId),
+        ]);
+    }
+
     public function putusInterview(int $appId)
     {
         $app = $this->lamaranDetail($appId);
@@ -684,8 +715,33 @@ class Recruiter extends BaseController
             return redirect()->to($kembali)->with('error', 'Kandidat ini sudah diputuskan.');
         }
 
-        $skorInterview = max(0, min(100, (int) $this->request->getPost('skor')));
-        $skorCv        = $this->skorCv($appId);
+        // Dua jalur masukan. Rubrik didahulukan; slider hanya untuk lowongan
+        // yang belum punya bank soal.
+        $job       = (new JobModel())->find($app['job_id']);
+        $rubrik    = $job === null ? [] : $this->pertanyaanJob($job);
+        $penilaian = PenilaianRubrik::rakit(
+            $rubrik,
+            (array) ($this->request->getPost('nilai') ?? []),
+            (array) ($this->request->getPost('catatan') ?? [])
+        );
+
+        $perluDinilai = PenilaianRubrik::jumlahDinilai($rubrik);
+        if ($perluDinilai > 0) {
+            // Separuh terisi bukan penilaian, itu tebakan dengan langkah lebih
+            // banyak. Butir yang belum diisi TIDAK dihitung nol - itu akan
+            // menggugurkan kandidat karena recruiter belum selesai mengklik.
+            if (count($penilaian) < $perluDinilai) {
+                return redirect()->to('recruiter/nilai/' . $appId)->with('error',
+                    'Masih ada ' . ($perluDinilai - count($penilaian)) . ' butir yang belum dinilai. '
+                    . 'Lengkapi dulu supaya skornya tidak dihitung dari penilaian separuh.');
+            }
+            $skorInterview = PenilaianRubrik::skor($penilaian);
+        } else {
+            $penilaian     = [];
+            $skorInterview = max(0, min(100, (int) $this->request->getPost('skor')));
+        }
+
+        $skorCv = $this->skorCv($appId);
 
         // Gate 2 = skor CV digabung skor interview (bobot per posisi dari jobs).
         // Tanpa skor CV, bobotnya dialihkan seluruhnya ke interview - bukan diisi
@@ -700,11 +756,24 @@ class Recruiter extends BaseController
         $actor  = 'recruiter:' . session('recruiter_nama');
         $email  = ['to' => $app['email'], 'nama' => $app['nama'], 'posisi' => $app['judul']];
 
+        // Kompetensi terlemah ikut dicatat. Inilah yang membuat keputusan bisa
+        // dijelaskan ke kandidat yang bertanya: bukan "skor 62", melainkan butir
+        // mana yang kurang.
+        $lemah   = PenilaianRubrik::terlemah($penilaian);
         $rincian = 'Skor interview ' . $skorInterview . '/100'
+            . ($penilaian === [] ? '' : ' (dari ' . count($penilaian) . ' kompetensi)')
+            . ($lemah === [] ? '' : ', terlemah: ' . implode(', ', $lemah))
             . ($skorCv === null
                 ? ', skor CV belum tersedia (bobot dialihkan ke interview)'
                 : ', kemiripan CV ' . kemiripan_teks($skorCv))
             . '. Skor akhir ' . skor_100($rec['score']) . '/100';
+
+        if ($penilaian !== []) {
+            $model = new InterviewPenilaianModel();
+            foreach ($penilaian as $p) {
+                $model->insert($p + ['application_id' => $appId]);
+            }
+        }
 
         $logger->log($appId, 'interview_online', 'passed', $actor, 'Skor interview ' . $skorInterview . '/100');
         $logger->log($appId, 'gate_2', $lolos ? 'passed' : 'failed', $actor, $rincian, $email);

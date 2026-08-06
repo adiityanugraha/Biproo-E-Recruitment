@@ -111,16 +111,11 @@ foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
               <?php elseif ($a['gate2'] === 'failed'): ?>
                 <span style="color:#a12734;font-weight:700">❌ Tidak Lolos</span>
               <?php else: ?>
-                <form method="post" action="<?= site_url('recruiter/interview/putus/' . $a['id']) ?>" style="margin:6px 0 0">
-                  <?= csrf_field() ?>
-                  <div style="font-size:11px;color:#666">Skor interview: <b id="sv<?= $a['id'] ?>">70</b></div>
-                  <input type="range" name="skor" min="0" max="100" value="70" style="width:130px"
-                         oninput="document.getElementById('sv<?= $a['id'] ?>').textContent=this.value">
-                  <div style="margin-top:4px">
-                    <button class="btn-view" style="background:#2F6FED;color:#fff">OK</button>
-                    <div style="font-size:10px;color:#999;margin-top:2px">hasil dihitung dari skor interview + skor CV</div>
-                  </div>
-                </form>
+                <?php // Slider di dalam sel tabel diganti halaman penilaian: 15 butir
+                      // rubrik tidak muat di sini, dan angka geseran itu tidak punya
+                      // dasar apa pun padahal ikut menentukan Gate 2. ?>
+                <a href="<?= site_url('recruiter/nilai/' . $a['id']) ?>">
+                  <button class="btn-view" style="background:#2F6FED;color:#fff">Nilai Interview</button></a>
               <?php endif ?>
             <?php endif ?>
           </td>
