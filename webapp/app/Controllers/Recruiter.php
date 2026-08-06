@@ -641,6 +641,29 @@ class Recruiter extends BaseController
 
         $interview->update($iv['id'], ['status' => 'rescheduled']);
 
+        // Mencabut jadwal di basis data TIDAK mematikan ruangannya. Tanpa langkah
+        // ini meeting tetap hidup di Zoom, dan siapa pun yang sempat menyimpan
+        // join_url masih bisa masuk - gerbang aplikasi cuma menjaga pintu depan.
+        //
+        // Kegagalannya TIDAK menjatuhkan reschedule: jadwal sudah dilepas dan
+        // kandidat sudah diminta memilih ulang, jadi membatalkan semuanya karena
+        // Zoom sedang tidak menjawab justru meninggalkan keadaan setengah jadi.
+        // Yang terjadi: tautannya dicatat sebagai masih hidup supaya bisa dikejar.
+        $sisaTautan = false;
+        if (! empty($iv['meeting_id'])) {
+            try {
+                service('zoomService')->hapusMeeting((string) $iv['meeting_id']);
+                // Dikosongkan hanya setelah Zoom benar-benar menghapusnya. Kalau
+                // gagal, kolomnya dibiarkan supaya jejak ruangan yang masih hidup
+                // tidak ikut hilang.
+                $interview->update($iv['id'], ['meeting_id' => null, 'join_url' => null, 'start_url' => null]);
+            } catch (ZoomException $e) {
+                $sisaTautan = true;
+                log_message('error', 'Meeting Zoom {m} gagal dihapus untuk lamaran {a}: {e}',
+                    ['m' => $iv['meeting_id'], 'a' => $appId, 'e' => $e->getMessage()]);
+            }
+        }
+
         // penjadwalan/failed memicu email jadwal_reschedule lewat StageLogger,
         // sekaligus membuat tahap Penjadwalan menyala merah di stepper kandidat
         // supaya ia tahu harus memilih ulang tanpa menunggu membaca email
@@ -653,8 +676,15 @@ class Recruiter extends BaseController
                 'alasan' => $alasan,
             ]);
 
-        return redirect()->to($kembali)->with('sukses',
-            'Jadwal dilepas. ' . $app['nama'] . ' diminta memilih slot lain via email.');
+        $pesan = 'Jadwal dilepas. ' . $app['nama'] . ' diminta memilih slot lain via email.';
+        if ($sisaTautan) {
+            // Recruiter perlu tahu, bukan cuma berkas log: ruangan lama masih
+            // bisa dimasuki siapa pun yang menyimpan tautannya.
+            return redirect()->to($kembali)->with('error', $pesan
+                . ' Tapi ruang Zoom lama GAGAL dihapus dan masih bisa dimasuki - hapus manual di akun Zoom Anda.');
+        }
+
+        return redirect()->to($kembali)->with('sukses', $pesan);
     }
 
     /**

@@ -34,6 +34,7 @@ final class JsonHttp
         array $options,
         string $label,
         string $exception,
+        bool $bodyWajib = true,
     ): array {
         try {
             // http_errors off: status >=400 tidak melempar, kita cek manual di bawah
@@ -48,7 +49,16 @@ final class JsonHttp
             throw new $exception("{$label} membalas status {$code}");
         }
 
-        $data = json_decode((string) $res->getBody(), true);
+        $mentah = trim((string) $res->getBody());
+
+        // 204 No Content itu jawaban yang SAH untuk penghapusan - Zoom memakainya
+        // pada DELETE /meetings/{id}. Memaksa body JSON di situ membuat
+        // penghapusan yang berhasil dilaporkan sebagai kegagalan.
+        if (! $bodyWajib && $mentah === '') {
+            return [];
+        }
+
+        $data = json_decode($mentah, true);
         if (! is_array($data)) {
             throw new $exception($label . ' membalas body non-JSON');
         }

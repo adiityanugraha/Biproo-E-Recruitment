@@ -83,15 +83,36 @@ class ZoomService
     }
 
     /**
+     * Hapus meeting terjadwal, sehingga tautannya benar-benar mati.
+     *
+     * Mengubah status baris di basis data saja TIDAK mencabut apa pun: meeting
+     * tetap hidup di Zoom, dan siapa pun yang sempat menyimpan join_url masih
+     * bisa masuk ruangan. Gerbang aplikasi cuma menjaga pintu depan.
+     *
+     * Zoom membalas 204 tanpa isi untuk penghapusan yang berhasil, karena itu
+     * body-nya tidak diwajibkan.
+     *
+     * @throws ZoomException
+     */
+    public function hapusMeeting(string $meetingId): void
+    {
+        $token = $this->token();
+
+        $this->send('delete', $this->cfg->apiURL . '/meetings/' . rawurlencode($meetingId), [
+            'headers' => ['Authorization' => 'Bearer ' . $token],
+        ], bodyWajib: false);
+    }
+
+    /**
      * @param array<string, mixed> $options
      *
      * @return array<string, mixed>
      */
-    private function send(string $method, string $url, array $options): array
+    private function send(string $method, string $url, array $options, bool $bodyWajib = true): array
     {
         return JsonHttp::request($this->http, $method, $url, $options + [
             'connect_timeout' => $this->cfg->connectTimeout,
             'timeout'         => $this->cfg->timeout,
-        ], 'Zoom', ZoomException::class);
+        ], 'Zoom', ZoomException::class, $bodyWajib);
     }
 }

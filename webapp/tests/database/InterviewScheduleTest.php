@@ -2,6 +2,7 @@
 
 use App\Libraries\SlotJadwal;
 use App\Libraries\StageLogger;
+use App\Libraries\ZoomException;
 use App\Libraries\ZoomService;
 use App\Models\ApplicationModel;
 use App\Models\CandidateModel;
@@ -58,10 +59,16 @@ final class InterviewScheduleTest extends CIUnitTestCase
             ->post("recruiter/interview/reschedule/{$aid}", ['alasan' => $alasan]);
     }
 
-    private function fakeZoom(): void
+    /** id meeting yang diminta dihapus, diisi mock Zoom. */
+    private ?object $jejakZoom = null;
+
+    private function fakeZoom(bool $hapusGagal = false): void
     {
-        Services::injectMock('zoomService', new class extends ZoomService {
-            public function __construct() {}
+        $this->jejakZoom = new stdClass();
+        $this->jejakZoom->dihapus = [];
+
+        Services::injectMock('zoomService', new class ($this->jejakZoom, $hapusGagal) extends ZoomService {
+            public function __construct(private object $jejak, private bool $hapusGagal) {}
 
             public function createMeeting(string $topic, ?string $startAt = null): array
             {
@@ -70,6 +77,14 @@ final class InterviewScheduleTest extends CIUnitTestCase
                     'join_url'   => 'https://zoom.us/j/99999999999',
                     'start_url'  => 'https://zoom.us/s/99999999999?zak=x',
                 ];
+            }
+
+            public function hapusMeeting(string $meetingId): void
+            {
+                if ($this->hapusGagal) {
+                    throw new ZoomException('Zoom membalas status 500');
+                }
+                $this->jejak->dihapus[] = $meetingId;
             }
         });
     }
@@ -684,5 +699,78 @@ final class InterviewScheduleTest extends CIUnitTestCase
         $this->assertStringNotContainsString('zoom.us', $payload['join_url']);
         // join_url asli tetap tersimpan di DB untuk dipakai redirect
         $this->seeInDatabase('interviews', ['application_id' => $aid, 'join_url' => 'https://zoom.us/j/99999999999']);
+    }
+
+    // --- Pencabutan ruang Zoom saat reschedule ---
+
+    /**
+     * Mengubah status di basis data TIDAK mematikan ruangannya. Tanpa panggilan
+     * hapus ke Zoom, meeting tetap hidup dan siapa pun yang sempat menyimpan
+     * join_url masih bisa masuk - gerbang aplikasi cuma menjaga pintu depan.
+     */
+    public function testRescheduleMenghapusRuangZoomnya(): void
+    {
+        $this->fakeZoom();
+        [$cid, $aid] = $this->fixture('passed');
+        $this->pilihSlot($cid, $aid);
+
+        $this->reschedule($aid);
+
+        $this->assertSame(['99999999999'], $this->jejakZoom->dihapus);
+    }
+
+    public function testTautanDikosongkanSetelahRuangnyaBenarBenarDihapus(): void
+    {
+        $this->fakeZoom();
+        [$cid, $aid] = $this->fixture('passed');
+        $this->pilihSlot($cid, $aid);
+
+        $this->reschedule($aid);
+
+        $iv = (new InterviewModel())->forApplication($aid);
+        $this->assertNull($iv['join_url']);
+        $this->assertNull($iv['meeting_id']);
+    }
+
+    /**
+     * Zoom tidak menjawab bukan alasan membatalkan reschedule: jadwalnya sudah
+     * dilepas dan kandidat sudah dikabari, jadi menggagalkan semuanya justru
+     * meninggalkan keadaan setengah jadi.
+     */
+    public function testZoomGagalTidakMenjatuhkanReschedule(): void
+    {
+        $this->fakeZoom(hapusGagal: true);
+        [$cid, $aid] = $this->fixture('passed');
+        $this->pilihSlot($cid, $aid);
+
+        $this->reschedule($aid);
+
+        $iv = (new InterviewModel())->forApplication($aid);
+        $this->assertSame('rescheduled', $iv['status']);
+        $this->assertSame(1, (new EmailQueueModel())->where('template', 'jadwal_reschedule')->countAllResults());
+    }
+
+    /** Tautan yang gagal dihapus TIDAK dikosongkan - jejak ruangan yang masih hidup jangan ikut hilang. */
+    public function testTautanDipertahankanBilaPenghapusanGagal(): void
+    {
+        $this->fakeZoom(hapusGagal: true);
+        [$cid, $aid] = $this->fixture('passed');
+        $this->pilihSlot($cid, $aid);
+
+        $this->reschedule($aid);
+
+        $this->assertNotNull((new InterviewModel())->forApplication($aid)['meeting_id']);
+    }
+
+    /** Recruiter harus tahu, bukan cuma berkas log: ruangan lama masih bisa dimasuki. */
+    public function testRecruiterDiberiTahuBilaRuangLamaMasihHidup(): void
+    {
+        $this->fakeZoom(hapusGagal: true);
+        [$cid, $aid] = $this->fixture('passed');
+        $this->pilihSlot($cid, $aid);
+
+        $this->reschedule($aid);
+
+        $this->assertStringContainsString('masih bisa dimasuki', (string) session('error'));
     }
 }
