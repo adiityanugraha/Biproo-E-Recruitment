@@ -497,14 +497,64 @@ berkas label dan berkas ekstraksi; email mempertemukan 2.780 (+57%), karena
 ejaan, gelar, dan urutan kata berbeda antar berkas. `experience_data` dan
 `education_data` tetap terpaksa lewat nama - kolom emailnya kosong total.
 
-Yang belum: AUC per bidang dan pencarian bobot terbaik pada 847 lamaran yang
-mengikat itu. Terhalang kuota, bukan metode - lihat catatan kuota di bawah.
+### Hasilnya: bobotnya tidak menentukan apa-apa (SELESAI, 6 Agustus 2026)
 
-**Kuota embedding: 1.000 per hari.** `EmbedContentRequestsPerDayPerUserPerProject
-PerModel-FreeTier`, dan `batchEmbedContents` dihitung PER ITEM bukan per
-panggilan. Analisis ini butuh 1.775 teks unik, jadi minimal dua hari di tier
-gratis. Vektornya di-cache ke `kalibrasi-out/cache_embedding.pkl` sehingga
-menjalankan ulang melanjutkan, bukan membayar ulang.
+Kalibrasi pertama yang memakai embedding produksi, bukan TF-IDF pengganti.
+847 lamaran yang bobotnya mengikat, 57 di antaranya Hired.
+
+Daya beda tiap bidang SENDIRIAN:
+
+| Bidang | n | Hired | AUC | CI95 |
+|---|---|---|---|---|
+| skill | 240 | **4** | 0,4841 | [0,1176, 0,9372] |
+| pengalaman | 847 | 57 | 0,5313 | [0,4597, 0,6065] |
+| pendidikan | 640 | 54 | 0,4491 | [0,3812, 0,5258] |
+
+**Ketiga selang kepercayaan memuat 0,50.** Tidak satu pun bidang terbukti
+membedakan kandidat yang diterima dari yang tidak. Skill bahkan tidak layak
+disimpulkan sama sekali: 4 kandidat diterima dari 240, dan CI-nya membentang
+hampir seluruh rentang yang mungkin.
+
+Pencarian bobot atas 231 kombinasi (langkah 0,05):
+
+```
+50/30/20 sekarang : AUC 0,5619   CI95 [0,4840, 0,6423]
+terbaik 85/5/10   : AUC 0,5802   CI95 [0,4983, 0,6608]
+```
+
+Selisihnya 0,018 dengan CI yang tumpang tindih hampir seluruhnya, dan keduanya
+memuat 0,50. Angka 85/5/10 itu **argmax dari 231 kombinasi pada 57 kasus
+positif** - persis cara memproduksi hasil semu. Mengubah bobot berdasarkan itu
+sama saja mengejar derau.
+
+**Keputusan: pertahankan 50/30/20.** Bukan karena terbukti benar, melainkan
+karena tidak ada bukti alternatif mana pun lebih baik. Pertanyaan "bobot mana
+yang benar" ternyata salah pertanyaan; yang benar adalah "apakah bidang-bidang
+ini membawa sinyal", dan jawabannya tidak.
+
+Ini pengukuran keempat yang berujung sama: DS terstruktur AUC 0,589, ekstraksi
+kita 0,595, metadata tabular 0,510, dan sekarang embedding produksi 0,562 -
+semuanya dengan CI yang memuat 0,50. Konsekuensinya untuk Gate 2 langsung:
+skor CV menyumbang 40% keputusan akhir, dan bobot sebesar itu diberikan kepada
+angka yang empat kali diukur tidak membedakan siapa pun.
+
+**Kuota embedding punya DUA batas, dan membedakannya menentukan hasil.**
+Keduanya membalas 429, tapi artinya berlawanan:
+
+```
+EmbedContentRequestsPerMinutePerUserPerProjectPerModel-FreeTier  -> tunggu, lalu lanjut
+EmbedContentRequestsPerDayPerUserPerProjectPerModel-FreeTier     -> berhenti, lanjut besok
+```
+
+`batchEmbedContents` dihitung PER ITEM, bukan per panggilan. Versi pertama
+skrip ini menganggap semua 429 berarti jatah harian dan berhenti setelah 100
+vektor, padahal embedding tunggal sesaat kemudian berhasil - alasannya harus
+DIBACA dari `quotaId`, bukan ditebak. Setelah diperbaiki, satu jalan menembus
+890 vektor dengan 11 kali mundur-teratur.
+
+Analisis ini butuh 1.775 teks unik. Vektornya di-cache ke
+`kalibrasi-out/cache_embedding.pkl` sehingga menjalankan ulang melanjutkan,
+bukan membayar ulang.
 
 Bidang kosong sengaja TIDAK dinilai 0. Menilai 0 karena data tidak terbaca
 adalah pola bug yang menggugurkan kandidat di pipeline tim DS. Angkanya

@@ -118,18 +118,44 @@ def embed_semua(teks: list[str], cache_path: Path, model: str = "gemini-embeddin
                 time.sleep(5 * 2 ** percobaan)
                 continue
             if r.status_code == 429:
-                # Jatah HARIAN, bukan lonjakan sesaat: mengulang cuma membuang
-                # waktu. Berhenti rapi, cache sudah tersimpan, lanjut besok.
+                # 429 punya DUA arti yang sangat berbeda, dan membedakannya wajib:
+                #   PerMinute -> lonjakan sesaat, tunggu lalu lanjut
+                #   PerDay    -> jatah habis, mengulang cuma membuang waktu
+                # Versi pertama skrip ini menganggap semua 429 berarti harian dan
+                # berhenti setelah 100 vektor, padahal embedding tunggal sesaat
+                # kemudian berhasil. Sekarang alasannya dibaca, bukan ditebak.
+                langgar = [
+                    v.get("quotaId", "")
+                    for d in r.json().get("error", {}).get("details", [])
+                    if d.get("@type", "").endswith("QuotaFailure")
+                    for v in d.get("violations", [])
+                ]
+                harian = any("PerDay" in q for q in langgar)
+
+                if not harian and percobaan < 4:
+                    jeda = 30 * (percobaan + 1)
+                    print(f"    429 ({', '.join(langgar) or 'tanpa rincian'}) - batas per menit, tunggu {jeda}s")
+                    time.sleep(jeda)
+
+                    continue
+
                 cache_path.write_bytes(pickle.dumps(cache))
-                print(f"\n  KUOTA EMBEDDING HARIAN HABIS di {len(cache)} vektor.")
-                print(f"  Tersimpan di {cache_path}. Jalankan lagi besok untuk melanjutkan;")
-                print(f"  sisa yang perlu di-embed: {len(perlu) - (i - 0)} teks.")
+                sebab = "JATAH HARIAN HABIS" if harian else "429 berulang"
+                print(f"\n  BERHENTI ({sebab}) di {len(cache)} vektor.")
+                print(f"  Pelanggaran: {', '.join(langgar) or 'tidak dirinci Google'}")
+                print(f"  Tersimpan di {cache_path}; jalankan lagi untuk melanjutkan.")
+                print(f"  Sisa yang perlu di-embed: {len(perlu) - i} teks.")
                 raise SystemExit(3)
             raise SystemExit(f"embedding gagal HTTP {r.status_code}: {r.text[:300]}")
 
         cache_path.write_bytes(pickle.dumps(cache))   # simpan tiap batch, bukan di akhir
         if (i // UKURAN_BATCH) % 10 == 0:
-            print(f"    {min(i + UKURAN_BATCH, len(perlu))}/{len(perlu)}")
+            print(f"    {min(i + UKURAN_BATCH, len(perlu))}/{len(perlu)}", flush=True)
+
+        # Jeda kecil antar batch. Tanpa ini satu jalan menabrak batas per menit
+        # belasan kali dan menghabiskan menit-menit di mundur-teratur 30-60 detik;
+        # menahan diri 4 detik jauh lebih murah daripada menunggu dihukum.
+        time.sleep(4)
 
     return cache
 

@@ -5,7 +5,7 @@ if (session('recruiter_id')) {
     $menu  = [
         ['Dashboard', site_url('recruiter'), '🏠', url_is('recruiter'), false],
         ['Semua Kandidat', site_url('recruiter/kandidat'), '👥', url_is('recruiter/kandidat*') || url_is('recruiter/review*'), false],
-        ['FPK', site_url('recruiter/report'), '📄', url_is('recruiter/report'), false],
+        ['FPK', null, '📄', false, true],
         ['Notification', null, '🔔', false, true],
         ['Message', null, '✉️', false, true],
     ];

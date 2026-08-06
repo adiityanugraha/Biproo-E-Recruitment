@@ -23,7 +23,6 @@ class EmailQueueWorker
         'konfirmasi_registrasi' => 'Pendaftaran E-REQ Anda Diterima',
         'hasil_gate'            => 'Hasil Tahap Seleksi E-REQ',
         'undangan_interview'    => 'Undangan Interview E-REQ',
-        'pengingat_h1'          => 'Pengingat: Interview Anda Besok',
         'jadwal_reschedule'     => 'Interview Anda Perlu Dijadwalkan Ulang',
     ];
 

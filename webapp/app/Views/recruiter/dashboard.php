@@ -48,11 +48,11 @@
       <div class="qa">
         <?php
         $aksi = [
-            ['FPK', '📄', site_url('recruiter/report')],
+            ['FPK', '📄', null],
             ['SK Posting', '📝', null],
             ['Job Posting', '📢', null],
             ['Upload Candidat', '📤', null],
-            ['Summary', '📊', site_url('recruiter/report')],
+            ['Summary', '📊', null],
             ['Settings', '⚙️', null],
         ];
         foreach ($aksi as [$lbl, $ic, $url]): ?>

@@ -30,7 +30,6 @@ $routes->match(['GET', 'POST'], 'recruiter/login', 'Recruiter::login');
 $routes->get('recruiter/logout', 'Recruiter::logout');
 $routes->group('recruiter', ['filter' => 'recruiterauth'], static function ($routes) {
     $routes->get('', 'Recruiter::index');
-    $routes->get('report', 'Recruiter::report');
     $routes->get('tahap/(:segment)', 'Recruiter::tahap/$1');
     $routes->get('kandidat', 'Recruiter::kandidat');
     $routes->get('cv/(:num)', 'Recruiter::cvKandidat/$1');
