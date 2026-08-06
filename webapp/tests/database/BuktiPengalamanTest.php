@@ -145,6 +145,7 @@ final class BuktiPengalamanTest extends CIUnitTestCase
         $this->assertStringNotContainsString('Tidak ada riwayat kerja terbaca', (string) $res->getBody());
     }
 
+
     /** Riwayat datang dari LLM yang membaca berkas unggahan kandidat. */
     public function testRiwayatDiEscapeSebelumDitampilkan(): void
     {
@@ -160,39 +161,21 @@ final class BuktiPengalamanTest extends CIUnitTestCase
     }
 
     /**
-     * Kuota LLM habis -> strukturisasi jatuh ke parser heading. Skornya tetap
-     * keluar dan dulu tampil PERSIS sama dengan skor sehat. Diukur pada 299 CV
-     * korpus, parser heading membaca tiga bidang utuh cuma di 30,8% CV, jadi
-     * angka yang lahir dari situ tidak boleh terlihat setara.
+     * Penanda "pembacaan kasar" dihapus atas permintaan 4 Agustus 2026. Uji ini
+     * menjaga agar ia tidak kembali diam-diam, termasuk saat LLM benar-benar
+     * gagal - kondisi yang dulu memunculkannya.
      */
-    public function testSkorDariJalurCadanganDitandaiPembacaanKasar(): void
+    public function testPenandaPembacaanKasarSudahTidakAdaLagi(): void
     {
         $aid = $this->fixture();
         $this->simpanHasil($aid, [], ['llm_gagal', 'skill_kosong'], 0.7034);
 
         $html = $this->review($aid);
 
-        $this->assertStringContainsString('pembacaan kasar', $html);
-        $this->assertStringContainsString('Jangan bandingkan angka ini dengan kandidat lain', $html);
-        $this->assertStringContainsString('skill', $html);   // bidang yang hilang disebutkan
-    }
-
-    public function testJsonLlmRusakJugaDitandaiPembacaanKasar(): void
-    {
-        $aid = $this->fixture();
-        $this->simpanHasil($aid, [], ['llm_json_invalid', 'tanpa_heading'], 0.54);
-
-        $this->assertStringContainsString('pembacaan kasar', $this->review($aid));
-    }
-
-    public function testSkorSehatTidakDitandaiApaApa(): void
-    {
-        $aid = $this->fixture();
-        $this->simpanHasil($aid, [['jabatan' => 'Kasir', 'perusahaan' => 'Indomaret', 'periode' => '2020-2023']], ['kontekstual'], 0.7025);
-
-        $html = $this->review($aid);
-
         $this->assertStringNotContainsString('pembacaan kasar', $html);
+        $this->assertStringNotContainsString('Jangan bandingkan angka ini', $html);
+        // skornya sendiri tetap tampil seperti biasa
+        $this->assertStringContainsString('sedang', $html);
     }
 
     /**

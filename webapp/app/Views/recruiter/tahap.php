@@ -29,7 +29,15 @@ if (($stage ?? '') === 'upload_cv') {
     // Tidak ada keputusan lolos/gagal di tahap unggah - satu tab saja
     $tabs = ['uploaded' => ['Uploaded', '📥', $base]];
 } else {
-    if (($stage ?? '') === 'interview_online') {
+    if (($stage ?? '') === 'interview_user') {
+        // Dua tab saja (arahan atasan 4 Agustus 2026). Tidak ada Rescheduled di
+        // sini: melepas jadwal adalah tindakan Interview HRD, dan kandidat yang
+        // jadwalnya dilepas belum punya apa pun untuk diwawancarai user.
+        $tabs = [
+            'progress'  => ['On Progress', '🔄', $base],
+            'completed' => ['Completed', '🏁', $base . '?status=completed'],
+        ];
+    } elseif (($stage ?? '') === 'interview_online') {
         // Interview HRD punya alurnya sendiri: terjadwal -> (dilepas) -> selesai.
         // Tidak ada "Passed"/"Failed" di sini, karena interview yang terjadwal
         // belum lolos apa-apa dan jadwal yang dilepas bukan kandidat yang gugur.
@@ -71,7 +79,18 @@ foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
           <td><input type="checkbox" style="width:auto" onclick="segera('Pilih Kandidat')"></td>
           <td style="white-space:nowrap">
             <a href="<?= site_url('recruiter/review/' . $a['id']) ?>"><button class="btn-view">View</button></a>
-            <?php if ($stage === 'interview_online' && $status === 'progress'): ?>
+            <?php if ($stage === 'interview_user' && $status === 'progress'): ?>
+              <?php // Pertanyaan melekat pada LOWONGAN, bukan kandidat - satu set
+                    // dipakai semua pelamar posisi yang sama (lihat migrasi
+                    // PertanyaanInterviewPerLowongan). ?>
+              <a href="<?= site_url('recruiter/pertanyaan/' . $a['job_id']) ?>">
+                <button class="btn-view" style="background:#EDE4FF;color:#5B3FA8">💬 Pertanyaan</button></a>
+              <?php if (! empty($a['join_url'])): ?>
+                <a href="<?= esc($a['join_url'], 'attr') ?>" target="_blank" rel="noopener"><button class="btn-view" style="background:#2F6FED;color:#fff">🎥 Link Zoom</button></a>
+              <?php endif ?>
+            <?php elseif ($stage === 'interview_user'): ?>
+              <span style="font-size:11px;color:#1d6b3d">✔ interview selesai</span>
+            <?php elseif ($stage === 'interview_online' && $status === 'progress'): ?>
               <?php if (! empty($a['join_url'])): ?>
                 <a href="<?= esc($a['join_url'], 'attr') ?>" target="_blank" rel="noopener"><button class="btn-view" style="background:#2F6FED;color:#fff">🎥 Link Zoom</button></a>
               <?php endif ?>

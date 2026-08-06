@@ -376,10 +376,16 @@ menemukan section skill di CV-nya lalu membuang bobot 50%.
 
 ### Yang diperbaiki, dan yang sengaja tidak
 
-Skor jalur cadangan dulu tampil **persis sama** dengan skor sehat: `sedang (0,70)`
-tanpa penanda apa pun. Sekarang halaman review menandainya `pembacaan kasar`,
-menyebutkan bidang mana yang tidak terbaca, dan meminta recruiter tidak
-membandingkannya dengan kandidat lain.
+Penanda `pembacaan kasar` sempat ditambahkan di halaman review lalu **dicabut
+atas permintaan 4 Agustus 2026**. Jadi skor jalur cadangan kembali tampil persis
+sama dengan skor sehat: `sedang (0,70)` tanpa pembeda apa pun.
+
+Konsekuensinya tetap berlaku dan perlu diketahui: pada 25% lamaran, angka yang
+terlihat setara sebenarnya dihitung dari bidang yang jauh lebih sedikit, dan
+urutan peringkat bisa terbalik seperti tabel di atas. Flag `llm_gagal` dan
+`llm_json_invalid` tetap tersimpan di `flags_json`, jadi penanda itu bisa
+dihidupkan lagi kapan pun tanpa kehilangan data - yang dicabut cuma
+tampilannya.
 
 Sengaja TIDAK dilakukan: memaksa skor jadi `null` saat `llm_gagal` +
 `tanpa_heading`. Sempat diusulkan karena resep rendang mendapat 0,5400 di jalur

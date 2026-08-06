@@ -2,7 +2,9 @@
 
 namespace App\Controllers;
 
+use App\Libraries\AiServiceException;
 use App\Libraries\GateTwo;
+use App\Libraries\KategoriPosisi;
 use App\Libraries\StageLogger;
 use App\Libraries\ZoomException;
 use App\Models\ApplicationModel;
@@ -79,7 +81,7 @@ class Recruiter extends BaseController
             ],
             'selectionSteps' => [
                 ['Interview HRD', '👔', site_url('recruiter/tahap/interview_online')],
-                ['Interview User', '💬', null],
+                ['Interview User', '💬', site_url('recruiter/tahap/interview_user')],
                 ['On Job Training', '🛠️', null],
                 ['Training Class', '🎓', null],
                 ['Input Data & Berkas', '🗂️', site_url('recruiter/tahap/berkas_kontrak')],
@@ -196,6 +198,7 @@ class Recruiter extends BaseController
             'upload_cv'         => 'Upload CV',
             'online_assessment' => 'Tes Intelegensi Umum 5',
             'interview_online'  => 'Interview HRD',
+            'interview_user'    => 'Interview User',
             'berkas_kontrak'    => 'Input Data & Berkas',
         ];
         if (! isset($valid[$stage])) {
@@ -216,12 +219,23 @@ class Recruiter extends BaseController
         // Interview HRD: tab 'passed' dan 'failed' dihapus 3 Agustus 2026.
         // Tautan lama diarahkan ke penggantinya, bukan dibiarkan jatuh diam-diam
         // ke On Progress dan menampilkan daftar yang salah.
-        if ($stage === 'interview_online') {
+        // Interview User menumpang jadwal HRD (arahan atasan 4 Agustus 2026):
+        // tidak ada penjadwalan sendiri, jadi tab dan sumber barisnya sama persis.
+        $lewatJadwal = in_array($stage, ['interview_online', 'interview_user'], true);
+
+        if ($lewatJadwal) {
             $status = ['passed' => 'progress', 'failed' => 'rescheduled'][$status] ?? $status;
         }
 
+        // Interview User cuma punya On Progress dan Completed. Tautan lama ke
+        // Rescheduled dikembalikan ke On Progress, bukan dibiarkan menampilkan
+        // daftar kandidat yang jadwalnya justru sedang tidak ada.
+        if ($stage === 'interview_user' && $status === 'rescheduled') {
+            $status = 'progress';
+        }
+
         $ivMap = [];
-        if ($stage === 'interview_online') {
+        if ($lewatJadwal) {
             // Tab Interview HRD (arahan atasan 3 Agustus 2026). Ketiganya SALING
             // LEPAS - satu kandidat hanya boleh berada di satu tab, kalau tidak
             // recruiter mengerjakan orang yang sama dua kali:
@@ -279,7 +293,7 @@ class Recruiter extends BaseController
         }
 
         $daftar = $ids === [] ? [] : (new ApplicationModel())
-            ->select('applications.id, candidates.nama, candidates.email, jobs.judul')
+            ->select('applications.id, applications.job_id, candidates.nama, candidates.email, jobs.judul')
             ->join('candidates', 'candidates.id = applications.candidate_id')
             ->join('jobs', 'jobs.id = applications.job_id')
             ->whereIn('applications.id', $ids)
@@ -301,6 +315,205 @@ class Recruiter extends BaseController
             'status' => $status,
             'daftar' => $daftar,
         ]);
+    }
+
+    /**
+     * Batas jumlah dan panjang pertanyaan yang boleh tersimpan di satu lowongan.
+     *
+     * 24, bukan 12: sejak pertanyaan pembuka umum ikut disimpan, satu posisi
+     * membawa 6 umum + 9-10 khusus. Batas lama memotong sebagian, dan
+     * potongannya tidak meninggalkan jejak apa pun.
+     */
+    public const MAKS_PERTANYAAN = 24;
+    public const MAKS_PANJANG_PERTANYAAN = 300;
+
+    /**
+     * Pertanyaan interview per lowongan, dibuat AI (arahan atasan 4 Agustus 2026).
+     *
+     * Disimpan PER LOWONGAN, bukan per kandidat: tier gratis Gemini cuma memberi
+     * 20 panggilan generateContent per hari dan screening CV sudah memakai 1-2
+     * per CV. Sekali dibuat, set ini dibaca dari basis data dan tidak memanggil
+     * LLM lagi kecuali recruiter menekan "Buat Ulang".
+     */
+    public function pertanyaan(int $jobId)
+    {
+        $model = new JobModel();
+        $job   = $model->find($jobId);
+        if ($job === null) {
+            return redirect()->to('/recruiter/tahap/interview_user')->with('error', 'Lowongan tidak ditemukan.');
+        }
+
+        if ($this->request->is('post')) {
+            $tujuan = 'recruiter/pertanyaan/' . $jobId;
+
+            if ($this->request->getPost('aksi') === 'buat') {
+                // Tombolnya memang disembunyikan di halaman, tapi menyembunyikan
+                // tombol bukan penjagaan: form yang dikirim ulang dari riwayat
+                // browser tetap sampai ke sini. Menimpa set bank dengan keluaran
+                // LLM berarti kehilangan kompetensi, indikator, red flag, dan
+                // bobot - kurasi manusia yang tidak bisa dipulihkan dari sini.
+                if (array_filter($this->pertanyaanJob($job), 'is_array') !== []) {
+                    return redirect()->to($tujuan)->with('error',
+                        'Posisi ini sudah memakai bank soal tim rekrutmen yang lengkap dengan '
+                        . 'indikator penilaian. Membuatnya ulang dengan AI akan menghapus rubrik itu, '
+                        . 'jadi tidak dilakukan. Sunting pertanyaannya langsung bila perlu diubah.');
+                }
+
+                try {
+                    $hasil = service('aiService')->post('pertanyaan', [
+                        'judul'      => (string) $job['judul'],
+                        'skill'      => (string) ($job['req_skill'] ?? ''),
+                        'pendidikan' => (string) ($job['req_pendidikan'] ?? ''),
+                        'pengalaman' => (string) ($job['req_pengalaman'] ?? ''),
+                        'deskripsi'  => (string) ($job['deskripsi'] ?? ''),
+                        'jumlah'     => 8,
+                    ]);
+                } catch (AiServiceException $e) {
+                    // Sebab paling sering: kuota harian LLM habis atau ai-service mati.
+                    // Set yang lama TIDAK ditimpa - lebih baik pertanyaan kemarin
+                    // daripada halaman kosong menjelang interview.
+                    log_message('error', 'Pembuatan pertanyaan gagal: ' . $e->getMessage());
+
+                    return redirect()->to($tujuan)->with('error',
+                        'Gagal membuat pertanyaan. Layanan AI tidak menjawab atau kuota hariannya habis. '
+                        . 'Pertanyaan yang tersimpan sebelumnya tidak diubah.');
+                }
+                $daftar = $hasil['pertanyaan'] ?? [];
+                $pesan  = 'Pertanyaan baru dibuat AI. Silakan sunting bila perlu.';
+            } else {
+                // Form cuma mengirim teks. Rubrik (kompetensi, indikator, red
+                // flag, bobot) digabungkan kembali dari yang TERSIMPAN menurut
+                // urutan baris, bukan dititipkan lewat field tersembunyi -
+                // standar penilaian tidak boleh bisa diubah dari browser.
+                $lama   = $this->pertanyaanJob($job);
+                $daftar = [];
+                foreach ((array) ($this->request->getPost('pertanyaan') ?? []) as $i => $teks) {
+                    $rubrik    = is_array($lama[$i] ?? null) ? $lama[$i] : [];
+                    $daftar[]  = $rubrik === [] ? $teks : ['pertanyaan' => $teks] + $rubrik;
+                }
+                $pesan = 'Pertanyaan tersimpan.';
+            }
+
+            $model->update($jobId, ['pertanyaan_json' => json_encode($this->rapikan($daftar), JSON_UNESCAPED_UNICODE)]);
+
+            return redirect()->to($tujuan)->with('sukses', $pesan);
+        }
+
+        $milik = $this->pertanyaanJob($job);
+        $pinjam = $milik === [] ? $this->pinjamSerumpun($job) : ['pertanyaan' => [], 'dari' => null];
+
+        return view('recruiter/pertanyaan', [
+            'judul'      => 'Pertanyaan Interview',
+            'job'        => $job,
+            'pertanyaan' => $milik !== [] ? $milik : $pinjam['pertanyaan'],
+            'pinjamDari' => $milik !== [] ? null : $pinjam['dari'],
+        ]);
+    }
+
+    /**
+     * Pertanyaan pinjaman dari lowongan serumpun, untuk posisi yang belum punya
+     * set sendiri.
+     *
+     * Rancangannya dari InterviewQuestionModel tim DS: tebak rumpun dari kata
+     * kunci judul, lalu SAMPAIKAN bahwa itu tebakan. Bedanya, kalau tebakannya
+     * gagal kita tidak memakai kategori cadangan - halaman kosong berikut tombol
+     * "Buat dengan AI" adalah jawaban yang lebih jujur daripada menyodorkan
+     * pertanyaan gudang untuk pelamar kasir.
+     *
+     * Pinjaman TIDAK disimpan. Ia tampil sebagai bahan siap pakai; recruiter yang
+     * memutuskan menjadikannya milik posisi ini lewat tombol simpan.
+     *
+     * @param array<string, mixed> $job
+     *
+     * @return array{pertanyaan: list<mixed>, dari: string|null}
+     */
+    private function pinjamSerumpun(array $job): array
+    {
+        $tebakan = KategoriPosisi::tebak((string) $job['judul']);
+        if ($tebakan['kategori'] === null) {
+            return ['pertanyaan' => [], 'dari' => null];
+        }
+
+        $serumpun = (new JobModel())
+            ->where('kategori', $tebakan['kategori'])
+            ->where('id !=', $job['id'])
+            ->orderBy('id')
+            ->findAll();
+
+        foreach ($serumpun as $lain) {
+            $soal = $this->pertanyaanJob($lain);
+            if ($soal !== []) {
+                return ['pertanyaan' => $soal, 'dari' => (string) $lain['judul']];
+            }
+        }
+
+        return ['pertanyaan' => [], 'dari' => null];
+    }
+
+    /**
+     * Bersihkan daftar pertanyaan sebelum disimpan.
+     *
+     * Isinya datang dari dua sumber yang sama-sama tak bisa dipercaya bulat:
+     * LLM (bisa mengembalikan apa saja) dan form recruiter (bisa dikirim ulang
+     * dengan isi apa pun). Baris kosong dibuang supaya form yang ditinggal
+     * kosong berarti menghapus, bukan menyimpan deretan baris hampa.
+     *
+     * @param list<mixed> $daftar
+     *
+     * @return list<string>
+     */
+    private function rapikan(array $daftar): array
+    {
+        $bersih = [];
+        foreach ($daftar as $p) {
+            // Dua bentuk yang sah, sengaja:
+            //   string  - hasil generasi LLM, pertanyaan saja
+            //   objek   - bank tim DS, pertanyaan + rubrik penilaiannya
+            // Rubrik dipertahankan apa adanya; yang disunting recruiter cuma
+            // teks pertanyaannya, karena indikator dan red flag itu standar
+            // penilaian yang tidak boleh diubah lewat form biasa.
+            $rubrik = [];
+            if (is_array($p)) {
+                $rubrik = array_intersect_key($p, array_flip(['kompetensi', 'kategori', 'indikator', 'red_flag', 'bobot']));
+                $p      = $p['pertanyaan'] ?? '';
+            }
+            if (! is_scalar($p)) {
+                continue;
+            }
+            $t = trim(preg_replace('/\s+/u', ' ', (string) $p));
+            if ($t === '') {
+                continue;
+            }
+            $t = mb_substr($t, 0, self::MAKS_PANJANG_PERTANYAAN);
+
+            $bersih[] = $rubrik === [] ? $t : ['pertanyaan' => $t] + $rubrik;
+        }
+
+        return array_slice($bersih, 0, self::MAKS_PERTANYAAN);
+    }
+
+    /**
+     * Teks pertanyaan dari sebuah entri, apa pun bentuknya.
+     *
+     * @param array<string, mixed>|string $p
+     */
+    public static function teksPertanyaan(array|string $p): string
+    {
+        return is_array($p) ? (string) ($p['pertanyaan'] ?? '') : $p;
+    }
+
+    /**
+     * Pertanyaan tersimpan milik sebuah lowongan.
+     *
+     * @param array<string, mixed> $job
+     *
+     * @return list<string>
+     */
+    private function pertanyaanJob(array $job): array
+    {
+        $d = json_decode((string) ($job['pertanyaan_json'] ?? ''), true);
+
+        return is_array($d) ? $this->rapikan($d) : [];
     }
 
     /**

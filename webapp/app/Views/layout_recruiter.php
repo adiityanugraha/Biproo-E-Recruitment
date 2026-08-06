@@ -33,6 +33,9 @@
   th { color: #8a6d1e; background: #FFF6E6; font-size: 12px; }
 
   @media (max-width: 820px) { .rshell { flex-direction: column; } .rside { width: 100%; } }
+  .pesan { padding: 12px 16px; border-radius: 10px; margin-bottom: 16px; font-size: 14px; line-height: 1.5; }
+  .pesan-sukses { background: #E8F7EE; border: 1px solid #2E9E5B; color: #1d6b3d; }
+  .pesan-error { background: #FDECEC; border: 1px solid #E23B4E; color: #a12734; }
 </style>
 <?= $this->renderSection('gaya') ?>
 </head>
@@ -52,7 +55,22 @@
 
 <div class="rshell">
   <aside class="rside"><?= $this->renderSection('sidebar') ?></aside>
-  <main class="rcontent"><?= $this->renderSection('isi') ?></main>
+  <main class="rcontent">
+    <?php
+      // Layout ini sempat TIDAK menampilkan pesan flash sama sekali, sementara
+      // 17 aksi recruiter menyetelnya lewat with('sukses'|'error'). Akibatnya
+      // menekan tombol terlihat seperti tidak terjadi apa-apa: reschedule,
+      // penilaian interview, keputusan review, dan pembuatan pertanyaan semuanya
+      // berhasil atau gagal dalam diam. Layout kandidat sudah benar sejak awal.
+    ?>
+    <?php if (session('sukses')): ?>
+      <div class="pesan pesan-sukses">✅ <?= esc(session('sukses')) ?></div>
+    <?php endif ?>
+    <?php if (session('error')): ?>
+      <div class="pesan pesan-error">⚠️ <?= esc(session('error')) ?></div>
+    <?php endif ?>
+    <?= $this->renderSection('isi') ?>
+  </main>
 </div>
 
 <?= $this->include('partials/segera_modal') ?>

@@ -7,5 +7,5 @@ use CodeIgniter\Model;
 class JobModel extends Model
 {
     protected $table         = 'jobs';
-    protected $allowedFields = ['judul', 'req_skill', 'req_pendidikan', 'req_pengalaman', 'deskripsi', 'bobot_json', 'threshold_json'];
+    protected $allowedFields = ['judul', 'kategori', 'req_skill', 'req_pendidikan', 'req_pengalaman', 'deskripsi', 'bobot_json', 'threshold_json', 'pertanyaan_json'];
 }

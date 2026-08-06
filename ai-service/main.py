@@ -14,7 +14,7 @@ from extract import ekstrak_bytes
 from ocr import ocr_lengkapi
 from sanitize import bersihkan
 from scoring import BIDANG, Skor, hitung
-from structure import strukturkan_kontekstual
+from structure import _json_pertama, strukturkan_kontekstual
 
 RETRY_ATTEMPTS = 4
 RETRY_BASE_DELAY = float(os.environ.get("RETRY_BASE_DELAY", "2"))
@@ -286,6 +286,81 @@ def chat(req: ChatRequest) -> ChatReply:
         raise HTTPException(502, "LLM gagal")
 
     return ChatReply(answer=answer)
+
+
+# --- Pertanyaan interview per lowongan (arahan atasan 4 Agustus 2026) ---
+# Sinkron seperti /chat: recruiter menunggu hasilnya di layar.
+#
+# Dibuat PER LOWONGAN, bukan per kandidat. Tier gratis cuma memberi 20 panggilan
+# generateContent per hari dan screening CV sudah memakai 1-2 per CV; per
+# kandidat akan menghabiskannya dalam sehari. CI4 menyimpan hasilnya di
+# jobs.pertanyaan_json dan tidak memanggil ulang kecuali diminta recruiter.
+
+MAKS_PERTANYAAN = 12
+
+SYSTEM_PERTANYAAN = (
+    "Kamu perekrut senior di perusahaan retail gadget Indonesia. Susun daftar "
+    "pertanyaan wawancara untuk SATU posisi, berdasarkan uraian lowongan yang "
+    "diberikan.\n\n"
+    "ATURAN:\n"
+    "1. Pertanyaan harus SPESIFIK untuk posisi itu, bukan pertanyaan umum yang "
+    'cocok untuk semua pekerjaan ("Apa kelebihan Anda?" dilarang).\n'
+    "2. Gali pengalaman nyata dan cara kerja, bukan definisi. Utamakan bentuk "
+    '"Ceritakan saat Anda ..." dan "Bagaimana Anda menangani ...".\n'
+    "3. Bahasa Indonesia, sopan, satu kalimat per pertanyaan.\n"
+    "4. JANGAN menanyakan usia, agama, suku, status pernikahan, rencana punya "
+    "anak, kondisi kesehatan, atau hal pribadi lain yang tidak berkaitan dengan "
+    "pekerjaan. Ini larangan keras.\n"
+    "5. Jawab HANYA JSON: {\"pertanyaan\": [\"...\", \"...\"]}"
+)
+
+
+class PertanyaanRequest(BaseModel):
+    judul: str
+    skill: str = ""
+    pendidikan: str = ""
+    pengalaman: str = ""
+    deskripsi: str = ""
+    jumlah: int = 8
+
+
+class PertanyaanReply(BaseModel):
+    pertanyaan: list[str]
+
+
+@app.post("/pertanyaan", response_model=PertanyaanReply)
+def pertanyaan(req: PertanyaanRequest) -> PertanyaanReply:
+    if not req.judul.strip():
+        raise HTTPException(400, "judul lowongan kosong")
+
+    jumlah = max(3, min(MAKS_PERTANYAAN, req.jumlah))
+    uraian = (
+        f"Posisi: {req.judul}\n"
+        f"Keahlian yang dicari: {req.skill}\n"
+        f"Pendidikan minimal: {req.pendidikan}\n"
+        f"Pengalaman yang diminta: {req.pengalaman}\n"
+        f"Uraian pekerjaan: {req.deskripsi}\n\n"
+        f"Buat tepat {jumlah} pertanyaan."
+    )
+
+    provider = getattr(app.state, "chat_provider", None) or get_chat_provider()
+    try:
+        jawab = provider.generate(SYSTEM_PERTANYAAN, [], uraian)
+    except Exception as e:
+        # JANGAN echo str(e): pesan httpx memuat URL Gemini + ?key=API_KEY
+        logging.getLogger("uvicorn.error").error("pertanyaan LLM gagal: %s", tanpa_kunci(e))
+        raise HTTPException(502, "LLM gagal")
+
+    d = _json_pertama(jawab)
+    daftar = d.get("pertanyaan") if isinstance(d, dict) else None
+    if not isinstance(daftar, list):
+        raise HTTPException(502, "jawaban LLM tidak bisa dibaca")
+
+    bersih = [t for t in (str(x).strip() for x in daftar if isinstance(x, (str, int, float))) if t]
+    if not bersih:
+        raise HTTPException(502, "LLM tidak menghasilkan pertanyaan")
+
+    return PertanyaanReply(pertanyaan=bersih[:MAKS_PERTANYAAN])
 
 
 @app.get("/health")

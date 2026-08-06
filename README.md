@@ -139,7 +139,7 @@ dikosongkan, jalur internalnya menutup diri dan menolak semua permintaan.
 
 | Kuota | Batas | Dipakai untuk |
 |---|---|---|
-| `gemini-2.5-flash` | **20 permintaan/hari** | membaca dan menstrukturkan CV |
+| `gemini-2.5-flash` | **20 permintaan/hari** | membaca CV, dan membuat pertanyaan interview |
 | `gemini-embedding-001` | **1.000 item/hari** | menghitung kemiripan |
 
 Satu CV memakai 1-2 panggilan LLM, jadi atapnya sekitar 10-20 CV per hari. Kalau

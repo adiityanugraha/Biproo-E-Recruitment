@@ -431,3 +431,117 @@ def test_strukturisasi_memakai_budget_token_besar_bukan_default_chatbot(wiring, 
 class _LLMBiasa:
     def generate(self, system, history, question):
         return '{"pengalaman":"Kasir 2020-2022","skill":"Excel","pendidikan":"SMK","riwayat":[{"jabatan":"Kasir","perusahaan":"Toko Maju","periode":"2020-2022"}]}'
+
+
+# --- Pertanyaan interview per lowongan ---
+
+VALID_LOWONGAN = {
+    "judul": "Admin Gudang",
+    "skill": "Administrasi stok, Excel, ketelitian data",
+    "pendidikan": "D3 semua jurusan",
+    "pengalaman": "1 tahun administrasi gudang/logistik",
+    "deskripsi": "Mengelola pencatatan stok masuk-keluar gudang.",
+}
+
+
+class _LLMPertanyaan:
+    def __init__(self, jawab):
+        self.jawab = jawab
+        self.terakhir = None
+
+    def generate(self, system, history, question):
+        self.terakhir = {"system": system, "question": question}
+        if isinstance(self.jawab, Exception):
+            raise self.jawab
+        return self.jawab
+
+
+def test_pertanyaan_dibuat_dari_uraian_lowongan():
+    app.state.chat_provider = _LLMPertanyaan(
+        '{"pertanyaan":["Ceritakan saat Anda menemukan selisih stok.",'
+        '"Bagaimana Anda memastikan pencatatan barang masuk akurat?"]}'
+    )
+    with TestClient(app) as client:
+        r = client.post("/pertanyaan", json=VALID_LOWONGAN)
+
+    assert r.status_code == 200
+    assert len(r.json()["pertanyaan"]) == 2
+    assert "selisih stok" in r.json()["pertanyaan"][0]
+
+
+def test_uraian_lowongan_ikut_dikirim_ke_llm():
+    llm = _LLMPertanyaan('{"pertanyaan":["a","b","c"]}')
+    app.state.chat_provider = llm
+    with TestClient(app) as client:
+        client.post("/pertanyaan", json=VALID_LOWONGAN)
+
+    q = llm.terakhir["question"]
+    assert "Admin Gudang" in q and "Excel" in q and "stok masuk-keluar" in q
+
+
+def test_larangan_pertanyaan_pribadi_ada_di_system_prompt():
+    """
+    Pertanyaan usia/agama/status pernikahan bukan cuma tidak sopan - ia sumber
+    diskriminasi, dan pipeline ini sudah membuang atribut itu sebelum embedding
+    (sanitize.bersihkan). Tidak masuk akal kalau LLM justru menyuruh recruiter
+    menanyakannya langsung.
+    """
+    llm = _LLMPertanyaan('{"pertanyaan":["a","b","c"]}')
+    app.state.chat_provider = llm
+    with TestClient(app) as client:
+        client.post("/pertanyaan", json=VALID_LOWONGAN)
+
+    s = llm.terakhir["system"].lower()
+    for dilarang in ("usia", "agama", "suku", "status pernikahan"):
+        assert dilarang in s
+
+
+def test_jumlah_pertanyaan_dibatasi_atas_dan_bawah():
+    llm = _LLMPertanyaan('{"pertanyaan":["a","b","c"]}')
+    app.state.chat_provider = llm
+    with TestClient(app) as client:
+        client.post("/pertanyaan", json={**VALID_LOWONGAN, "jumlah": 999})
+        assert "Buat tepat 12 pertanyaan" in llm.terakhir["question"]
+        client.post("/pertanyaan", json={**VALID_LOWONGAN, "jumlah": 0})
+        assert "Buat tepat 3 pertanyaan" in llm.terakhir["question"]
+
+
+def test_keluaran_llm_kebanyakan_dipotong():
+    app.state.chat_provider = _LLMPertanyaan(
+        '{"pertanyaan":[' + ",".join(f'"p{i}"' for i in range(50)) + ']}'
+    )
+    with TestClient(app) as client:
+        r = client.post("/pertanyaan", json=VALID_LOWONGAN)
+
+    assert len(r.json()["pertanyaan"]) == 12
+
+
+def test_judul_kosong_ditolak():
+    app.state.chat_provider = _LLMPertanyaan('{"pertanyaan":["a"]}')
+    with TestClient(app) as client:
+        assert client.post("/pertanyaan", json={**VALID_LOWONGAN, "judul": "  "}).status_code == 400
+
+
+def test_llm_gagal_jadi_502_tanpa_membocorkan_api_key():
+    bocor = RuntimeError(
+        "Client error '429' for url 'https://generativelanguage.googleapis.com/v1beta/x?key=RAHASIA123'"
+    )
+    app.state.chat_provider = _LLMPertanyaan(bocor)
+    with TestClient(app) as client:
+        r = client.post("/pertanyaan", json=VALID_LOWONGAN)
+
+    assert r.status_code == 502
+    assert "RAHASIA123" not in r.text
+
+
+def test_jawaban_llm_tidak_berbentuk_daftar_ditolak():
+    app.state.chat_provider = _LLMPertanyaan('{"pertanyaan":"bukan daftar"}')
+    with TestClient(app) as client:
+        assert client.post("/pertanyaan", json=VALID_LOWONGAN).status_code == 502
+
+
+def test_daftar_kosong_ditolak_bukan_dikembalikan_kosong():
+    """Set pertanyaan kosong tidak berguna dan akan tersimpan diam-diam di CI4."""
+    app.state.chat_provider = _LLMPertanyaan('{"pertanyaan":["", "   "]}')
+    with TestClient(app) as client:
+        assert client.post("/pertanyaan", json=VALID_LOWONGAN).status_code == 502
