@@ -219,6 +219,7 @@ Anda dan tidak butuh `ai-service` hidup.
 | [docs/gate-logic.md](docs/gate-logic.md) | Aturan kelulusan tiap tahap |
 | [docs/skema-database.md](docs/skema-database.md) | Skema tabel |
 | [docs/setup-tim-ds.md](docs/setup-tim-ds.md) | Menyiapkan basis data sendiri dan menjaganya tetap sinkron lewat migrasi |
+| [docs/deploy.md](docs/deploy.md) | Checklist memindahkan aplikasi ke server |
 | [docs/kalibrasi-gate.md](docs/kalibrasi-gate.md) | Kalibrasi ambang dan metrik |
 | [ai-service/README.md](ai-service/README.md) | Kontrak API layanan AI |
 

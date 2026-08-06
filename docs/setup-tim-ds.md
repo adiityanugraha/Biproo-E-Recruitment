@@ -201,17 +201,47 @@ DROP DATABASE ereq;
 ## Kalau Anda butuh data produksi, bukan sekadar skema
 
 Seeder memberi data buatan. Kalau analisisnya butuh data nyata (misal mengukur
-distribusi skor CV kandidat sungguhan), minta berkas `.bak` ke tim aplikasi:
+distribusi skor CV kandidat sungguhan), minta snapshot ke tim aplikasi.
 
-```sql
--- di sisi tim aplikasi
-BACKUP DATABASE ereq TO DISK = 'C:\temp\ereq.bak' WITH INIT, COMPRESSION;
+### Di sisi tim aplikasi
+
+Satu perintah, dijalankan dari folder repo:
+
+```bash
+.\db\snapshot-ds.ps1
 ```
 
-Sadari bahwa `.bak` adalah **foto sesaat**. Ia langsung basi begitu ada data
-baru, dan ia memuat data pribadi kandidat (nama, email, CV), jadi jangan
-disimpan sembarangan dan jangan masuk git. Untuk sekadar menjalankan dan menguji
-alur, seeder sudah cukup dan jauh lebih repeatable.
+Hasilnya `C:\temp\ereq_ds.bak`, siap dikirim. Yang dikerjakan skrip itu: mencadangkan
+`ereq`, memulihkannya sebagai salinan `ereq_ds`, menyamarkan data pribadi di
+salinan tersebut lewat [`bersihkan-ds.sql`](../db/bersihkan-ds.sql), memverifikasi
+hasilnya, lalu mencadangkan salinan yang sudah bersih. Basis data asli tidak
+pernah disentuh.
+
+Yang disamarkan: nama dan email kandidat, akun recruiter beserta hash sandinya,
+seluruh antrian email, dan tautan Zoom (ruangannya masih hidup, jadi itu bukan
+sekadar data melainkan pintu yang masih bisa dibuka).
+
+Yang tersisa untuk dianalisis: skor screening, riwayat tahapan, lowongan, dan
+penilaian interview. Isi CV tidak ada di basis data sama sekali, hanya
+metadatanya seperti jumlah halaman dan karakter.
+
+Kalau verifikasinya gagal, skrip berhenti dan tidak meninggalkan berkas apa pun.
+Itu disengaja: percobaan penyamaran yang gagal tetap menghasilkan `.bak` yang
+terlihat wajar dari luar.
+
+Opsi kalau perlu: `-Sumber`, `-Salinan`, `-Folder`, dan `-Simpan` (membiarkan
+basis data salinan tetap ada setelah selesai).
+
+### Yang perlu disadari
+
+`.bak` adalah **foto sesaat**. Ia langsung basi begitu ada data baru. Untuk
+memperbarui, jalankan skripnya lagi. Sepakati juga sejak awal berapa lama tim DS
+boleh menyimpannya, lalu tagih: salinan data pelamar yang tertinggal di laptop
+orang setelah proyek selesai adalah masalah yang muncul jauh belakangan, waktu
+tidak ada lagi yang ingat berkas itu pernah dikirim.
+
+Untuk sekadar menjalankan dan menguji alur, seeder sudah cukup dan jauh lebih
+repeatable.
 
 ---
 
