@@ -52,6 +52,22 @@ final class CvRecruiterTest extends CIUnitTestCase
         return [(int) $cid, $aid, $nama];
     }
 
+    /**
+     * Tautan CV milik satu lamaran yang membuka jendela pratinjau.
+     *
+     * Harus menyasar tautan CV-nya sendiri, bukan sekadar nama fungsinya: tombol
+     * View di tabel yang sama juga memanggil bukaJendela, jadi mencocokkan
+     * "bukaJendela" saja akan ikut cocok walau tautan CV-nya justru tanpa onclick.
+     * Judulnya juga tidak bisa dipakai sebagai penanda - judul mengandung tanda
+     * kutip, dan HTML yang keluar memakai onclick='...' (kutip tunggal) untuk
+     * atribut semacam itu. Karena itu polanya menerima kedua gaya kutip, bukan
+     * mengunci salah satu.
+     */
+    private function polaTautanCv(int $appId): string
+    {
+        return '~<a[^>]*recruiter/cv/' . $appId . '[^>]*onclick=[\'"]return bukaJendela~';
+    }
+
     protected function tearDown(): void
     {
         foreach ($this->berkas as $f) {
@@ -144,6 +160,37 @@ final class CvRecruiterTest extends CIUnitTestCase
 
         $daftar = (string) $this->withSession($this->sesiRec)->get('recruiter/kandidat')->getBody();
         $this->assertStringContainsString("recruiter/cv/{$aid}", $daftar);
+    }
+
+    /**
+     * CV dibuka di jendela pratinjau di atas tabel (mengikuti BIPROO asli),
+     * bukan di tab baru. href-nya sengaja dipertahankan sebagai cadangan kalau
+     * JavaScript mati, jadi yang diuji keberadaan pemanggil bukaJendela().
+     */
+    public function testCvPdfDibukaDiJendelaPratinjau(): void
+    {
+        [, $aid] = $this->fixture('pdf');
+
+        foreach (['recruiter/tahap/upload_cv', 'recruiter/kandidat'] as $url) {
+            $html = (string) $this->withSession($this->sesiRec)->get($url)->getBody();
+            $this->assertMatchesRegularExpression($this->polaTautanCv($aid), $html, $url);
+            $this->assertStringContainsString('id="jendelaModal"', $html, $url . ' perlu jendelanya');
+        }
+    }
+
+    /**
+     * DOCX tidak bisa dirender penampil PDF browser. Membukanya di jendela
+     * pratinjau cuma menghasilkan bingkai kosong, jadi tautannya dibiarkan
+     * mengunduh seperti sebelumnya.
+     */
+    public function testCvDocxTetapTautanBiasaBukanJendelaPratinjau(): void
+    {
+        [, $aid] = $this->fixture('docx');
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/tahap/upload_cv')->getBody();
+
+        $this->assertStringContainsString("recruiter/cv/{$aid}", $html);
+        $this->assertDoesNotMatchRegularExpression($this->polaTautanCv($aid), $html);
     }
 
     public function testTautanCvAdaDiHalamanReview(): void

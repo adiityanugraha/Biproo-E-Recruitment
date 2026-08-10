@@ -1,5 +1,11 @@
 <?php use App\Controllers\Lamaran; ?>
-<?= $this->extend('layout') ?>
+<?php
+// Dibuka di dalam jendela pratinjau (tombol View di tabel tahap) atau sebagai
+// halaman penuh. $q menjaga penandanya ikut terbawa saat keputusan dikirim.
+$bingkai = $bingkai ?? false;
+$q       = $bingkai ? '?bingkai=1' : '';
+?>
+<?= $this->extend($bingkai ? 'layout_bingkai' : 'layout') ?>
 <?= $this->section('isi') ?>
 
 <div class="kartu">
@@ -88,7 +94,7 @@
   <h2>Keputusan Review</h2>
   <p style="font-size:14px">Kandidat ini menunggu keputusan manusia - sistem tidak memutus otomatis.
   Keputusan ada di tangan Anda dan akan tercatat atas nama Anda di riwayat.</p>
-  <form method="post" action="<?= site_url('recruiter/review/' . $app['id']) ?>" style="display:flex;gap:12px">
+  <form method="post" action="<?= site_url('recruiter/review/' . $app['id']) . $q ?>" style="display:flex;gap:12px">
     <?= csrf_field() ?>
     <button type="submit" name="keputusan" value="approve" style="background:#2E9E5B">Loloskan</button>
     <button type="submit" name="keputusan" value="reject" style="background:#E23B4E">Tidak Lolos</button>
@@ -96,6 +102,11 @@
 </div>
 <?php endif ?>
 
-<p class="tautan"><a href="<?= site_url('recruiter') ?>">Kembali ke dashboard</a></p>
+<?php if ($bingkai): ?>
+  <?php // Di dalam bingkai, "kembali" berarti menutup jendelanya. ?>
+  <p class="tautan"><a href="#" onclick="parent.tutupJendela();return false">← Tutup</a></p>
+<?php else: ?>
+  <p class="tautan"><a href="<?= site_url('recruiter') ?>">Kembali ke dashboard</a></p>
+<?php endif ?>
 
 <?= $this->endSection() ?>

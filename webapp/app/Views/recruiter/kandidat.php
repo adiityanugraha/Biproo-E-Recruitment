@@ -34,8 +34,10 @@
             <?php endif ?>
           </td>
           <td style="white-space:nowrap">
+            <?php $pdf = str_ends_with(strtolower($a['cv_path'] ?? ''), '.pdf'); ?>
             <a href="<?= site_url('recruiter/cv/' . $a['id']) ?>" target="_blank" rel="noopener"
-               style="color:#2F6FED" title="Buka CV di tab baru">CV</a>
+               <?php if ($pdf): ?>onclick="return bukaJendela(this.href, <?= esc(json_encode('CV ' . $a['nama']), 'attr') ?>)"<?php endif ?>
+               style="color:#2F6FED" title="<?= $pdf ? 'Lihat CV' : 'Unduh CV' ?>">CV</a>
             &nbsp;
             <?php if ($a['gate1'] === 'flagged'): ?>
               <a href="<?= site_url('recruiter/review/' . $a['id']) ?>" style="color:#2F6FED"><b>Review</b></a>

@@ -74,5 +74,6 @@
 </div>
 
 <?= $this->include('partials/segera_modal') ?>
+<?= $this->include('partials/jendela_modal') ?>
 </body>
 </html>

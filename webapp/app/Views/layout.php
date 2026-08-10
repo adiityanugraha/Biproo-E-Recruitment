@@ -60,24 +60,8 @@ $inisial = strtoupper(mb_substr((string) $nama, 0, 1));
                border-bottom: 2px solid rgba(255,255,255,.5); padding-bottom: 6px; }
   .content { flex: 1; min-width: 0; }
 
-  .kartu { background: #fff; border-radius: 14px; padding: 24px; box-shadow: 0 4px 14px rgba(0,0,0,.05); margin-bottom: 18px; }
-  h2 { margin-top: 0; font-size: 19px; }
-  label { display: block; font-size: 14px; font-weight: 600; margin: 14px 0 6px; }
-  input, select { width: 100%; padding: 10px 12px; border: 1px solid #e2e6ee; border-radius: 10px; font-size: 14px; font-family: inherit; }
-  button { margin-top: 18px; padding: 12px 20px; border: none; border-radius: 10px; cursor: pointer;
-           background: linear-gradient(90deg, #FBA919, #F7941D); color: #fff; font-size: 15px; font-weight: 700; font-family: inherit; }
-  .pesan-sukses { background: #E8F7EE; border: 1px solid #2E9E5B; color: #1d6b3d; padding: 12px 14px; border-radius: 10px; margin-bottom: 16px; }
-  .pesan-error { background: #FDECEC; border: 1px solid #E23B4E; color: #a12734; padding: 12px 14px; border-radius: 10px; margin-bottom: 16px; }
-  .tautan { font-size: 14px; text-align: center; margin-top: 14px; }
-  .tautan a { color: #2F6FED; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid #eef0f5; }
-  th { color: #8a6d1e; background: #FFF6E6; }
-  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
-  .badge-lolos { background: #E8F7EE; color: #1d6b3d; }
-  .badge-gagal { background: #FDECEC; color: #a12734; }
-  .badge-flag { background: #FFF6E6; color: #a5771a; border: 1px solid #F3B94A; }
-  .badge-netral { background: #F2F4F8; color: #555; }
+  /* gaya isi (kartu, tabel, lencana, tombol) ada di partials/gaya_isi.php,
+     disertakan tepat setelah blok ini supaya urutan cascade-nya tidak berubah */
 
   /* banner sambutan (gradient amber -> lavender, BIPROO) */
   .banner { position: relative; overflow: hidden; border-radius: 18px; padding: 22px 26px; margin-bottom: 18px;
@@ -139,6 +123,8 @@ $inisial = strtoupper(mb_substr((string) $nama, 0, 1));
                               .kpis { grid-template-columns: repeat(2, 1fr); } .stats { grid-template-columns: 1fr; } }
   @media (max-width: 620px) { .stepper-cols { grid-template-columns: 1fr; } }
 </style>
+<?= $this->include('partials/gaya_isi') ?>
+<?= $this->renderSection('gaya') ?>
 </head>
 <body>
 <header class="topbar">
@@ -187,5 +173,6 @@ $inisial = strtoupper(mb_substr((string) $nama, 0, 1));
 
 <?php if (! session('recruiter_id')): ?><?= $this->include('partials/chat_widget') ?><?php endif ?>
 <?= $this->include('partials/segera_modal') ?>
+<?php if (session('recruiter_id')): ?><?= $this->include('partials/jendela_modal') ?><?php endif ?>
 </body>
 </html>

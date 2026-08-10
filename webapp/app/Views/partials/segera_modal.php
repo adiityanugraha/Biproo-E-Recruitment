@@ -9,7 +9,12 @@
   #segeraModal .ic { font-size: 40px; }
   #segeraModal h3 { margin: 10px 0 6px; }
   #segeraModal p { color: #666; font-size: 14px; margin: 0 0 16px; }
-  #segeraModal button { margin: 0; padding: 10px 20px; border: none; border-radius: 10px; cursor: pointer; font-family: inherit;
+  /* height & line-height WAJIB disebut, bukan dibiarkan mewarisi: halaman tabel
+     tahap menyetel button { height: 30px; line-height: 28px }, dan karena aturan
+     di bawah ini tidak menyebutnya, tinggi 30px itu ikut terpakai sementara
+     padding dan fontnya lebih besar - tulisan "Mengerti" jadi terpotong. */
+  #segeraModal button { margin: 0; padding: 10px 20px; height: auto; line-height: normal;
+                        border: none; border-radius: 10px; cursor: pointer; font-family: inherit;
                         font-weight: 700; font-size: 14px; background: linear-gradient(90deg, #FBA919, #F7941D); color: #fff; }
 </style>
 <div id="segeraModal" onclick="if(event.target===this)tutupSegera()">

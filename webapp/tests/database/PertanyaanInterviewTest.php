@@ -15,8 +15,12 @@ use CodeIgniter\Test\FeatureTestTrait;
 /**
  * Pertanyaan interview yang dibuat AI (arahan atasan 4 Agustus 2026).
  *
- * Recruiter membuka halaman Interview User sebelum wawancara dan sudah punya
+ * Recruiter membuka halaman Interview HRD sebelum wawancara dan sudah punya
  * daftar pertanyaan khusus posisi itu, bukan menyusunnya sendiri tiap kali.
+ *
+ * Pindah dari Interview User ke Interview HRD pada 6 Agustus 2026: kedua tahap
+ * itu ternyata tidak berhubungan, dan yang punya jadwal serta ruang Zoom adalah
+ * Interview HRD. Interview User dinonaktifkan.
  *
  * Pertanyaan menempel pada LOWONGAN, bukan kandidat. Alasannya kuota: tier
  * gratis Gemini cuma memberi 20 panggilan generateContent per hari, dan
@@ -47,7 +51,7 @@ final class PertanyaanInterviewTest extends CIUnitTestCase
         ]);
     }
 
-    /** Kandidat dengan jadwal interview aktif, supaya muncul di tabel Interview User. */
+    /** Kandidat dengan jadwal interview aktif, supaya muncul di tabel Interview HRD. */
     private function kandidatTerjadwal(int $jobId): int
     {
         $cid = (new CandidateModel())->insert(['nama' => 'Sinta', 'email' => 'sinta@example.com', 'password_hash' => 'x']);
@@ -92,31 +96,32 @@ final class PertanyaanInterviewTest extends CIUnitTestCase
         });
     }
 
-    // --- Halaman Interview User ---
+    // --- Halaman Interview HRD ---
 
     /**
-     * Dua tab saja (arahan atasan 4 Agustus 2026): yang akan diwawancarai, dan
-     * yang sudah. Melepas jadwal adalah tindakan Interview HRD, jadi Rescheduled
-     * tidak punya tempat di sini - kandidat tanpa jadwal belum bisa diwawancarai
-     * user.
+     * Interview User dinonaktifkan 6 Agustus 2026. Tautan lamanya tidak boleh
+     * menampilkan halaman kosong atau error: rutenya sudah tidak dikenal, jadi
+     * pengunjung dikembalikan ke dashboard.
      */
-    public function testInterviewUserHanyaPunyaDuaTab(): void
+    public function testInterviewUserSudahTidakBisaDibuka(): void
     {
         $jid = $this->job();
         $this->kandidatTerjadwal($jid);
 
-        $res = $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_user');
-
-        $res->assertStatus(200);
-        $html = (string) $res->getBody();
-        $this->assertStringContainsString('Interview User', $html);
-        $this->assertStringContainsString('On Progress', $html);
-        $this->assertStringContainsString('Completed', $html);
-        $this->assertStringNotContainsString('Rescheduled', $html);
-        $this->assertStringNotContainsString('?status=passed', $html);
+        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_user')
+            ->assertRedirectTo(site_url('recruiter'));
     }
 
-    /** Interview HRD tetap punya Rescheduled - penghapusan hanya di Interview User. */
+    /** Menunya tetap terlihat tapi mati, seperti FPK dan Job Posting. */
+    public function testMenuInterviewUserTampilTapiNonaktif(): void
+    {
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter')->getBody();
+
+        $this->assertStringContainsString('Interview User', $html);
+        $this->assertStringNotContainsString('recruiter/tahap/interview_user', $html);
+    }
+
+    /** Interview HRD tetap punya tiga tabnya. */
     public function testInterviewHrdMasihPunyaTabRescheduled(): void
     {
         $jid = $this->job();
@@ -127,30 +132,34 @@ final class PertanyaanInterviewTest extends CIUnitTestCase
         $this->assertStringContainsString('Rescheduled', $html);
     }
 
-    /** Tautan lama ke Rescheduled tidak boleh menampilkan daftar yang salah. */
-    public function testTautanRescheduledLamaDikembalikanKeOnProgress(): void
-    {
-        $jid = $this->job();
-        $this->kandidatTerjadwal($jid);
-
-        $html = (string) $this->withSession($this->sesiRec)
-            ->get('recruiter/tahap/interview_user?status=rescheduled')->getBody();
-
-        // kandidat terjadwal muncul, artinya yang tampil adalah On Progress
-        $this->assertStringContainsString('Sinta', $html);
-        $this->assertStringContainsString('recruiter/pertanyaan/' . $jid, $html);
-    }
-
     /** On Progress = yang akan diwawancarai, lengkap dengan pertanyaan dan CV. */
     public function testOnProgressMenyediakanPertanyaanDanCv(): void
     {
         $jid = $this->job();
         $aid = $this->kandidatTerjadwal($jid);
 
-        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_user')->getBody();
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online')->getBody();
 
         $this->assertStringContainsString('recruiter/pertanyaan/' . $jid, $html);
         $this->assertStringContainsString('recruiter/cv/' . $aid, $html);
+    }
+
+    /**
+     * Pertanyaan cuma berguna sebelum wawancara. Di Completed yang dibutuhkan
+     * form penilaian, bukan daftar pertanyaan lagi.
+     */
+    public function testPertanyaanTidakMunculDiTabCompleted(): void
+    {
+        $jid = $this->job();
+        $aid = $this->kandidatTerjadwal($jid);
+        (new InterviewModel())->where('application_id', $aid)
+            ->set(['scheduled_at' => (new DateTime())->modify('-3 hours')->format('Y-m-d H:i:s')])->update();
+
+        $html = (string) $this->withSession($this->sesiRec)
+            ->get('recruiter/tahap/interview_online?status=completed')->getBody();
+
+        $this->assertStringContainsString('Sinta', $html);
+        $this->assertStringNotContainsString('recruiter/pertanyaan/', $html);
     }
 
     /** Completed = yang sudah selesai; sesi berakhir memindahkannya sendiri. */
@@ -168,31 +177,59 @@ final class PertanyaanInterviewTest extends CIUnitTestCase
             'meeting_id'     => '9',
         ]);
 
-        $progress  = (string) $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_user')->getBody();
-        $completed = (string) $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_user?status=completed')->getBody();
+        $progress  = (string) $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online')->getBody();
+        $completed = (string) $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=completed')->getBody();
 
         $this->assertStringNotContainsString('Bagas', $progress);
         $this->assertStringContainsString('Bagas', $completed);
-        $this->assertStringContainsString('interview selesai', $completed);
+        $this->assertStringContainsString('Nilai Interview', $completed);
     }
 
     /**
-     * "Menumpang jadwal HRD": tidak ada penjadwalan sendiri, jadi kandidat yang
-     * muncul persis sama dengan yang terjadwal di Interview HRD.
+     * Pertanyaan dibuka di jendela pratinjau di atas tabel, bukan dengan
+     * berpindah halaman. Isi jendela memakai layout_bingkai: tanpa topbar dan
+     * tanpa sidebar, karena keduanya sudah ada di halaman induk.
      */
-    public function testKandidatMunculKarenaJadwalHrdBukanPenjadwalanSendiri(): void
+    public function testHalamanPertanyaanDalamBingkaiTanpaTopbarDanSidebar(): void
     {
         $jid = $this->job();
-        $aid = $this->kandidatTerjadwal($jid);
 
-        $user = (string) $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_user')->getBody();
-        $hrd  = (string) $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online')->getBody();
+        $penuh   = (string) $this->withSession($this->sesiRec)->get("recruiter/pertanyaan/{$jid}")->getBody();
+        $bingkai = (string) $this->withSession($this->sesiRec)->get("recruiter/pertanyaan/{$jid}?bingkai=1")->getBody();
 
-        $this->assertStringContainsString('Sinta', $user);
-        $this->assertStringContainsString('Sinta', $hrd);
-        $this->assertStringContainsString('recruiter/pertanyaan/' . $jid, $user);
-        // tombol pertanyaan HANYA di Interview User, tidak mengotori halaman HRD
-        $this->assertStringNotContainsString('recruiter/pertanyaan/', $hrd);
+        $this->assertStringContainsString('class="rtop"', $penuh, 'versi penuh tetap punya topbar');
+        $this->assertStringNotContainsString('class="rtop"', $bingkai);
+        $this->assertStringNotContainsString('class="rside"', $bingkai);
+        // isinya sendiri tetap ada
+        $this->assertStringContainsString('Admin Gudang', $bingkai);
+    }
+
+    /** Tombol di tabel membuka jendela, bukan meninggalkan halaman. */
+    public function testTombolPertanyaanMembukaJendelaBukanPindahHalaman(): void
+    {
+        $jid = $this->job();
+        $this->kandidatTerjadwal($jid);
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online')->getBody();
+
+        $this->assertStringContainsString("recruiter/pertanyaan/{$jid}?bingkai=1", $html);
+        $this->assertStringContainsString('bukaJendela(this.href', $html);
+        $this->assertStringContainsString('id="jendelaModal"', $html);
+    }
+
+    /**
+     * Setelah Simpan, penandanya harus ikut terbawa. Tanpa ini halaman di dalam
+     * bingkai berubah jadi versi utuh lengkap dengan topbar dan sidebar yang
+     * terjepit di kotak kecil.
+     */
+    public function testSimpanDariDalamBingkaiTetapDiDalamBingkai(): void
+    {
+        $jid = $this->job();
+        (new JobModel())->update($jid, ['pertanyaan_json' => json_encode(['Ceritakan pengalaman Anda.'])]);
+
+        $this->withSession($this->sesiRec)
+            ->post("recruiter/pertanyaan/{$jid}?bingkai=1", ['aksi' => 'simpan', 'pertanyaan' => ['Sudah disunting.']])
+            ->assertRedirectTo(site_url("recruiter/pertanyaan/{$jid}") . '?bingkai=1');
     }
 
     public function testTombolPertanyaanMenunjukLowonganBukanKandidat(): void
@@ -204,7 +241,7 @@ final class PertanyaanInterviewTest extends CIUnitTestCase
         $aid = $this->kandidatTerjadwal($jid);
         $this->assertNotSame($jid, $aid, 'prasyarat uji: id lowongan dan id lamaran harus beda');
 
-        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_user')->getBody();
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online')->getBody();
 
         $this->assertStringContainsString('recruiter/pertanyaan/' . $jid, $html);
         $this->assertStringNotContainsString('recruiter/pertanyaan/' . $aid . '"', $html);
@@ -327,7 +364,7 @@ final class PertanyaanInterviewTest extends CIUnitTestCase
     public function testLowonganTidakAdaDialihkanBukanError(): void
     {
         $this->withSession($this->sesiRec)->get('recruiter/pertanyaan/999999')
-            ->assertRedirectTo(site_url('recruiter/tahap/interview_user'));
+            ->assertRedirectTo(site_url('recruiter/tahap/interview_online'));
     }
 
     public function testKandidatTidakBisaMembukaPertanyaan(): void

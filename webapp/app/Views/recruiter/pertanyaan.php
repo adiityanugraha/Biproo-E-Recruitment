@@ -1,4 +1,12 @@
-<?= $this->extend('layout_recruiter') ?>
+<?php
+// Dibuka di dalam jendela pratinjau (dari tabel Interview HRD) atau sebagai
+// halaman penuh. Di dalam bingkai, topbar dan sidebar dibuang: keduanya sudah
+// ada di halaman induk. $q menjaga penanda itu ikut terbawa saat form dikirim,
+// supaya setelah Simpan halamannya tidak berubah jadi versi utuh di dalam kotak.
+$bingkai = $bingkai ?? false;
+$q       = $bingkai ? '?bingkai=1' : '';
+?>
+<?= $this->extend($bingkai ? 'layout_bingkai' : 'layout_recruiter') ?>
 
 <?= $this->section('gaya') ?>
 <style>
@@ -34,7 +42,6 @@
 <?= $this->endSection() ?>
 
 <?= $this->section('sidebar') ?>
-<a href="<?= site_url('recruiter/tahap/interview_user') ?>"><span class="l"><span>💬</span><span>Interview User</span></span></a>
 <a href="<?= site_url('recruiter/tahap/interview_online') ?>"><span class="l"><span>👔</span><span>Interview HRD</span></span></a>
 <?= $this->endSection() ?>
 
@@ -66,7 +73,7 @@
       <p style="font-size:12px;margin:4px 0 0">Tekan <b>Buat dengan AI</b> di bawah untuk menyusunnya.</p>
     </div>
   <?php else: ?>
-    <form method="post" action="<?= site_url('recruiter/pertanyaan/' . $job['id']) ?>">
+    <form method="post" action="<?= site_url('recruiter/pertanyaan/' . $job['id']) . $q ?>">
       <?= csrf_field() ?>
       <input type="hidden" name="aksi" value="simpan">
       <?php foreach ($pertanyaan as $i => $p): ?>
@@ -125,7 +132,7 @@
 
   <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <?php if (! $punyaBank): ?>
-      <form method="post" action="<?= site_url('recruiter/pertanyaan/' . $job['id']) ?>" style="margin:0">
+      <form method="post" action="<?= site_url('recruiter/pertanyaan/' . $job['id']) . $q ?>" style="margin:0">
         <?= csrf_field() ?>
         <input type="hidden" name="aksi" value="buat">
         <?php if ($pertanyaan === []): ?>
@@ -142,7 +149,13 @@
         <?php endif ?>
       </form>
     <?php endif ?>
-    <a href="<?= site_url('recruiter/tahap/interview_user') ?>"><button type="button" class="btn-kembali">← Kembali ke Interview User</button></a>
+    <?php if ($bingkai): ?>
+      <?php // Di dalam bingkai, "kembali" berarti menutup jendelanya. Menavigasi
+            // ke tabel di sini cuma menampilkan tabel kedua di dalam kotak kecil. ?>
+      <button type="button" class="btn-kembali" onclick="parent.tutupJendela()">← Tutup</button>
+    <?php else: ?>
+      <a href="<?= site_url('recruiter/tahap/interview_online') ?>"><button type="button" class="btn-kembali">← Kembali ke Interview HRD</button></a>
+    <?php endif ?>
   </div>
 
   <p style="color:#999;font-size:12px;margin:12px 0 0">
