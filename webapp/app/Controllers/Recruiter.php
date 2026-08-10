@@ -83,7 +83,10 @@ class Recruiter extends BaseController
             ],
             'selectionSteps' => [
                 ['Interview HRD', '👔', site_url('recruiter/tahap/interview_online')],
-                ['Interview User', '💬', site_url('recruiter/tahap/interview_user')],
+                // Dinonaktifkan 6 Agustus 2026: Interview User ternyata tahap
+                // tersendiri yang tidak menumpang jadwal HRD, dan bank
+                // pertanyaannya sudah pindah ke Interview HRD.
+                ['Interview User', '💬', null],
                 ['On Job Training', '🛠️', null],
                 ['Training Class', '🎓', null],
                 ['Input Data & Berkas', '🗂️', site_url('recruiter/tahap/berkas_kontrak')],
@@ -128,7 +131,6 @@ class Recruiter extends BaseController
             'upload_cv'         => 'Upload CV',
             'online_assessment' => 'Tes Intelegensi Umum 5',
             'interview_online'  => 'Interview HRD',
-            'interview_user'    => 'Interview User',
             'berkas_kontrak'    => 'Input Data & Berkas',
         ];
         if (! isset($valid[$stage])) {
@@ -149,19 +151,10 @@ class Recruiter extends BaseController
         // Interview HRD: tab 'passed' dan 'failed' dihapus 3 Agustus 2026.
         // Tautan lama diarahkan ke penggantinya, bukan dibiarkan jatuh diam-diam
         // ke On Progress dan menampilkan daftar yang salah.
-        // Interview User menumpang jadwal HRD (arahan atasan 4 Agustus 2026):
-        // tidak ada penjadwalan sendiri, jadi tab dan sumber barisnya sama persis.
-        $lewatJadwal = in_array($stage, ['interview_online', 'interview_user'], true);
+        $lewatJadwal = $stage === 'interview_online';
 
         if ($lewatJadwal) {
             $status = ['passed' => 'progress', 'failed' => 'rescheduled'][$status] ?? $status;
-        }
-
-        // Interview User cuma punya On Progress dan Completed. Tautan lama ke
-        // Rescheduled dikembalikan ke On Progress, bukan dibiarkan menampilkan
-        // daftar kandidat yang jadwalnya justru sedang tidak ada.
-        if ($stage === 'interview_user' && $status === 'rescheduled') {
-            $status = 'progress';
         }
 
         $ivMap = [];
@@ -223,7 +216,9 @@ class Recruiter extends BaseController
         }
 
         $daftar = $ids === [] ? [] : (new ApplicationModel())
-            ->select('applications.id, applications.job_id, candidates.nama, candidates.email, jobs.judul')
+            // cv_path ikut diambil hanya untuk mengetahui jenis berkasnya: PDF
+            // dibuka di jendela pratinjau, DOCX tidak bisa dirender browser.
+            ->select('applications.id, applications.job_id, applications.cv_path, candidates.nama, candidates.email, jobs.judul')
             ->join('candidates', 'candidates.id = applications.candidate_id')
             ->join('jobs', 'jobs.id = applications.job_id')
             ->whereIn('applications.id', $ids)
@@ -270,11 +265,17 @@ class Recruiter extends BaseController
         $model = new JobModel();
         $job   = $model->find($jobId);
         if ($job === null) {
-            return redirect()->to('/recruiter/tahap/interview_user')->with('error', 'Lowongan tidak ditemukan.');
+            return redirect()->to('/recruiter/tahap/interview_online')->with('error', 'Lowongan tidak ditemukan.');
         }
 
+        // Halaman ini bisa dibuka utuh, atau di dalam jendela pratinjau di atas
+        // tabel Interview HRD. Penandanya ikut dibawa pada redirect setelah
+        // simpan, kalau tidak, halaman di dalam bingkai berubah jadi versi utuh
+        // lengkap dengan topbar dan sidebar yang terjepit di kotak kecil.
+        $bingkai = $this->request->getGet('bingkai') === '1';
+
         if ($this->request->is('post')) {
-            $tujuan = 'recruiter/pertanyaan/' . $jobId;
+            $tujuan = 'recruiter/pertanyaan/' . $jobId . ($bingkai ? '?bingkai=1' : '');
 
             if ($this->request->getPost('aksi') === 'buat') {
                 // Tombolnya memang disembunyikan di halaman, tapi menyembunyikan
@@ -337,6 +338,7 @@ class Recruiter extends BaseController
             'job'        => $job,
             'pertanyaan' => $milik !== [] ? $milik : $pinjam['pertanyaan'],
             'pinjamDari' => $milik !== [] ? null : $pinjam['dari'],
+            'bingkai'    => $bingkai,
         ]);
     }
 
@@ -503,7 +505,7 @@ class Recruiter extends BaseController
         // ponytail: N+1 query riwayat per pelamar - cukup utk volume KP;
         // ganti window function ROW_NUMBER() bila pelamar ribuan
         $daftar  = (new ApplicationModel())
-            ->select('applications.id, candidates.nama, candidates.email, jobs.judul AS posisi, applications.created_at')
+            ->select('applications.id, applications.cv_path, candidates.nama, candidates.email, jobs.judul AS posisi, applications.created_at')
             ->join('candidates', 'candidates.id = applications.candidate_id')
             ->join('jobs', 'jobs.id = applications.job_id')
             ->orderBy('applications.id')
@@ -700,16 +702,6 @@ class Recruiter extends BaseController
         }
 
         $skorCv = $this->skorCv($appId);
-
-        // Gate 2 = skor CV digabung skor interview (bobot per posisi dari jobs).
-        // Tanpa skor CV, bobotnya dialihkan seluruhnya ke interview - bukan diisi
-        // angka karangan yang ikut menentukan kelulusan orang.
-        $config = GateTwo::configFromJob($app['bobot_json'] ?? null, $app['threshold_json'] ?? null);
-        $rec    = $skorCv === null
-            ? GateTwo::recommend($skorInterview / 100, $skorInterview / 100, $config)
-            : GateTwo::recommend($skorCv, $skorInterview / 100, $config);
-
-        $lolos  = $rec['recommendation'] === 'hire';
         $logger = new StageLogger();
         $actor  = 'recruiter:' . session('recruiter_nama');
         $email  = ['to' => $app['email'], 'nama' => $app['nama'], 'posisi' => $app['judul']];
@@ -717,14 +709,10 @@ class Recruiter extends BaseController
         // Kompetensi terlemah ikut dicatat. Inilah yang membuat keputusan bisa
         // dijelaskan ke kandidat yang bertanya: bukan "skor 62", melainkan butir
         // mana yang kurang.
-        $lemah   = PenilaianRubrik::terlemah($penilaian);
-        $rincian = 'Skor interview ' . $skorInterview . '/100'
+        $lemah = PenilaianRubrik::terlemah($penilaian);
+        $dasar = 'Skor interview ' . $skorInterview . '/100'
             . ($penilaian === [] ? '' : ' (dari ' . count($penilaian) . ' kompetensi)')
-            . ($lemah === [] ? '' : ', terlemah: ' . implode(', ', $lemah))
-            . ($skorCv === null
-                ? ', skor CV belum tersedia (bobot dialihkan ke interview)'
-                : ', kemiripan CV ' . kemiripan_teks($skorCv))
-            . '. Skor akhir ' . skor_100($rec['score']) . '/100';
+            . ($lemah === [] ? '' : ', terlemah: ' . implode(', ', $lemah));
 
         if ($penilaian !== []) {
             $model = new InterviewPenilaianModel();
@@ -734,6 +722,36 @@ class Recruiter extends BaseController
         }
 
         $logger->log($appId, 'interview_online', 'passed', $actor, 'Skor interview ' . $skorInterview . '/100');
+
+        // TANPA SKOR CV, SISTEM TIDAK MEMUTUS.
+        //
+        // Sebelumnya bobot CV dialihkan seluruhnya ke interview, sehingga satu
+        // komponen yang hilang diam-diam berubah menjadi rumus yang berbeda:
+        // kandidat yang CV-nya gagal terbaca dinilai dengan aturan lain dari
+        // kandidat sebelahnya, tanpa ada yang tahu. Yang jujur adalah mengakui
+        // datanya kurang dan menyerahkan keputusannya ke recruiter, sama seperti
+        // Gate 1 menandai kandidat 'flagged' alih-alih menebak.
+        //
+        // Skor interview tetap dihitung, disimpan, dan ditampilkan - bukan
+        // sebagai penentu, melainkan bahan pertimbangan.
+        if ($skorCv === null) {
+            $logger->log($appId, 'gate_2', 'flagged', $actor,
+                $dasar . '. Skor CV tidak tersedia, keputusan diserahkan ke recruiter');
+
+            return redirect()->to($kembali)->with('sukses',
+                'Penilaian tersimpan (skor interview ' . $skorInterview . '/100). '
+                . 'Skor CV tidak tersedia untuk kandidat ini, jadi keputusan akhirnya '
+                . 'Anda yang tentukan lewat tombol Loloskan / Tidak Lolos.');
+        }
+
+        // Gate 2 = skor CV digabung skor interview (bobot per posisi dari jobs).
+        $config = GateTwo::configFromJob($app['bobot_json'] ?? null, $app['threshold_json'] ?? null);
+        $rec    = GateTwo::recommend($skorCv, $skorInterview / 100, $config);
+        $lolos  = $rec['recommendation'] === 'hire';
+
+        $rincian = $dasar . ', kemiripan CV ' . kemiripan_teks($skorCv)
+            . '. Skor akhir ' . skor_100($rec['score']) . '/100';
+
         $logger->log($appId, 'gate_2', $lolos ? 'passed' : 'failed', $actor, $rincian, $email);
         if ($lolos) {
             $logger->log($appId, 'berkas_kontrak', 'entered', $actor);
@@ -742,6 +760,44 @@ class Recruiter extends BaseController
         return redirect()->to($kembali)->with('sukses', 'Skor tersimpan. Keputusan akhir: '
             . ($lolos ? 'LOLOS' : 'TIDAK LOLOS') . ' (skor akhir ' . skor_100($rec['score']) . '/100)'
             . ' - kandidat dikabari via email.');
+    }
+
+    /**
+     * Keputusan Gate 2 manual, untuk kandidat yang skor CV-nya tidak tersedia.
+     *
+     * Dipisah dari putusInterview() karena memang dua tindakan berbeda: yang satu
+     * mencatat penilaian interview, yang ini memutuskan nasib kandidat. Polanya
+     * sama dengan review Gate 1: sistem menandai, manusia memutuskan.
+     */
+    public function putusGate2(int $appId)
+    {
+        $app = $this->lamaranDetail($appId);
+        if ($app === null) {
+            return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
+        }
+        $kembali = '/recruiter/tahap/interview_online?status=completed';
+
+        // Hanya yang memang sedang menunggu keputusan. Tanpa pemeriksaan ini,
+        // form yang dikirim ulang dari riwayat browser bisa menimpa keputusan
+        // yang sudah dibuat, dan kandidat menerima dua email yang bertentangan.
+        if ((new StageHistoryModel())->latestStatus($appId, 'gate_2') !== 'flagged') {
+            return redirect()->to($kembali)->with('error', 'Kandidat ini tidak sedang menunggu keputusan.');
+        }
+
+        $lolos  = $this->request->getPost('keputusan') === 'lolos';
+        $logger = new StageLogger();
+        $actor  = 'recruiter:' . session('recruiter_nama');
+
+        $logger->log($appId, 'gate_2', $lolos ? 'passed' : 'failed', $actor,
+            'Keputusan manual recruiter (skor CV tidak tersedia)',
+            ['to' => $app['email'], 'nama' => $app['nama'], 'posisi' => $app['judul']]);
+
+        if ($lolos) {
+            $logger->log($appId, 'berkas_kontrak', 'entered', $actor);
+        }
+
+        return redirect()->to($kembali)->with('sukses', 'Keputusan tersimpan: kandidat '
+            . ($lolos ? 'LOLOS' : 'TIDAK LOLOS') . ' - kandidat dikabari via email.');
     }
 
     /**
@@ -773,6 +829,10 @@ class Recruiter extends BaseController
             return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
         }
 
+        // Sama seperti halaman pertanyaan: bisa dibuka utuh, atau di dalam
+        // jendela pratinjau di atas tabel.
+        $bingkai = $this->request->getGet('bingkai') === '1';
+
         if ($this->request->is('post')) {
             if ($this->statusGate1($appId) !== 'flagged') {
                 return redirect()->to('/recruiter')->with('error', 'Lamaran ini tidak sedang menunggu review.');
@@ -782,8 +842,14 @@ class Recruiter extends BaseController
             (new StageLogger())->log($appId, 'gate_1', $keputusan, 'recruiter:' . session('recruiter_nama'),
                 'Keputusan manual recruiter', ['to' => $app['email'], 'nama' => $app['nama'], 'posisi' => $app['judul']]);
 
-            return redirect()->to('/recruiter/kandidat')
-                ->with('sukses', 'Keputusan tersimpan: kandidat ' . ($keputusan === 'passed' ? 'diloloskan' : 'tidak diloloskan') . '.');
+            $pesan = 'Keputusan tersimpan: kandidat ' . ($keputusan === 'passed' ? 'diloloskan' : 'tidak diloloskan') . '.';
+
+            // Di dalam bingkai, kembali ke halaman ini sendiri. Mengarahkan ke
+            // daftar kandidat berarti menampilkan daftar kedua di dalam kotak
+            // kecil, sementara daftar yang sebenarnya ada di halaman induk.
+            return $bingkai
+                ? redirect()->to('/recruiter/review/' . $appId . '?bingkai=1')->with('sukses', $pesan)
+                : redirect()->to('/recruiter/kandidat')->with('sukses', $pesan);
         }
 
         return view('recruiter/review', [
@@ -792,6 +858,7 @@ class Recruiter extends BaseController
             'bukti'   => $this->buktiCv($appId),
             'riwayat' => (new StageHistoryModel())->where('application_id', $appId)->orderBy('id')->findAll(),
             'flagged' => $this->statusGate1($appId) === 'flagged',
+            'bingkai' => $bingkai,
         ]);
     }
 

@@ -107,16 +107,28 @@ Bisa ditimpa per posisi lewat `jobs.bobot_json` dan `jobs.threshold_json`:
 
 JSON kosong atau rusak jatuh ke default, tidak melempar error.
 
-## Bila skor CV belum ada
+## Bila skor CV tidak ada: keputusan manual
 
-Bobot dialihkan seluruhnya ke interview. Kandidat tidak dirugikan karena
-CV-nya gagal terbaca, dan tidak ada angka karangan yang masuk rumus. Catatan
-keputusannya menyebut hal ini apa adanya:
+**Rumus di atas tidak dipakai.** Kandidat ditandai `gate_2 / flagged` dan
+keputusannya diserahkan sepenuhnya ke recruiter lewat tombol Loloskan / Tidak
+Lolos di tab Completed (`Recruiter::putusGate2`).
+
+Sebelum 10 Agustus 2026 bobot CV dialihkan seluruhnya ke interview. Itu terlihat
+adil, tapi diam-diam berarti kandidat yang CV-nya gagal terbaca dinilai dengan
+**aturan yang berbeda** dari kandidat di baris sebelahnya, tanpa penanda apa pun
+di layar. Satu komponen hilang berubah jadi rumus lain, bukan jadi pertanyaan.
+
+Skor interview tetap dihitung, disimpan, dan ditampilkan sebagai bahan
+pertimbangan; yang dicabut cuma kewenangannya memutus sendirian. Catatan
+riwayatnya:
 
 ```
-Skor interview 83/100, skor CV belum tersedia (bobot dialihkan ke interview).
-Skor akhir 83/100
+Skor interview 83/100 (dari 12 kompetensi), terlemah: Ketelitian.
+Skor CV tidak tersedia, keputusan diserahkan ke recruiter
 ```
+
+Email ke kandidat baru terkirim setelah recruiter benar-benar memutuskan, bukan
+saat penilaian interview disimpan.
 
 ## Alur keputusan
 
@@ -126,7 +138,9 @@ menulis dua baris sekaligus:
 | Kejadian | Baris `candidate_stage_history` | Email |
 |---|---|---|
 | Skor interview masuk | `interview_online / passed / recruiter:<nama>` | tidak ada |
-| Putusan gate | `gate_2 / passed atau failed / recruiter:<nama>` | `hasil_gate` |
+| Putusan gate, skor CV ada | `gate_2 / passed atau failed / recruiter:<nama>` | `hasil_gate` |
+| Putusan gate, skor CV tidak ada | `gate_2 / flagged / recruiter:<nama>` | tidak ada |
+| Keputusan manual menyusul | `gate_2 / passed atau failed / recruiter:<nama>` | `hasil_gate` |
 
 Kedua hasil Gate 2 mengirim email, lolos maupun tidak (`StageLogger::EMAIL_MAP`).
 Setelah `gate_2 / passed`, kandidat masuk `berkas_kontrak / entered`.
@@ -134,8 +148,9 @@ Setelah `gate_2 / passed`, kandidat masuk `berkas_kontrak / entered`.
 Rekomendasi sistem ikut disimpan sebagai `note` pada baris `gate_2`, supaya
 selisih antara rekomendasi mesin dan keputusan manusia bisa diaudit belakangan.
 
-Tidak ada zona flagged di Gate 2: semua keputusan memang manual, flag tidak
-menambah informasi apa pun.
+Satu-satunya zona `flagged` di Gate 2 adalah kandidat tanpa skor CV. Untuk yang
+skor CV-nya ada, tidak ada zona flagged: rekomendasi sistem langsung menjadi
+baris `passed`/`failed`, dan recruiter yang menekan tombolnya.
 
 ---
 

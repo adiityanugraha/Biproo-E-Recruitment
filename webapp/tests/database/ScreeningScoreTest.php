@@ -158,19 +158,110 @@ final class ScreeningScoreTest extends CIUnitTestCase
         $this->assertStringContainsString('Skor akhir 54/100', $this->skorAkhir($aid));
     }
 
-    public function testGate2TanpaSkorCvMengalihkanBobotKeInterview(): void
+    /**
+     * Tanpa skor CV, SISTEM TIDAK MEMUTUS.
+     *
+     * Sebelumnya bobot CV dialihkan seluruhnya ke interview. Akibatnya kandidat
+     * yang CV-nya gagal terbaca dinilai dengan rumus yang berbeda dari kandidat
+     * sebelahnya, diam-diam, tanpa ada yang tahu. Sekarang kandidat ditandai
+     * 'flagged' dan keputusannya diserahkan ke recruiter - pola yang sama dengan
+     * Gate 1.
+     */
+    public function testGate2TanpaSkorCvJadiKeputusanManual(): void
     {
-        // Tidak ada baris screening_results -> tidak ada skor CV. Bobot CV
-        // dialihkan ke interview, BUKAN diisi angka karangan.
+        [, $aid] = $this->fixture();   // tanpa baris screening_results
+        $this->siapDiputus($aid, 'passed');
+
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '60']);
+
+        $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'flagged']);
+        $catatan = $this->skorAkhir($aid);
+        $this->assertStringContainsString('Skor interview 60/100', $catatan, 'skor interview tetap dicatat sebagai bahan');
+        $this->assertStringContainsString('keputusan diserahkan ke recruiter', $catatan);
+        $this->assertStringNotContainsString('Skor akhir', $catatan, 'tidak boleh ada skor gabungan');
+    }
+
+    /** Tidak ada email ke kandidat sebelum recruiter benar-benar memutuskan. */
+    public function testKandidatTanpaSkorCvBelumDikabariSebelumDiputuskan(): void
+    {
         [, $aid] = $this->fixture();
         $this->siapDiputus($aid, 'passed');
 
         $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '60']);
 
-        $catatan = $this->skorAkhir($aid);
-        $this->assertStringContainsString('skor CV belum tersedia', $catatan);
-        $this->assertStringContainsString('Skor akhir 60/100', $catatan);
+        $this->dontSeeInDatabase('email_queue', ['template' => 'hasil_gate']);
+    }
+
+    public function testKeputusanManualMeloloskanDanMengabariKandidat(): void
+    {
+        [, $aid] = $this->fixture();
+        $this->siapDiputus($aid, 'passed');
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '60']);
+
+        $this->withSession($this->sesiRec)->post("recruiter/gate2/{$aid}", ['keputusan' => 'lolos']);
+
+        $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'passed']);
+        $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'berkas_kontrak', 'status' => 'entered']);
+        $this->seeInDatabase('email_queue', ['template' => 'hasil_gate']);
+    }
+
+    public function testKeputusanManualTidakMeloloskan(): void
+    {
+        [, $aid] = $this->fixture();
+        $this->siapDiputus($aid, 'passed');
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '60']);
+
+        $this->withSession($this->sesiRec)->post("recruiter/gate2/{$aid}", ['keputusan' => 'gagal']);
+
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'failed']);
+        $this->dontSeeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'berkas_kontrak']);
+    }
+
+    /**
+     * Form yang dikirim ulang dari riwayat browser tidak boleh menimpa keputusan
+     * yang sudah dibuat - kandidat akan menerima dua email yang bertentangan.
+     */
+    public function testKeputusanManualKeduaDitolak(): void
+    {
+        [, $aid] = $this->fixture();
+        $this->siapDiputus($aid, 'passed');
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '60']);
+        $this->withSession($this->sesiRec)->post("recruiter/gate2/{$aid}", ['keputusan' => 'lolos']);
+
+        $this->withSession($this->sesiRec)->post("recruiter/gate2/{$aid}", ['keputusan' => 'gagal']);
+
+        $this->assertSame(2, (new StageHistoryModel())   // flagged + passed, tanpa baris ketiga
+            ->where(['application_id' => $aid, 'stage' => 'gate_2'])->countAllResults());
+    }
+
+    /** Tabel Completed menyediakan tombol keputusannya, bukan cuma menyimpan diam-diam. */
+    public function testTabelMenampilkanTombolKeputusanManual(): void
+    {
+        [, $aid] = $this->fixture();
+        $this->siapDiputus($aid, 'passed');
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '60']);
+
+        $html = (string) $this->withSession($this->sesiRec)
+            ->get('recruiter/tahap/interview_online?status=completed')->getBody();
+
+        $this->assertStringContainsString('recruiter/gate2/' . $aid, $html);
+        $this->assertStringContainsString('Loloskan', $html);
+        $this->assertStringContainsString('tanpa skor CV', $html, 'alasannya harus terbaca, bukan tombol yang muncul entah kenapa');
+        // tombol menilai sudah tidak relevan: penilaiannya sudah tersimpan
+        $this->assertStringNotContainsString('Nilai Interview', $html);
+    }
+
+    /** Kandidat yang skor CV-nya ADA tetap diputus otomatis seperti sebelumnya. */
+    public function testDenganSkorCvTetapOtomatisBukanManual(): void
+    {
+        [, $aid] = $this->fixture();
+        $this->screening($aid, 0.90);
+        $this->siapDiputus($aid, 'passed');
+
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '80']);
+
+        $this->dontSeeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'flagged']);
+        $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'passed']);
     }
 
     public function testCatatanRiwayatTidakLagiMemuatTeksMentah(): void

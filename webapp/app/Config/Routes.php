@@ -36,6 +36,8 @@ $routes->group('recruiter', ['filter' => 'recruiterauth'], static function ($rou
     $routes->post('interview/reschedule/(:num)', 'Recruiter::rescheduleInterview/$1');
     $routes->get('nilai/(:num)', 'Recruiter::formNilai/$1');
     $routes->post('interview/putus/(:num)', 'Recruiter::putusInterview/$1');
+    // keputusan Gate 2 manual, dipakai saat skor CV tidak tersedia
+    $routes->post('gate2/(:num)', 'Recruiter::putusGate2/$1');
     $routes->match(['GET', 'POST'], 'review/(:num)', 'Recruiter::review/$1');
     $routes->match(['GET', 'POST'], 'pertanyaan/(:num)', 'Recruiter::pertanyaan/$1');
 });

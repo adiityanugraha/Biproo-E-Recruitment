@@ -9,6 +9,7 @@ use App\Models\CandidateModel;
 use App\Models\EmailQueueModel;
 use App\Models\InterviewModel;
 use App\Models\JobModel;
+use App\Models\ScreeningResultModel;
 use CodeIgniter\Config\Services;
 use CodeIgniter\Database\Exceptions\DatabaseException;
 use CodeIgniter\Test\CIUnitTestCase;
@@ -213,12 +214,30 @@ final class InterviewScheduleTest extends CIUnitTestCase
         $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online?status=completed')->assertSee('Sinta');
     }
 
+    /**
+     * Skor CV wajib ada supaya Gate 2 diputus otomatis. Tanpa itu kandidat
+     * ditandai 'flagged' dan keputusannya diserahkan ke recruiter - perilaku
+     * yang diuji tersendiri di ScreeningScoreTest.
+     */
+    private function skorCv(int $aid, float $skor): void
+    {
+        (new ScreeningResultModel())->insert([
+            'application_id'   => $aid,
+            'screening_job_id' => 'uji-' . $aid,
+            'status'           => 'success',
+            'score_overall'    => $skor,
+            'provider'         => 'dummy',
+            'model_version'    => 'uji',
+        ]);
+    }
+
     public function testSkorTinggiDihitungLolosCatatGate2BerkasDanEmail(): void
     {
         [$cid, $aid] = $this->fixture('passed');
         $this->pastApprovedInterview($aid);
+        $this->skorCv($aid, 0.80);
 
-        // skor 90 (+ gate1 default 0.7) -> gabungan di atas ambang -> LOLOS otomatis
+        // 0.4*0.80 + 0.6*0.90 = 0.86 -> di atas ambang -> LOLOS otomatis
         $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '90']);
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'passed']);
@@ -230,8 +249,9 @@ final class InterviewScheduleTest extends CIUnitTestCase
     {
         [$cid, $aid] = $this->fixture('passed');
         $this->pastApprovedInterview($aid);
+        $this->skorCv($aid, 0.80);
 
-        // skor 20 -> gabungan di bawah ambang -> TIDAK LOLOS otomatis
+        // 0.4*0.80 + 0.6*0.20 = 0.44 -> di bawah ambang -> TIDAK LOLOS otomatis
         $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '20']);
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'failed']);
