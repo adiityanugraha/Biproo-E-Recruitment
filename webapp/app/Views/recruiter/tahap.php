@@ -119,10 +119,9 @@ foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
           <td><?= $i + 1 ?></td>
           <td><input type="checkbox" style="width:auto" onclick="segera('Pilih Kandidat')"></td>
           <td>
+            <?php // Kolom Action berisi TINDAKAN tahap ini saja. Melihat kandidat
+                  // pindah ke kolom Summary, mengikuti tabel BIPROO yang asli. ?>
             <div class="aksi">
-              <a href="<?= site_url('recruiter/review/' . $a['id']) ?>?bingkai=1"
-                 onclick="return bukaJendela(this.href, <?= esc(json_encode('Detail - ' . $a['nama']), 'attr') ?>)">
-                <button class="b-lihat">View</button></a>
               <?php if ($stage === 'interview_online' && $status === 'progress'): ?>
                 <?php // Pertanyaan melekat pada LOWONGAN, bukan kandidat - satu set
                       // dipakai semua pelamar posisi yang sama (lihat migrasi
@@ -183,7 +182,17 @@ foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
               <button class="b-file">CV</button>
             </a>
           </td>
-          <td><button class="b-mati" onclick="segera('Summary')">View</button></td>
+          <td>
+            <?php // Satu tombol, bukan dua: lembar profil SUDAH memuat biodata,
+                  // riwayat kerja, hasil assessment, dan hasil interview jadi satu.
+                  //
+                  // target="_blank" tetap ditulis sebagai cadangan kalau JavaScript
+                  // mati; selama hidup, onclick membukanya di jendela. ?>
+            <a href="<?= site_url('recruiter/profil/' . $a['id']) ?>" target="_blank" rel="noopener"
+               onclick="return bukaJendela(this.href, <?= esc(json_encode('Lembar Profil - ' . $a['nama']), 'attr') ?>)"
+               title="Lembar profil <?= esc($a['nama'], 'attr') ?>">
+              <button class="b-lihat">View</button></a>
+          </td>
           <td>
             <?php if (! empty($a['jadwal'])): ?>
               <small>📅 <?= esc(date('d M Y H:i', strtotime($a['jadwal']))) ?></small>

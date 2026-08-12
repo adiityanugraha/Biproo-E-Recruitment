@@ -1,5 +1,6 @@
 <?php
 
+use App\Libraries\LembarPenilaian as L;
 use App\Libraries\StageLogger;
 use App\Models\ApplicationModel;
 use App\Models\CandidateModel;
@@ -33,6 +34,19 @@ final class ScreeningScoreTest extends CIUnitTestCase
     protected $namespace = 'App';
 
     private array $sesiRec = ['recruiter_id' => 1, 'recruiter_nama' => 'Irpan'];
+
+    /**
+     * Lembar penilaian penuh dengan satu nilai seragam 1-5.
+     *
+     * Menggantikan slider 0-100 yang dipakai uji ini sebelum 12 Agustus 2026.
+     * Skornya: 1 -> 0, 2 -> 25, 3 -> 50, 4 -> 75, 5 -> 100.
+     *
+     * @return array<string, mixed>
+     */
+    private function lembar(int $n): array
+    {
+        return ['nilai' => array_fill(0, count(L::HRD), $n), 'hasil' => 'recommended'];
+    }
 
     /** @return array{0:int,1:int} [candidateId, applicationId] */
     private function fixture(): array
@@ -136,11 +150,11 @@ final class ScreeningScoreTest extends CIUnitTestCase
         $this->screening($aid, 0.90);
         $this->siapDiputus($aid, 'passed');
 
-        // gate2 = 0.4*0.90 (CV) + 0.6*0.70 (interview) = 0.78 >= 0.7 -> LOLOS
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '70']);
+        // gate2 = 0.4*0.90 (CV) + 0.6*0.75 (interview, semua Above Average) = 0.81 -> LOLOS
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(4));
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'passed']);
-        $this->assertStringContainsString('Skor akhir 78/100', $this->skorAkhir($aid));
+        $this->assertStringContainsString('Skor akhir 81/100', $this->skorAkhir($aid));
         $this->assertStringContainsString('kemiripan CV tinggi (0,90)', $this->skorAkhir($aid));
     }
 
@@ -150,12 +164,12 @@ final class ScreeningScoreTest extends CIUnitTestCase
         $this->screening($aid, 0.30);
         $this->siapDiputus($aid, 'passed');
 
-        // gate2 = 0.4*0.30 + 0.6*0.70 = 0.54 < 0.7 -> TIDAK LOLOS
+        // gate2 = 0.4*0.30 + 0.6*0.75 = 0.57 < 0.7 -> TIDAK LOLOS
         // skor interview IDENTIK dengan test di atas; yang membedakan hanya skor CV
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '70']);
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(4));
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'failed']);
-        $this->assertStringContainsString('Skor akhir 54/100', $this->skorAkhir($aid));
+        $this->assertStringContainsString('Skor akhir 57/100', $this->skorAkhir($aid));
     }
 
     /**
@@ -172,11 +186,11 @@ final class ScreeningScoreTest extends CIUnitTestCase
         [, $aid] = $this->fixture();   // tanpa baris screening_results
         $this->siapDiputus($aid, 'passed');
 
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '60']);
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(3));
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'flagged']);
         $catatan = $this->skorAkhir($aid);
-        $this->assertStringContainsString('Skor interview 60/100', $catatan, 'skor interview tetap dicatat sebagai bahan');
+        $this->assertStringContainsString('Skor interview 50/100', $catatan, 'skor interview tetap dicatat sebagai bahan');
         $this->assertStringContainsString('keputusan diserahkan ke recruiter', $catatan);
         $this->assertStringNotContainsString('Skor akhir', $catatan, 'tidak boleh ada skor gabungan');
     }
@@ -187,7 +201,7 @@ final class ScreeningScoreTest extends CIUnitTestCase
         [, $aid] = $this->fixture();
         $this->siapDiputus($aid, 'passed');
 
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '60']);
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(3));
 
         $this->dontSeeInDatabase('email_queue', ['template' => 'hasil_gate']);
     }
@@ -196,7 +210,7 @@ final class ScreeningScoreTest extends CIUnitTestCase
     {
         [, $aid] = $this->fixture();
         $this->siapDiputus($aid, 'passed');
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '60']);
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(3));
 
         $this->withSession($this->sesiRec)->post("recruiter/gate2/{$aid}", ['keputusan' => 'lolos']);
 
@@ -209,7 +223,7 @@ final class ScreeningScoreTest extends CIUnitTestCase
     {
         [, $aid] = $this->fixture();
         $this->siapDiputus($aid, 'passed');
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '60']);
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(3));
 
         $this->withSession($this->sesiRec)->post("recruiter/gate2/{$aid}", ['keputusan' => 'gagal']);
 
@@ -225,7 +239,7 @@ final class ScreeningScoreTest extends CIUnitTestCase
     {
         [, $aid] = $this->fixture();
         $this->siapDiputus($aid, 'passed');
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '60']);
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(3));
         $this->withSession($this->sesiRec)->post("recruiter/gate2/{$aid}", ['keputusan' => 'lolos']);
 
         $this->withSession($this->sesiRec)->post("recruiter/gate2/{$aid}", ['keputusan' => 'gagal']);
@@ -239,7 +253,7 @@ final class ScreeningScoreTest extends CIUnitTestCase
     {
         [, $aid] = $this->fixture();
         $this->siapDiputus($aid, 'passed');
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '60']);
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(3));
 
         $html = (string) $this->withSession($this->sesiRec)
             ->get('recruiter/tahap/interview_online?status=completed')->getBody();
@@ -258,7 +272,7 @@ final class ScreeningScoreTest extends CIUnitTestCase
         $this->screening($aid, 0.90);
         $this->siapDiputus($aid, 'passed');
 
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '80']);
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(4));
 
         $this->dontSeeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'flagged']);
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'passed']);

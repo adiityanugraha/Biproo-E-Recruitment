@@ -166,6 +166,9 @@ async def process_jobs():
         # Riwayat kerja ikut ke CI4 untuk DITAMPILKAN ke recruiter, tidak di-embed
         # dan tidak mengubah skor (lihat "Kenapa riwayat ada" di structure.py).
         job["extracted"]["riwayat"] = [dict(r) for r in t.riwayat]
+        # Biodata untuk lembar profil kandidat. Perlakuannya sama dengan riwayat:
+        # ikut ke CI4 untuk ditampilkan, TIDAK di-embed, tidak menyentuh skor.
+        job["extracted"]["data_pribadi"] = dict(t.data_pribadi)
 
         # 4. embedding CV vs job requirement, lalu cosine + skor agregat berbobot.
         #    Bidang yang salah satu sisinya kosong tidak di-embed (hemat kuota)

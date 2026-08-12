@@ -39,11 +39,11 @@
                <?php if ($pdf): ?>onclick="return bukaJendela(this.href, <?= esc(json_encode('CV ' . $a['nama']), 'attr') ?>)"<?php endif ?>
                style="color:#2F6FED" title="<?= $pdf ? 'Lihat CV' : 'Unduh CV' ?>">CV</a>
             &nbsp;
-            <?php if ($a['gate1'] === 'flagged'): ?>
-              <a href="<?= site_url('recruiter/review/' . $a['id']) ?>" style="color:#2F6FED"><b>Review</b></a>
-            <?php else: ?>
-              <a href="<?= site_url('recruiter/review/' . $a['id']) ?>" style="color:#2F6FED">Detail</a>
-            <?php endif ?>
+            <?php // Dibuka di jendela di atas daftar, supaya posisi gulir daftar
+                  // yang panjang ini tidak hilang setiap kali membuka satu kandidat. ?>
+            <a href="<?= site_url('recruiter/review/' . $a['id']) ?>?bingkai=1" style="color:#2F6FED"
+               onclick="return bukaJendela(this.href, <?= esc(json_encode('Detail - ' . $a['nama']), 'attr') ?>)">
+              <?= $a['gate1'] === 'flagged' ? '<b>Review</b>' : 'Detail' ?></a>
           </td>
         </tr>
       <?php endforeach ?>

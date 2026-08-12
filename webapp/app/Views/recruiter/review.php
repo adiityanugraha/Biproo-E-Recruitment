@@ -17,7 +17,7 @@ $q       = $bingkai ? '?bingkai=1' : '';
     // di bawah. Penanda "pembacaan kasar" pada skor dihapus atas permintaan
     // 4 Agustus 2026. Flag llm_gagal / llm_json_invalid tetap tersimpan di
     // flags_json, jadi keputusan ini bisa dibalik tanpa kehilangan data.
-    $bukti   = $bukti ?? ['riwayat' => [], 'flags' => []];
+    $bukti   = $bukti ?? ['riwayat' => [], 'flags' => [], 'pribadi' => []];
     $llmMati = (bool) array_intersect(['llm_gagal', 'llm_json_invalid'], $bukti['flags']);
   ?>
   <p style="margin:14px 0 4px">Kemiripan CV terhadap lowongan: <?= badge_skor($skorCv ?? null) ?></p>
@@ -47,6 +47,46 @@ $q       = $bingkai ? '?bingkai=1' : '';
         Skornya tidak diturunkan - mohon buka CV-nya untuk memastikan yang mana.
       </p>
     </div>
+  <?php endif ?>
+
+  <?php
+    // Biodata untuk lembar profil (arahan atasan 12 Agustus 2026). Dibaca dari
+    // CV, jadi banyak yang kosong itu wajar: tidak semua CV mencantumkan agama,
+    // status kawin, atau jumlah anak. Yang kosong ditulis "tidak tertulis di CV",
+    // BUKAN dibiarkan bolong - supaya jelas bedanya "tidak ada di CV" dengan
+    // "sistem gagal membacanya".
+    $labelPribadi = [
+        'nama'          => 'Nama lengkap',
+        'alamat'        => 'Alamat',
+        'tempat_lahir'  => 'Tempat lahir',
+        'tanggal_lahir' => 'Tanggal lahir',
+        'usia'          => 'Usia',
+        'jenis_kelamin' => 'Jenis kelamin',
+        'status_kawin'  => 'Status',
+        'jumlah_anak'   => 'Jumlah anak',
+        'bahasa'        => 'Bahasa',
+        'agama'         => 'Agama',
+        'telepon'       => 'Telepon',
+    ];
+    $pribadi = $bukti['pribadi'] ?? [];
+  ?>
+  <p style="margin:14px 0 6px"><b>Data pribadi terbaca</b>
+    <small style="color:#888;font-weight:normal">diambil dari CV, tidak mempengaruhi skor</small></p>
+  <?php if ($pribadi === []): ?>
+    <p style="color:#888;font-size:13px;margin:0 0 16px">
+      Belum ada data - screening CV belum selesai, atau CV tidak memuat biodata.
+    </p>
+  <?php else: ?>
+    <table style="margin-bottom:16px">
+      <?php foreach ($labelPribadi as $k => $label): ?>
+        <tr>
+          <th style="width:170px"><?= esc($label) ?></th>
+          <td><?= ($pribadi[$k] ?? '') !== ''
+              ? esc($pribadi[$k])
+              : '<small style="color:#999">tidak tertulis di CV</small>' ?></td>
+        </tr>
+      <?php endforeach ?>
+    </table>
   <?php endif ?>
 
   <p style="margin:14px 0 6px"><b>Riwayat kerja terbaca</b>

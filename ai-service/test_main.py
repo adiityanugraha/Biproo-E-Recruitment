@@ -386,8 +386,100 @@ def test_callback_membawa_riwayat_kerja(wiring):
 
     (_, _, body), = wiring
     riwayat = body["extracted_fields"]["riwayat"]
-    assert riwayat == [{"jabatan": "Kasir", "perusahaan": "Toko Maju", "periode": "2020-2022"}]
+    # Kunci tambahan (alasan_keluar, gaji_terakhir, deskripsi) diminta lembar
+    # profil BIPROO. CV yang tidak menuliskannya tetap mengirim string kosong,
+    # bukan menghilangkan kuncinya - sisi CI4 jadi tidak perlu menebak.
+    assert riwayat == [{
+        "jabatan": "Kasir", "perusahaan": "Toko Maju", "periode": "2020-2022",
+        "alasan_keluar": "", "gaji_terakhir": "", "deskripsi": "",
+    }]
     assert "tanpa_riwayat_kerja" not in body["flags"]
+
+
+def test_callback_membawa_data_pribadi(wiring):
+    """
+    Biodata untuk lembar profil kandidat (arahan atasan 12 Agustus 2026).
+
+    Sebelumnya data pribadi DIBUANG di prompt strukturisasi. Sekarang tetap
+    dikeluarkan dari tiga bidang yang di-embed, tapi dikirim terpisah supaya
+    lembar profilnya bisa terisi tanpa menyentuh skor.
+    """
+    class LLMPribadi:
+        def generate(self, system, history, question):
+            return (
+                '{"pengalaman":"Kasir","skill":"Excel","pendidikan":"SMK",'
+                '"riwayat":[],'
+                '"data_pribadi":{"nama":"Rifqi Rivaldo","alamat":"Tangerang",'
+                '"tanggal_lahir":"20 Februari 2002","agama":"Islam",'
+                '"status_kawin":"Belum Menikah","jumlah_anak":"0"}}'
+            )
+
+    app.state.chat_provider = LLMPribadi()
+    app.state.provider = FakeProvider()
+    with TestClient(app) as client:
+        job_id = client.post("/screening", json=VALID_BODY).json()["screening_job_id"]
+        wait_done(client, job_id)
+
+    (_, _, body), = wiring
+    pribadi = body["extracted_fields"]["data_pribadi"]
+    assert pribadi["nama"] == "Rifqi Rivaldo"
+    assert pribadi["agama"] == "Islam"
+    assert pribadi["status_kawin"] == "Belum Menikah"
+    # bidang yang tidak disebut CV tidak muncul sama sekali, bukan string kosong
+    assert "bahasa" not in pribadi
+
+
+def test_data_pribadi_tidak_mengubah_skor(wiring):
+    """
+    Inti fairness-by-design (A3.2): biodata boleh DITAMPILKAN, tidak boleh
+    MENILAI. Dua CV dengan isi profesional identik tapi agama dan usia berbeda
+    harus menghasilkan skor yang sama persis.
+    """
+    def jalankan(pribadi_json):
+        class LLM:
+            def generate(self, system, history, question):
+                return (
+                    '{"pengalaman":"Kasir di Toko Maju","skill":"Excel",'
+                    '"pendidikan":"SMK","riwayat":[],'
+                    f'"data_pribadi":{pribadi_json}}}'
+                )
+
+        app.state.chat_provider = LLM()
+        app.state.provider = FakeProvider()
+        with TestClient(app) as client:
+            job_id = client.post("/screening", json=VALID_BODY).json()["screening_job_id"]
+            wait_done(client, job_id)
+
+        return wiring[-1][2]["scores"]
+
+    a = jalankan('{"agama":"Islam","usia":"24"')
+    b = jalankan('{"agama":"Kristen","usia":"45"')
+
+    assert a == b
+
+
+def test_kunci_asing_di_data_pribadi_dibuang(wiring):
+    """
+    Daftar kuncinya tertutup. Satu jawaban LLM yang ngawur tidak boleh bisa
+    menyelipkan bidang baru yang langsung ikut tampil di lembar profil.
+    """
+    class LLMNgawur:
+        def generate(self, system, history, question):
+            return (
+                '{"pengalaman":"Kasir","skill":"Excel","pendidikan":"SMK",'
+                '"riwayat":[],'
+                '"data_pribadi":{"nama":"Budi","catatan_rahasia":"jangan diterima",'
+                '"skor_rekomendasi":"9"}}'
+            )
+
+    app.state.chat_provider = LLMNgawur()
+    app.state.provider = FakeProvider()
+    with TestClient(app) as client:
+        job_id = client.post("/screening", json=VALID_BODY).json()["screening_job_id"]
+        wait_done(client, job_id)
+
+    pribadi = wiring[-1][2]["extracted_fields"]["data_pribadi"]
+    assert pribadi == {"nama": "Budi"}
 
 
 def test_callback_membawa_flag_tanpa_riwayat_kerja(wiring):

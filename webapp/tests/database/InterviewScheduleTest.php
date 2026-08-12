@@ -1,6 +1,7 @@
 <?php
 
 use App\Libraries\SlotJadwal;
+use App\Libraries\LembarPenilaian as L;
 use App\Libraries\StageLogger;
 use App\Libraries\ZoomException;
 use App\Libraries\ZoomService;
@@ -36,6 +37,19 @@ final class InterviewScheduleTest extends CIUnitTestCase
     protected $namespace = 'App';
 
     private array $sesiRec = ['recruiter_id' => 1, 'recruiter_nama' => 'Irpan'];
+
+    /**
+     * Lembar penilaian penuh dengan satu nilai seragam 1-5.
+     *
+     * Menggantikan slider 0-100 yang dipakai uji ini sebelum 12 Agustus 2026.
+     * Skornya: 1 -> 0, 2 -> 25, 3 -> 50, 4 -> 75, 5 -> 100.
+     *
+     * @return array<string, mixed>
+     */
+    private function lembar(int $n): array
+    {
+        return ['nilai' => array_fill(0, count(L::HRD), $n), 'hasil' => 'recommended'];
+    }
 
     /**
      * Slot sah ke-$ke. Diambil dari sumber yang sama dengan yang dipakai
@@ -238,7 +252,7 @@ final class InterviewScheduleTest extends CIUnitTestCase
         $this->skorCv($aid, 0.80);
 
         // 0.4*0.80 + 0.6*0.90 = 0.86 -> di atas ambang -> LOLOS otomatis
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '90']);
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(5));
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'passed']);
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'berkas_kontrak', 'status' => 'entered']);
@@ -252,7 +266,7 @@ final class InterviewScheduleTest extends CIUnitTestCase
         $this->skorCv($aid, 0.80);
 
         // 0.4*0.80 + 0.6*0.20 = 0.44 -> di bawah ambang -> TIDAK LOLOS otomatis
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => '20']);
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(2));
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'failed']);
         $this->dontSeeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'berkas_kontrak']);
@@ -571,7 +585,7 @@ final class InterviewScheduleTest extends CIUnitTestCase
         $this->pastApprovedInterview($aid);
 
         // recruiter memasukkan skor interview -> Keputusan Akhir terbuka
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", ['skor' => 80]);
+        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(4));
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'interview_online']);
 
         $langkah = $this->langkah($this->stepperDashboard($cid, $aid), 'Keputusan Akhir');

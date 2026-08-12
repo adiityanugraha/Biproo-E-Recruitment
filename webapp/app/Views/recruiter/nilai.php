@@ -1,4 +1,4 @@
-<?php use App\Libraries\PenilaianRubrik; ?>
+<?php use App\Libraries\LembarPenilaian; ?>
 <?= $this->extend('layout_recruiter') ?>
 
 <?= $this->section('gaya') ?>
@@ -21,6 +21,12 @@
   .pilih input:checked + span { font-weight: 700; }
   .catatan { width: 100%; box-sizing: border-box; margin-top: 8px; padding: 7px 11px;
              border: 1px solid #e2e6ee; border-radius: 8px; font-family: inherit; font-size: 13px; }
+  /* matriks kompetensi x skala: satu baris per kompetensi, lima kolom radio */
+  .lembar { border-collapse: collapse; }
+  .lembar th, .lembar td { border: 1px solid #e2e6ee; padding: 7px 10px; text-align: center; font-size: 13px; }
+  .lembar th { background: #FFF6E6; color: #8a6d1e; font-size: 12px; font-weight: 600; }
+  .lembar th small { font-weight: 400; font-size: 10px; }
+  .lembar tr:hover td { background: #fafbfd; }
 </style>
 <?= $this->endSection() ?>
 
@@ -46,12 +52,26 @@
     <?php if ($penilaian !== []): ?>
       <p style="margin:16px 0 6px"><b>Penilaian yang tersimpan</b></p>
       <table>
-        <tr><th>Kompetensi</th><th>Bobot</th><th>Nilai</th><th>Catatan</th></tr>
+        <tr><th>Butir</th><th>Nilai</th><th>Catatan</th></tr>
         <?php foreach ($penilaian as $p): ?>
+          <?php
+            // Satu tabel memuat tiga jenis baris: kompetensi berangka, kotak
+            // narasi, dan hasil akhir. Kolom Nilai menyesuaikan jenisnya.
+            $kat  = $p['kategori'] ?? '';
+            $t    = (string) ($p['tingkat'] ?? '');
+            $nilai = match (true) {
+                $kat === LembarPenilaian::KAT_HRD   => $t . ' - ' . (LembarPenilaian::SKALA[(int) $t] ?? '?'),
+                $kat === LembarPenilaian::KAT_USER  => $t . '/' . LembarPenilaian::MAKS_USER,
+                $kat === LembarPenilaian::KAT_HASIL => LembarPenilaian::HASIL[$t] ?? $t,
+                default                             => '-',
+            };
+            $label = $kat === LembarPenilaian::KAT_NARASI
+                ? (LembarPenilaian::NARASI[$p['kompetensi']] ?? $p['kompetensi'])
+                : ($p['kompetensi'] === 'interview_result' ? 'Interview Result' : $p['kompetensi']);
+          ?>
           <tr>
-            <td><?= esc($p['kompetensi'] ?? '') ?></td>
-            <td><?= (int) ($p['bobot'] ?? 0) ?></td>
-            <td><?= esc(PenilaianRubrik::LABEL[$p['tingkat'] ?? ''] ?? '-') ?></td>
+            <td><?= esc($label) ?></td>
+            <td><?= esc($nilai) ?></td>
             <td><small><?= esc($p['catatan'] ?? '') ?></small></td>
           </tr>
         <?php endforeach ?>
@@ -62,61 +82,43 @@
     <form method="post" action="<?= site_url('recruiter/interview/putus/' . $app['id']) ?>">
       <?= csrf_field() ?>
 
-      <?php if (PenilaianRubrik::jumlahDinilai($rubrik) === 0): ?>
-        <?php // Lowongan ini belum punya bank soal. Slider lama dipertahankan -
-              // lebih baik jalur yang jujur daripada rubrik karangan. ?>
-        <div style="border:1px solid #F3B94A;background:#FFF6E6;border-radius:8px;padding:12px 14px;margin-bottom:16px">
-          <b style="color:#8A5D00">Posisi ini belum punya rubrik penilaian</b>
-          <p style="font-size:13px;margin:6px 0 0;color:#6b5320">
-            Penilaiannya masih memakai satu angka, tanpa rincian per kompetensi. Susun bank
-            pertanyaannya lebih dulu bila ingin penilaian yang bisa dijelaskan.
-          </p>
-        </div>
-        <p style="font-size:13px;margin:0 0 6px">Skor interview: <b id="sv">70</b>/100</p>
-        <input type="range" name="skor" min="0" max="100" value="70" style="width:280px"
-               oninput="document.getElementById('sv').textContent=this.value">
-      <?php else: ?>
-        <p style="color:#888;font-size:13px;margin:0 0 16px">
-          Nilai tiap butir sambil mendengarkan. Skor akhir dihitung dari bobot tiap
-          kompetensi, tidak diketik manusia. Butir pembuka seperti ekspektasi gaji
-          sengaja tidak dinilai.
-        </p>
+      <p style="color:#888;font-size:13px;margin:0 0 16px">
+        Sembilan kompetensi ini sama untuk semua posisi, mengikuti lembar penilaian
+        BIPROO. Pertanyaan yang diajukan tetap dari bank soal posisi ini
+        <a href="<?= site_url('recruiter/pertanyaan/' . $app['job_id']) ?>?bingkai=1"
+           onclick="return bukaJendela(this.href, 'Pertanyaan interview')">buka daftar pertanyaannya</a>.
+      </p>
 
-        <?php $n = 0; ?>
-        <?php foreach ($rubrik as $i => $soal): ?>
-          <?php if (! PenilaianRubrik::dinilai($soal)) {
-              continue;
-          } ?>
-          <?php $n++; ?>
-          <div class="butir">
-            <div>
-              <span class="tag tag-<?= stripos((string) ($soal['kategori'] ?? ''), 'hard') !== false ? 'hard' : 'soft' ?>"><?= esc($soal['kategori'] ?? '') ?></span>
-              <span class="tag tag-bobot">bobot <?= (int) $soal['bobot'] ?></span>
-              <b style="font-size:13px"><?= esc($soal['kompetensi'] ?? '') ?></b>
-            </div>
-            <p class="tanya"><?= $n ?>. <?= esc($soal['pertanyaan'] ?? '') ?></p>
-
-            <?php if (! empty($soal['indikator']) || ! empty($soal['red_flag'])): ?>
-              <div class="rubrik">
-                <?php if (! empty($soal['indikator'])): ?>
-                  <p><b style="color:#1d6b3d">Jawaban baik</b> <?= esc($soal['indikator']) ?></p>
-                <?php endif ?>
-                <?php if (! empty($soal['red_flag'])): ?>
-                  <p><b style="color:#a12734">Red flag</b> <?= esc($soal['red_flag']) ?></p>
-                <?php endif ?>
-              </div>
-            <?php endif ?>
-
-            <div class="pilih">
-              <?php foreach (PenilaianRubrik::LABEL as $kunci => $label): ?>
-                <label><input type="radio" name="nilai[<?= $i ?>]" value="<?= $kunci ?>" required><span><?= $label ?></span></label>
-              <?php endforeach ?>
-            </div>
-            <input type="text" class="catatan" name="catatan[<?= $i ?>]"
-                   maxlength="<?= PenilaianRubrik::MAKS_CATATAN ?>" placeholder="Catatan (opsional)">
-          </div>
+      <table class="lembar">
+        <tr>
+          <th style="text-align:left">Kompetensi</th>
+          <?php foreach (LembarPenilaian::SKALA as $n => $label): ?>
+            <th><?= $n ?><br><small><?= esc($label) ?></small></th>
+          <?php endforeach ?>
+        </tr>
+        <?php foreach (LembarPenilaian::HRD as $i => $kompetensi): ?>
+          <tr>
+            <td style="text-align:left"><?= esc($kompetensi) ?></td>
+            <?php foreach (array_keys(LembarPenilaian::SKALA) as $n): ?>
+              <td><input type="radio" name="nilai[<?= $i ?>]" value="<?= $n ?>" required style="width:auto"></td>
+            <?php endforeach ?>
+          </tr>
         <?php endforeach ?>
-      <?php endif ?>
+      </table>
+
+      <?php foreach (LembarPenilaian::NARASI as $kunci => $label): ?>
+        <label style="margin-top:14px"><?= esc($label) ?></label>
+        <textarea name="narasi[<?= $kunci ?>]" rows="2"
+                  maxlength="<?= LembarPenilaian::MAKS_CATATAN ?>"
+                  style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid #e2e6ee;border-radius:8px;font-family:inherit;font-size:13px"></textarea>
+      <?php endforeach ?>
+
+      <label style="margin-top:14px">Interview Result</label>
+      <div class="pilih">
+        <?php foreach (LembarPenilaian::HASIL as $kunci => $label): ?>
+          <label><input type="radio" name="hasil" value="<?= $kunci ?>" required><span><?= esc($label) ?></span></label>
+        <?php endforeach ?>
+      </div>
 
       <p style="color:#888;font-size:12px;margin:14px 0">
         Skor CV kandidat ini: <?= badge_skor($skorCv) ?>. Keputusan akhir menggabungkan

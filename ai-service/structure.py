@@ -92,6 +92,13 @@ class Terstruktur(NamedTuple):
     # dan TIDAK mengubah skor - hanya ditampilkan ke recruiter dan dipakai untuk
     # flag tanpa_riwayat_kerja. Lihat blok "Kenapa riwayat ada" di bawah.
     riwayat: tuple[dict[str, str], ...] = ()
+    # Biodata untuk lembar profil kandidat (arahan atasan 12 Agustus 2026).
+    # SAMA SEPERTI RIWAYAT: diekstrak untuk DITAMPILKAN, tidak pernah di-embed
+    # dan tidak menyentuh skor. Pemisahan ini yang menjaga fairness-by-design
+    # (A3.2) tetap berlaku walau biodatanya kini ikut dibaca: agama, usia, dan
+    # status kawin ada di lembar profil, tapi tidak bisa menggeser skor
+    # kemiripan sedikit pun karena tidak pernah masuk vektor.
+    data_pribadi: dict[str, str] = {}
 
     def _replace_flags(self, *tambahan: str) -> "Terstruktur":
         """Salinan dengan flag tambahan di depan (jejak jalur yang dipakai)."""
@@ -150,21 +157,34 @@ SYSTEM_STRUKTUR = (
     "1. Salin ulang isi aslinya, jangan mengarang dan jangan menyimpulkan.\n"
     "2. Teks lampiran hasil scan (transkrip nilai, sertifikat, surat) yang bukan "
     "riwayat kerja/pendidikan/skill: BUANG, jangan dipaksa masuk salah satu bidang.\n"
-    "3. Data pribadi (nama, alamat, kontak, usia, gender, agama, status): BUANG.\n"
+    "3. Data pribadi (nama, alamat, kontak, usia, gender, agama, status): JANGAN "
+    "masukkan ke tiga bidang di atas. Tempatnya di 'data_pribadi' (lihat bawah).\n"
     "4. Bidang tanpa isi di CV ini: kembalikan string kosong.\n\n"
     "Selain itu keluarkan 'riwayat': daftar posisi yang BENAR-BENAR pernah "
-    "dijalani kandidat, satu objek {jabatan, perusahaan, periode} per posisi.\n"
+    "dijalani kandidat, satu objek per posisi.\n"
     "5. Masukkan hanya posisi yang punya BUKTI berupa nama tempat kerja atau "
     "rentang waktu. Magang dan pengalaman organisasi termasuk, asal ada tempat "
     "atau waktunya.\n"
     "6. Minat, cita-cita, tujuan karier, dan daftar kemampuan BUKAN riwayat "
     'kerja. Kalimat seperti "tertarik pada X" atau "menguasai Y" jangan '
     "dimasukkan. CV tanpa riwayat kerja: kembalikan daftar kosong.\n"
-    "7. Jangan mengarang perusahaan atau periode yang tidak tertulis di CV. "
-    "Tidak tertulis = string kosong.\n"
-    "8. Jawab HANYA JSON: "
+    "7. Jangan mengarang perusahaan, periode, alasan keluar, atau gaji yang "
+    "tidak tertulis di CV. Tidak tertulis = string kosong.\n\n"
+    "Terakhir keluarkan 'data_pribadi' untuk lembar profil kandidat. Isi APA "
+    "ADANYA dari CV, jangan menyimpulkan dan jangan menebak.\n"
+    "8. usia hanya diisi bila tertulis sebagai angka usia di CV. JANGAN "
+    "menghitungnya sendiri dari tanggal lahir.\n"
+    "9. agama, status_kawin, dan jumlah_anak diisi HANYA bila memang tertulis. "
+    "Tidak tertulis = string kosong. Jangan menduga dari nama, foto, atau "
+    "apa pun.\n"
+    "10. Jawab HANYA JSON: "
     '{"pengalaman": "...", "skill": "...", "pendidikan": "...", '
-    '"riwayat": [{"jabatan": "...", "perusahaan": "...", "periode": "..."}]}'
+    '"riwayat": [{"jabatan": "...", "perusahaan": "...", "periode": "...", '
+    '"alasan_keluar": "...", "gaji_terakhir": "...", "deskripsi": "..."}], '
+    '"data_pribadi": {"nama": "...", "alamat": "...", "tempat_lahir": "...", '
+    '"tanggal_lahir": "...", "usia": "...", "jenis_kelamin": "...", '
+    '"status_kawin": "...", "jumlah_anak": "...", "bahasa": "...", '
+    '"agama": "...", "telepon": "...", "email": "..."}}'
 )
 
 
@@ -187,7 +207,42 @@ def _json_pertama(s: str) -> dict | None:
 # CV kandidat memang bisa sepanjang itu; yang tidak wajar adalah ratusan.
 MAKS_RIWAYAT = 60
 
-KUNCI_RIWAYAT = ("jabatan", "perusahaan", "periode")
+KUNCI_RIWAYAT = (
+    "jabatan", "perusahaan", "periode",
+    # Diminta lembar profil BIPROO. Sering tidak ada di CV kandidat, dan itu
+    # wajar: yang tidak tertulis tetap string kosong, bukan ditebak.
+    "alasan_keluar", "gaji_terakhir", "deskripsi",
+)
+
+# Kunci biodata yang boleh masuk. Daftar tertutup, bukan apa pun yang dikirim
+# LLM: tanpa ini satu jawaban ngawur bisa menyelipkan kunci baru yang langsung
+# ikut tampil di lembar profil kandidat.
+KUNCI_PRIBADI = (
+    "nama", "alamat", "tempat_lahir", "tanggal_lahir", "usia", "jenis_kelamin",
+    "status_kawin", "jumlah_anak", "bahasa", "agama", "telepon", "email",
+)
+
+MAKS_PANJANG_PRIBADI = 120
+
+
+def _data_pribadi(nilai: object) -> dict[str, str]:
+    """
+    Bersihkan biodata dari LLM: kunci tertutup, nilai dipotong, kosong dibuang.
+
+    Nilai panjang dipotong karena bidang biodata seharusnya pendek. Kalau LLM
+    menaruh satu paragraf di 'alamat', itu tanda ia menyalin blok CV yang salah,
+    dan lembar profilnya jadi berantakan.
+    """
+    if not isinstance(nilai, dict):
+        return {}
+
+    hasil: dict[str, str] = {}
+    for k in KUNCI_PRIBADI:
+        v = str(nilai.get(k) or "").strip()[:MAKS_PANJANG_PRIBADI]
+        if v:
+            hasil[k] = v
+
+    return hasil
 
 
 def _riwayat(nilai: object) -> tuple[dict[str, str], ...]:
@@ -273,6 +328,7 @@ def strukturkan_kontekstual(teks: str, provider) -> Terstruktur:
     ambil = lambda k: str(d.get(k) or "").strip()
     peng, skill, didik = ambil("pengalaman"), ambil("skill"), ambil("pendidikan")
     riwayat = _riwayat(d.get("riwayat"))
+    pribadi = _data_pribadi(d.get("data_pribadi"))
 
     if not (peng or skill or didik):
         # LLM sudah membaca dan memutuskan dokumen ini tidak memuat isi CV.
@@ -306,4 +362,4 @@ def strukturkan_kontekstual(teks: str, provider) -> Terstruktur:
     if not riwayat:
         flags += ("tanpa_riwayat_kerja",)
 
-    return Terstruktur(peng, skill, didik, "", ("kontekstual", *flags), riwayat)
+    return Terstruktur(peng, skill, didik, "", ("kontekstual", *flags), riwayat, pribadi)

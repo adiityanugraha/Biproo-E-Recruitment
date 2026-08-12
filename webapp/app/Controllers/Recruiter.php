@@ -5,7 +5,7 @@ namespace App\Controllers;
 use App\Libraries\AiServiceException;
 use App\Libraries\GateTwo;
 use App\Libraries\KategoriPosisi;
-use App\Libraries\PenilaianRubrik;
+use App\Libraries\LembarPenilaian;
 use App\Libraries\StageLogger;
 use App\Libraries\ZoomException;
 use App\Models\ApplicationModel;
@@ -142,80 +142,141 @@ class Recruiter extends BaseController
         // / Passed / Failed cuma menghasilkan dua tab yang selamanya kosong, jadi
         // tahap ini memakai satu tab: semua CV yang masuk.
         $satuTab = $stage === 'upload_cv';
+        $status  = $this->tabAktif($stage, $satuTab);
+
+        // Dua sumber baris yang berbeda, bukan dua cabang dari sumber yang sama.
+        // Interview HRD dibaca dari JADWAL (tabel interviews), tahap lain dari
+        // RIWAYAT tahapan. Karena itu keduanya dipisah jadi method sendiri.
+        if ($stage === 'interview_online') {
+            $ivMap = $this->jadwalPerTab($status);
+            $ids   = array_keys($ivMap);
+        } else {
+            $ivMap = [];
+            $ids   = $this->idsDariRiwayat($stage, $status, $satuTab);
+        }
+
+        return view('recruiter/tahap', [
+            'stage'  => $stage,
+            'judul'  => $valid[$stage],
+            'status' => $status,
+            'daftar' => $this->barisTabel($ids, $ivMap, $stage === 'interview_online' && $status === 'completed'),
+        ]);
+    }
+
+    /**
+     * Tab yang sedang dibuka, dari query string.
+     *
+     * Interview HRD: tab 'passed' dan 'failed' dihapus 3 Agustus 2026. Tautan
+     * lama diarahkan ke penggantinya, bukan dibiarkan jatuh diam-diam ke
+     * On Progress dan menampilkan daftar yang salah.
+     */
+    private function tabAktif(string $stage, bool $satuTab): string
+    {
+        if ($satuTab) {
+            return 'uploaded';
+        }
 
         $req    = $this->request->getGet('status');
-        $status = $satuTab
-            ? 'uploaded'
-            : (in_array($req, ['passed', 'failed', 'rescheduled', 'completed'], true) ? $req : 'progress');
+        $status = in_array($req, ['passed', 'failed', 'rescheduled', 'completed'], true) ? $req : 'progress';
 
-        // Interview HRD: tab 'passed' dan 'failed' dihapus 3 Agustus 2026.
-        // Tautan lama diarahkan ke penggantinya, bukan dibiarkan jatuh diam-diam
-        // ke On Progress dan menampilkan daftar yang salah.
-        $lewatJadwal = $stage === 'interview_online';
+        return $stage === 'interview_online'
+            ? (['passed' => 'progress', 'failed' => 'rescheduled'][$status] ?? $status)
+            : $status;
+    }
 
-        if ($lewatJadwal) {
-            $status = ['passed' => 'progress', 'failed' => 'rescheduled'][$status] ?? $status;
+    /**
+     * Baris interview untuk satu tab Interview HRD, dipetakan per application_id.
+     *
+     * Ketiga tab SALING LEPAS - satu kandidat hanya boleh berada di satu tab,
+     * kalau tidak recruiter mengerjakan orang yang sama dua kali:
+     *   On Progress = approved & sesi BELUM selesai (akan datang / berlangsung)
+     *   Rescheduled = jadwal dilepas, menunggu kandidat memilih slot lain
+     *   Completed   = approved & sesi SUDAH selesai (siap dinilai Gate 2)
+     *
+     * On Progress dan Completed dipisah WAKTU, bukan status: kandidat berpindah
+     * sendiri begitu sesi 30 menitnya berakhir, tanpa ada yang perlu menekan apa
+     * pun. Rescheduled bukan riwayat: memilih slot baru memakai BARIS YANG SAMA
+     * (Lamaran::ajukanInterview), jadi kandidat langsung kembali ke On Progress
+     * dan tidak tertinggal di sini.
+     *
+     * @return array<int, array<string, mixed>> application_id => baris interview
+     */
+    private function jadwalPerTab(string $status): array
+    {
+        $q = new InterviewModel();
+
+        // Batas dihitung di PHP, bukan CURRENT_TIMESTAMP. Sejak appTimezone
+        // diperbaiki ke Asia/Jakarta, jam PHP dan jam DB sama, sedangkan
+        // CURRENT_TIMESTAMP berbeda arti di SQLite (UTC) dan SQL Server (WIB)
+        // sehingga uji dan produksi tidak sepakat.
+        $selesai = (new DateTime())->modify('-' . InterviewModel::TUTUP_MENIT . ' minutes')->format('Y-m-d H:i:s');
+
+        if ($status === 'completed') {
+            $rows = $q->where('status', 'approved')->where('scheduled_at <=', $selesai)->findAll();
+        } elseif ($status === 'rescheduled') {
+            // 'rejected' ikut di sini: peninggalan alur lama yang sama-sama
+            // berarti jadwalnya lepas dan kandidat perlu memilih ulang
+            $rows = $q->whereIn('status', ['rescheduled', 'rejected'])->findAll();
+        } else {
+            // 'requested' ikut ditampilkan: sisa alur lama sebelum slot otomatis
+            // disetujui. Tidak ada yang membuatnya lagi, tapi kalau ada baris
+            // peninggalan ia tidak boleh hilang dari pandangan recruiter.
+            $rows = $q->whereIn('status', ['approved', 'requested'])
+                ->where('scheduled_at >', $selesai)->findAll();
         }
 
         $ivMap = [];
-        if ($lewatJadwal) {
-            // Tab Interview HRD (arahan atasan 3 Agustus 2026). Ketiganya SALING
-            // LEPAS - satu kandidat hanya boleh berada di satu tab, kalau tidak
-            // recruiter mengerjakan orang yang sama dua kali:
-            //   On Progress = approved & sesi BELUM selesai (akan datang / berlangsung)
-            //   Rescheduled = jadwal dilepas, menunggu kandidat memilih slot lain
-            //   Completed   = approved & sesi SUDAH selesai (siap dinilai Gate 2)
-            //
-            // On Progress dan Completed dipisah WAKTU, bukan status: kandidat
-            // berpindah sendiri begitu sesi 30 menitnya berakhir, tanpa ada yang
-            // perlu menekan apa pun.
-            //
-            // Rescheduled bukan riwayat: memilih slot baru memakai BARIS YANG SAMA
-            // (Lamaran::ajukanInterview), jadi kandidat langsung kembali ke
-            // On Progress dan tidak tertinggal di sini.
-            $q = new InterviewModel();
+        foreach ($rows as $iv) {
+            $ivMap[$iv['application_id']] = $iv;
+        }
 
-            // Batas dihitung di PHP, bukan CURRENT_TIMESTAMP. Sejak appTimezone
-            // diperbaiki ke Asia/Jakarta, jam PHP dan jam DB sama, sedangkan
-            // CURRENT_TIMESTAMP berbeda arti di SQLite (UTC) dan SQL Server (WIB)
-            // sehingga uji dan produksi tidak sepakat.
-            $selesai = (new DateTime())->modify('-' . InterviewModel::TUTUP_MENIT . ' minutes')->format('Y-m-d H:i:s');
+        return $ivMap;
+    }
 
-            if ($status === 'completed') {
-                $rows = $q->where('status', 'approved')->where('scheduled_at <=', $selesai)->findAll();
-            } elseif ($status === 'rescheduled') {
-                // 'rejected' ikut di sini: peninggalan alur lama yang sama-sama
-                // berarti jadwalnya lepas dan kandidat perlu memilih ulang
-                $rows = $q->whereIn('status', ['rescheduled', 'rejected'])->findAll();
-            } else {
-                // 'requested' ikut ditampilkan: sisa alur lama sebelum slot otomatis
-                // disetujui. Tidak ada yang membuatnya lagi, tapi kalau ada baris
-                // peninggalan ia tidak boleh hilang dari pandangan recruiter.
-                $rows = $q->whereIn('status', ['approved', 'requested'])
-                    ->where('scheduled_at >', $selesai)->findAll();
-            }
-            foreach ($rows as $iv) {
-                $ivMap[$iv['application_id']] = $iv;
-            }
-            $ids = array_keys($ivMap);
-        } else {
-            // status terkini tiap application pada tahap ini (dari stage_history)
-            $latest = [];
-            foreach ((new StageHistoryModel())->where('stage', $stage)->orderBy('id')->findAll() as $r) {
-                $latest[$r['application_id']] = $r['status'];
-            }
-            $ids = [];
-            foreach ($latest as $appId => $st) {
-                $bucket = $satuTab
-                    ? 'uploaded'
-                    : ($st === 'passed' ? 'passed' : ($st === 'failed' ? 'failed' : 'progress'));
-                if ($bucket === $status) {
-                    $ids[] = $appId;
-                }
+    /**
+     * Lamaran yang status TERKINI-nya pada tahap ini masuk tab yang diminta.
+     *
+     * Yang menentukan baris terakhir per lamaran, bukan ada tidaknya baris:
+     * kandidat yang pernah 'entered' lalu 'failed' hanya boleh muncul di Failed.
+     *
+     * @return list<int>
+     */
+    private function idsDariRiwayat(string $stage, string $status, bool $satuTab): array
+    {
+        $terkini = [];
+        foreach ((new StageHistoryModel())->where('stage', $stage)->orderBy('id')->findAll() as $r) {
+            $terkini[$r['application_id']] = $r['status'];
+        }
+
+        $ids = [];
+        foreach ($terkini as $appId => $st) {
+            $tab = $satuTab
+                ? 'uploaded'
+                : ($st === 'passed' ? 'passed' : ($st === 'failed' ? 'failed' : 'progress'));
+            if ($tab === $status) {
+                $ids[] = $appId;
             }
         }
 
-        $daftar = $ids === [] ? [] : (new ApplicationModel())
+        return $ids;
+    }
+
+    /**
+     * Baris tabel siap tampil: data lamaran plus kolom yang cuma dipakai tampilan.
+     *
+     * @param list<int>                            $ids
+     * @param array<int, array<string, mixed>>     $ivMap jadwal per application_id
+     * @param bool                                 $gate2 sertakan keputusan Gate 2 (tab Completed)
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function barisTabel(array $ids, array $ivMap, bool $gate2): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+
+        $daftar = (new ApplicationModel())
             // cv_path ikut diambil hanya untuk mengetahui jenis berkasnya: PDF
             // dibuka di jendela pratinjau, DOCX tidak bisa dirender browser.
             ->select('applications.id, applications.job_id, applications.cv_path, candidates.nama, candidates.email, jobs.judul')
@@ -224,22 +285,17 @@ class Recruiter extends BaseController
             ->whereIn('applications.id', $ids)
             ->orderBy('applications.id')
             ->findAll();
+
         $sh = new StageHistoryModel();
         foreach ($daftar as &$a) {
             $a['jadwal']   = $ivMap[$a['id']]['scheduled_at'] ?? null; // waktu jadwal (interview_online)
-            $a['join_url'] = $ivMap[$a['id']]['join_url'] ?? null;     // link Zoom (tab Passed)
-            // tab Completed: keputusan Gate 2 (null = belum diputus -> tampilkan slider)
-            $a['gate2'] = ($stage === 'interview_online' && $status === 'completed')
-                ? $sh->latestStatus($a['id'], 'gate_2') : null;
+            $a['join_url'] = $ivMap[$a['id']]['join_url'] ?? null;     // link Zoom
+            // tab Completed: keputusan Gate 2 (null = belum diputus -> tampilkan tombol menilai)
+            $a['gate2'] = $gate2 ? $sh->latestStatus($a['id'], 'gate_2') : null;
         }
         unset($a);
 
-        return view('recruiter/tahap', [
-            'stage'  => $stage,
-            'judul'  => $valid[$stage],
-            'status' => $status,
-            'daftar' => $daftar,
-        ]);
+        return $daftar;
     }
 
     /**
@@ -675,31 +731,28 @@ class Recruiter extends BaseController
             return redirect()->to($kembali)->with('error', 'Kandidat ini sudah diputuskan.');
         }
 
-        // Dua jalur masukan. Rubrik didahulukan; slider hanya untuk lowongan
-        // yang belum punya bank soal.
-        $job       = (new JobModel())->find($app['job_id']);
-        $rubrik    = $job === null ? [] : $this->pertanyaanJob($job);
-        $penilaian = PenilaianRubrik::rakit(
-            $rubrik,
+        // Lembar penilaian BIPROO: sembilan kompetensi tetap, sama untuk semua
+        // posisi. Slider 0-100 untuk lowongan tanpa bank soal sudah tidak ada -
+        // lembarnya kini tidak bergantung pada bank pertanyaan sama sekali.
+        $penilaian = LembarPenilaian::rakitHrd(
             (array) ($this->request->getPost('nilai') ?? []),
-            (array) ($this->request->getPost('catatan') ?? [])
+            (array) ($this->request->getPost('narasi') ?? []),
+            (string) $this->request->getPost('hasil')
         );
 
-        $perluDinilai = PenilaianRubrik::jumlahDinilai($rubrik);
-        if ($perluDinilai > 0) {
-            // Separuh terisi bukan penilaian, itu tebakan dengan langkah lebih
-            // banyak. Butir yang belum diisi TIDAK dihitung nol - itu akan
-            // menggugurkan kandidat karena recruiter belum selesai mengklik.
-            if (count($penilaian) < $perluDinilai) {
-                return redirect()->to('recruiter/nilai/' . $appId)->with('error',
-                    'Masih ada ' . ($perluDinilai - count($penilaian)) . ' butir yang belum dinilai. '
-                    . 'Lengkapi dulu supaya skornya tidak dihitung dari penilaian separuh.');
-            }
-            $skorInterview = PenilaianRubrik::skor($penilaian);
-        } else {
-            $penilaian     = [];
-            $skorInterview = max(0, min(100, (int) $this->request->getPost('skor')));
+        // Separuh terisi bukan penilaian, itu tebakan dengan langkah lebih
+        // banyak. Butir yang belum diisi TIDAK dihitung nol - itu akan
+        // menggugurkan kandidat karena recruiter belum selesai mengklik.
+        $dinilai = count(array_filter(
+            $penilaian,
+            static fn (array $p): bool => $p['kategori'] === LembarPenilaian::KAT_HRD
+        ));
+        if ($dinilai < count(LembarPenilaian::HRD)) {
+            return redirect()->to('recruiter/nilai/' . $appId)->with('error',
+                'Masih ada ' . (count(LembarPenilaian::HRD) - $dinilai) . ' kompetensi yang belum dinilai. '
+                . 'Lengkapi dulu supaya skornya tidak dihitung dari penilaian separuh.');
         }
+        $skorInterview = LembarPenilaian::skor($penilaian);
 
         $skorCv = $this->skorCv($appId);
         $logger = new StageLogger();
@@ -709,16 +762,30 @@ class Recruiter extends BaseController
         // Kompetensi terlemah ikut dicatat. Inilah yang membuat keputusan bisa
         // dijelaskan ke kandidat yang bertanya: bukan "skor 62", melainkan butir
         // mana yang kurang.
-        $lemah = PenilaianRubrik::terlemah($penilaian);
+        $lemah = LembarPenilaian::terlemah($penilaian);
+        // HANYA baris kompetensi yang dihitung. $penilaian juga memuat kotak
+        // narasi dan baris hasil akhir, dan ikut menghitungnya membuat catatan
+        // berbunyi "dari 10 kompetensi" padahal kompetensinya sembilan.
         $dasar = 'Skor interview ' . $skorInterview . '/100'
-            . ($penilaian === [] ? '' : ' (dari ' . count($penilaian) . ' kompetensi)')
+            . ($dinilai === 0 ? '' : ' (dari ' . $dinilai . ' kompetensi)')
             . ($lemah === [] ? '' : ', terlemah: ' . implode(', ', $lemah));
 
+        // Satu transaksi untuk seluruh lembar. Tanpa ini, kegagalan di tengah
+        // meninggalkan penilaian separuh yang tidak akan pernah dibersihkan -
+        // tabel ini tambah-saja, tidak punya jalur perbaikan.
+        //
+        // Bukan kekhawatiran teoretis: 12 Agustus 2026 baris 'hasil' ditolak
+        // SQL Server karena melebihi lebar kolom, dan sembilan baris kompetensi
+        // sebelumnya sudah terlanjur masuk. Lamaran itu jadi punya 18 baris
+        // kompetensi untuk satu kali penilaian.
         if ($penilaian !== []) {
+            $db = db_connect();
+            $db->transException(true)->transStart();
             $model = new InterviewPenilaianModel();
             foreach ($penilaian as $p) {
                 $model->insert($p + ['application_id' => $appId]);
             }
+            $db->transComplete();
         }
 
         $logger->log($appId, 'interview_online', 'passed', $actor, 'Skor interview ' . $skorInterview . '/100');
@@ -878,7 +945,7 @@ class Recruiter extends BaseController
     {
         $sr = (new ScreeningResultModel())->latestFor($appId);
         if ($sr === null) {
-            return ['riwayat' => [], 'flags' => []];
+            return ['riwayat' => [], 'flags' => [], 'pribadi' => []];
         }
 
         $ex = json_decode((string) ($sr['extracted_json'] ?? ''), true);
@@ -887,6 +954,9 @@ class Recruiter extends BaseController
         return [
             'riwayat' => is_array($ex) && is_array($ex['riwayat'] ?? null) ? $ex['riwayat'] : [],
             'flags'   => is_array($fl) ? $fl : [],
+            // Biodata untuk lembar profil kandidat. Dibaca dari CV, TIDAK ikut
+            // menentukan skor apa pun (lihat structure.py: tidak pernah di-embed).
+            'pribadi' => is_array($ex) && is_array($ex['data_pribadi'] ?? null) ? $ex['data_pribadi'] : [],
         ];
     }
 
@@ -894,6 +964,36 @@ class Recruiter extends BaseController
     private function statusGate1(int $appId): ?string
     {
         return (new StageHistoryModel())->latestStatus($appId, 'gate_1');
+    }
+
+    /**
+     * Lembar profil kandidat, tiga halaman, siap dicetak
+     * (arahan atasan 12 Agustus 2026).
+     *
+     * Merakit yang sudah ada di sistem, bukan meminta orang mengetik ulang:
+     * biodata dan riwayat kerja dari hasil baca CV, hasil interview dari lembar
+     * penilaian recruiter. Halaman 2 (T.I.U 5 dan DISC) belum punya sumber data
+     * sama sekali, jadi dicetak apa adanya sebagai belum tersedia - lebih jujur
+     * daripada halaman kosong tanpa keterangan.
+     */
+    public function profil(int $appId)
+    {
+        $app = $this->lamaranDetail($appId);
+        if ($app === null) {
+            return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
+        }
+
+        $sh = new StageHistoryModel();
+
+        return view('recruiter/profil', [
+            'judul'      => 'Lembar Profil Kandidat',
+            'app'        => $app,
+            'bukti'      => $this->buktiCv($appId),
+            'skorCv'     => $this->skorCv($appId),
+            'assessment' => $sh->latestStatus($appId, 'online_assessment'),
+            'penilaian'  => (new InterviewPenilaianModel())->untukLamaran($appId),
+            'gate2'      => $sh->latestStatus($appId, 'gate_2'),
+        ]);
     }
 
     private function lamaranDetail(int $appId): ?array
