@@ -391,7 +391,7 @@ def test_callback_membawa_riwayat_kerja(wiring):
     # bukan menghilangkan kuncinya - sisi CI4 jadi tidak perlu menebak.
     assert riwayat == [{
         "jabatan": "Kasir", "perusahaan": "Toko Maju", "periode": "2020-2022",
-        "alasan_keluar": "", "gaji_terakhir": "", "deskripsi": "",
+        "bidang_usaha": "", "alasan_keluar": "", "gaji_terakhir": "", "deskripsi": "",
     }]
     assert "tanpa_riwayat_kerja" not in body["flags"]
 

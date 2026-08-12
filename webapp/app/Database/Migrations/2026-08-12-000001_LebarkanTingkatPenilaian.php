@@ -2,7 +2,6 @@
 
 namespace App\Database\Migrations;
 
-use App\Libraries\LembarPenilaian;
 use CodeIgniter\Database\Migration;
 
 /**
@@ -40,9 +39,10 @@ class LebarkanTingkatPenilaian extends Migration
         // Sengaja memotong dulu: baris lama yang lebih panjang dari 10 karakter
         // akan menggagalkan penyempitan kolom, dan migrasi turun yang macet lebih
         // menyusahkan daripada nilai yang terpotong di basis data pengembangan.
-        $this->db->table('interview_penilaian')
-            ->where('kategori', LembarPenilaian::KAT_HASIL)
-            ->delete();
+        // Kategori 'hasil' ditulis literal, bukan lewat konstanta: kategori itu
+        // sudah dihapus dari LembarPenilaian, sementara migrasi harus tetap
+        // menggambarkan basis data pada saat ia dijalankan.
+        $this->db->table('interview_penilaian')->where('kategori', 'hasil')->delete();
 
         $this->forge->modifyColumn('interview_penilaian', [
             'tingkat' => ['type' => 'VARCHAR', 'constraint' => 10],

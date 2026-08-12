@@ -69,18 +69,34 @@ final class LembarPenilaian
         'remarks'    => 'Other Remarks',
     ];
 
-    public const HASIL = [
-        'recommended'     => 'Recommended',
-        'not_recommended' => 'Not Recommended',
-    ];
-
     public const MAKS_CATATAN = 500;
 
     /** Nilai kategori pada interview_penilaian. */
     public const KAT_HRD    = 'hrd';
     public const KAT_USER   = 'user';
     public const KAT_NARASI = 'narasi';
-    public const KAT_HASIL  = 'hasil';
+
+    /**
+     * Interview Result: DITURUNKAN dari keputusan Gate 2, bukan diisi recruiter.
+     *
+     * Dulu ada pilihan Recommended / Not Recommended tersendiri di form, diisi
+     * SEBELUM sistem menghitung kelulusan. Dua sumber kebenaran untuk satu hal
+     * yang sama, dan tidak ada apa pun yang mencegah keduanya bertentangan:
+     * lembar profil bisa berbunyi "Recommended" pada kandidat yang catatan
+     * Gate 2-nya berbunyi TIDAK LOLOS. Sekarang keputusannya cuma satu.
+     *
+     * @param string|null $gate2 status terakhir tahap gate_2 di stage_history
+     *
+     * @return string '' bila belum diputuskan (termasuk 'flagged')
+     */
+    public static function hasil(?string $gate2): string
+    {
+        return match ($gate2) {
+            'passed' => 'Recommended',
+            'failed' => 'Not Recommended',
+            default  => '',
+        };
+    }
 
     /**
      * Rakit baris penilaian Interview HRD dari kiriman form.
@@ -94,7 +110,7 @@ final class LembarPenilaian
      *
      * @return list<array<string, mixed>>
      */
-    public static function rakitHrd(array $nilai, array $narasi = [], string $hasil = ''): array
+    public static function rakitHrd(array $nilai, array $narasi = []): array
     {
         $baris = [];
 
@@ -124,16 +140,6 @@ final class LembarPenilaian
                 'bobot'      => 0,
                 'tingkat'    => '',
                 'catatan'    => $teks,
-            ];
-        }
-
-        if (isset(self::HASIL[$hasil])) {
-            $baris[] = [
-                'kompetensi' => 'interview_result',
-                'kategori'   => self::KAT_HASIL,
-                'bobot'      => 0,
-                'tingkat'    => $hasil,
-                'catatan'    => '',
             ];
         }
 

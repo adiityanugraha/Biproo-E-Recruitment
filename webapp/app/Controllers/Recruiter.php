@@ -696,11 +696,14 @@ class Recruiter extends BaseController
 
         $job    = (new JobModel())->find($app['job_id']);
         $rubrik = $job === null ? [] : $this->pertanyaanJob($job);
+        $gate2  = (new StageHistoryModel())->latestStatus($appId, 'gate_2');
+
         return view('recruiter/nilai', [
             'judul'     => 'Penilaian Interview',
             'app'       => $app,
             'rubrik'    => $rubrik,
-            'sudah'     => (new StageHistoryModel())->latestStatus($appId, 'gate_2') !== null,
+            'gate2'     => $gate2,
+            'sudah'     => $gate2 !== null,
             'penilaian' => (new InterviewPenilaianModel())->untukLamaran($appId),
             'skorCv'    => $this->skorCv($appId),
         ]);
@@ -736,8 +739,7 @@ class Recruiter extends BaseController
         // lembarnya kini tidak bergantung pada bank pertanyaan sama sekali.
         $penilaian = LembarPenilaian::rakitHrd(
             (array) ($this->request->getPost('nilai') ?? []),
-            (array) ($this->request->getPost('narasi') ?? []),
-            (string) $this->request->getPost('hasil')
+            (array) ($this->request->getPost('narasi') ?? [])
         );
 
         // Separuh terisi bukan penilaian, itu tebakan dengan langkah lebih

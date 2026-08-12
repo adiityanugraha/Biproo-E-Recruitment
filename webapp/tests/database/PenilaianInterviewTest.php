@@ -71,7 +71,7 @@ final class PenilaianInterviewTest extends CIUnitTestCase
      */
     private function lembar(int $nilai = 5, array $tambahan = []): array
     {
-        return ['nilai' => array_fill(0, count(L::HRD), $nilai), 'hasil' => 'recommended'] + $tambahan;
+        return ['nilai' => array_fill(0, count(L::HRD), $nilai)] + $tambahan;
     }
 
     public function testFormMenampilkanSembilanKompetensiLembarBiproo(): void
@@ -89,7 +89,6 @@ final class PenilaianInterviewTest extends CIUnitTestCase
         foreach (L::SKALA as $label) {
             $this->assertStringContainsString($label, $html);
         }
-        $this->assertStringContainsString('Interview Result', $html);
     }
 
     /** Kotak narasi lembar BIPROO ikut tersedia. */
@@ -153,7 +152,7 @@ final class PenilaianInterviewTest extends CIUnitTestCase
         $this->assertSame('4', $hrd[0]['tingkat']);
     }
 
-    public function testNarasiDanHasilIkutTersimpan(): void
+    public function testNarasiIkutTersimpan(): void
     {
         $aid = $this->fixture();
 
@@ -163,11 +162,20 @@ final class PenilaianInterviewTest extends CIUnitTestCase
 
         $baris  = (new InterviewPenilaianModel())->untukLamaran($aid);
         $narasi = array_values(array_filter($baris, static fn ($b) => $b['kategori'] === L::KAT_NARASI));
-        $hasil  = array_values(array_filter($baris, static fn ($b) => $b['kategori'] === L::KAT_HASIL));
 
         $this->assertCount(2, $narasi);
         $this->assertSame('Komunikatif dan rapi', $narasi[0]['catatan']);
-        $this->assertSame('recommended', $hasil[0]['tingkat']);
+    }
+
+    /** Form tidak lagi punya pilihan Recommended - hasilnya diturunkan dari Gate 2. */
+    public function testFormTidakPunyaPilihanHasil(): void
+    {
+        $aid = $this->fixture();
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/nilai/' . $aid)->getBody();
+
+        $this->assertStringNotContainsString('name="hasil"', $html);
+        $this->assertStringNotContainsString('Not Recommended', $html);
     }
 
     /** Inilah yang membuat keputusan bisa dijelaskan ke kandidat yang bertanya. */
@@ -177,9 +185,7 @@ final class PenilaianInterviewTest extends CIUnitTestCase
         $nilai = array_fill(0, count(L::HRD), 4);
         $nilai[1] = 1;   // Communication Skills = Poor
 
-        $this->withSession($this->sesiRec)->post('recruiter/interview/putus/' . $aid, [
-            'nilai' => $nilai, 'hasil' => 'not_recommended',
-        ]);
+        $this->withSession($this->sesiRec)->post('recruiter/interview/putus/' . $aid, ['nilai' => $nilai]);
 
         $gate2 = (new StageHistoryModel())
             ->where(['application_id' => $aid, 'stage' => 'gate_2'])

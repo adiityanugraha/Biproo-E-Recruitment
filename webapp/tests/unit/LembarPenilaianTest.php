@@ -100,20 +100,34 @@ final class LembarPenilaianTest extends CIUnitTestCase
         $this->assertCount(1, $baris);
     }
 
-    public function testHasilInterviewDisimpanSebagaiBarisTersendiri(): void
+    /**
+     * Interview Result mengikuti Gate 2, tidak bisa bertentangan dengannya.
+     *
+     * Inilah alasan pilihan Recommended / Not Recommended dihapus dari form:
+     * dulu recruiter mengisinya SEBELUM kelulusan dihitung, jadi lembar profil
+     * bisa berbunyi "Recommended" pada kandidat yang tidak lolos.
+     */
+    public function testHasilDiturunkanDariKeputusanGateDua(): void
     {
-        $baris = L::rakitHrd([0 => 3], [], 'recommended');
-
-        $hasil = array_values(array_filter($baris, static fn ($b) => $b['kategori'] === L::KAT_HASIL));
-        $this->assertCount(1, $hasil);
-        $this->assertSame('recommended', $hasil[0]['tingkat']);
+        $this->assertSame('Recommended', L::hasil('passed'));
+        $this->assertSame('Not Recommended', L::hasil('failed'));
     }
 
-    public function testHasilTidakDikenalDiabaikan(): void
+    /** Belum diputus - termasuk 'flagged' - berarti belum ada hasil, bukan Not Recommended. */
+    public function testBelumDiputusTidakPunyaHasil(): void
     {
-        $baris = L::rakitHrd([0 => 3], [], 'mungkin');
+        $this->assertSame('', L::hasil('flagged'));
+        $this->assertSame('', L::hasil(null));
+    }
 
-        $this->assertSame([], array_filter($baris, static fn ($b) => $b['kategori'] === L::KAT_HASIL));
+    public function testHasilTidakLagiDisimpanSebagaiBaris(): void
+    {
+        $baris = L::rakitHrd([0 => 3], ['notes' => 'oke']);
+
+        $this->assertSame([], array_filter(
+            $baris,
+            static fn ($b) => ! in_array($b['kategori'], [L::KAT_HRD, L::KAT_NARASI], true)
+        ));
     }
 
     /** Terlemah hanya yang di BAWAH Average. */
@@ -137,6 +151,10 @@ final class LembarPenilaianTest extends CIUnitTestCase
      * truncated"), SQLite - yang dipakai basis data uji - menerimanya utuh. Jadi
      * seluruh uji hijau sementara halaman aslinya error.
      *
+     * Nilai itu sendiri sudah tidak disimpan lagi (Interview Result diturunkan
+     * dari Gate 2), tapi penjaganya tetap: yang dijaga bukan satu nilai tertentu,
+     * melainkan kebiasaan menambah nilai baru tanpa melihat lebar kolomnya.
+     *
      * Uji ini tidak menyentuh basis data sama sekali: ia membandingkan nilai
      * terpanjang yang BISA dihasilkan lembar dengan lebar kolom, jadi benar di
      * basis data mana pun.
@@ -146,7 +164,6 @@ final class LembarPenilaianTest extends CIUnitTestCase
         $semua = array_merge(
             array_map('strval', array_keys(L::SKALA)),
             array_map('strval', range(1, L::MAKS_USER)),
-            array_keys(L::HASIL),
             [''],
         );
 

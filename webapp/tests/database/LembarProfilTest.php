@@ -63,7 +63,6 @@ final class LembarProfilTest extends CIUnitTestCase
         $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", [
             'nilai'  => array_fill(0, count(L::HRD), $n),
             'narasi' => ['strengths' => 'Ramah dan cekatan'],
-            'hasil'  => 'recommended',
         ]);
     }
 
@@ -150,6 +149,31 @@ final class LembarProfilTest extends CIUnitTestCase
     }
 
     /**
+     * Age terisi walau CV cuma menuliskan tanggal lahir.
+     *
+     * Kasus nyata: CV Reza Rahmansyah mencantumkan "Medan/01 Mei 1991" tanpa
+     * pernah menyebut angka usia, dan model bahasa memang dilarang menghitung
+     * sendiri (structure.py aturan 8). Perhitungannya di PHP, dijalankan ulang
+     * tiap lembar dibuka - jadi tidak pernah basi.
+     */
+    public function testUsiaDihitungDariTanggalLahir(): void
+    {
+        $aid = $this->fixture(['data_pribadi' => [
+            'nama' => 'Reza Rahmansyah', 'tempat_lahir' => 'Medan', 'tanggal_lahir' => '01 Mei 1991',
+        ]]);
+
+        $html = (string) $this->withSession($this->sesiRec)->get("recruiter/profil/{$aid}")->getBody();
+
+        // Dihitung terpisah, tidak lewat helper yang sedang diuji.
+        $harap = (new DateTimeImmutable('1991-05-01'))->diff(new DateTimeImmutable())->y;
+        $this->assertMatchesRegularExpression(
+            '#<th>Age</th>\s*<td>' . $harap . '</td>#',
+            $html,
+            'Age harus terisi dari tanggal lahir, bukan "-"'
+        );
+    }
+
+    /**
      * Kolom yang CV-nya tidak menuliskan diberi tanda "-", bukan dibiarkan
      * bolong. Keterangan kenapa kosong ada satu kali di bawah tabel, tidak
      * diulang di setiap baris - lembar ini dokumen resmi, bukan layar kerja.
@@ -170,6 +194,7 @@ final class LembarProfilTest extends CIUnitTestCase
     {
         $aid = $this->fixture(['riwayat' => [[
             'jabatan' => 'Admin gudang', 'perusahaan' => 'PD ADANG SAPUTRA', 'periode' => 'Januari 2022 - Maret 2024',
+            'bidang_usaha' => 'pengadaan barang',
             'alasan_keluar' => 'Kontrak selesai', 'gaji_terakhir' => 'Rp 6.200.000', 'deskripsi' => 'Mencatat stok masuk keluar',
         ]]]);
 
@@ -177,13 +202,37 @@ final class LembarProfilTest extends CIUnitTestCase
 
         $this->assertStringContainsString('Admin gudang', $html);
         $this->assertStringContainsString('PD ADANG SAPUTRA', $html);
+        $this->assertStringContainsString('pengadaan barang', $html);
         $this->assertStringContainsString('Kontrak selesai', $html);
         $this->assertStringContainsString('Rp 6.200.000', $html);
+        $this->assertStringContainsString('Reason for Leaving', $html);
+        $this->assertStringContainsString('Last Salary', $html);
+        $this->assertStringContainsString('Description', $html);
+    }
+
+    /**
+     * Barisnya TETAP muncul walau CV tidak menuliskannya, diisi "-".
+     *
+     * Kalau baris kosong dihilangkan, tata letaknya berpindah-pindah antar
+     * kandidat dan dokumen jadi sulit dibandingkan. Dokumen aslinya juga
+     * menulis ":  -" untuk Reason for Leaving yang tidak diisi.
+     */
+    public function testBarisRincianTetapAdaWalauKosong(): void
+    {
+        $aid = $this->fixture(['riwayat' => [[
+            'jabatan' => 'Kasir', 'perusahaan' => 'Toko Maju', 'periode' => '2020-2022',
+        ]]]);
+
+        $html = (string) $this->withSession($this->sesiRec)->get("recruiter/profil/{$aid}")->getBody();
+
+        $this->assertStringContainsString('Reason for Leaving', $html);
+        $this->assertStringContainsString('Last Salary', $html);
+        $this->assertStringContainsString('Description', $html);
     }
 
     public function testHasilInterviewTerisiDariLembarPenilaian(): void
     {
-        $aid = $this->fixture();
+        $aid = $this->fixture(['pengalaman' => 'Sales 2 tahun']);
         $this->nilai($aid, 4);
 
         $html = (string) $this->withSession($this->sesiRec)->get("recruiter/profil/{$aid}")->getBody();
@@ -193,7 +242,38 @@ final class LembarProfilTest extends CIUnitTestCase
         }
         $this->assertStringContainsString('Above Average', $html);
         $this->assertStringContainsString('Ramah dan cekatan', $html);
+        // Skor CV 0,7 + interview 75/100 melewati ambang: Gate 2 lolos, dan
+        // Interview Result mengikutinya tanpa recruiter memilih apa pun.
         $this->assertStringContainsString('Recommended', $html);
+    }
+
+    /**
+     * Interview Result TIDAK BISA bertentangan dengan keputusan Gate 2.
+     *
+     * Dulu recruiter memilih Recommended / Not Recommended sendiri di form,
+     * sebelum kelulusan dihitung. Sekarang nilainya turunan: nilai serendah
+     * apa pun yang berakhir tidak lolos akan berbunyi Not Recommended.
+     */
+    public function testHasilMengikutiKeputusanGateDua(): void
+    {
+        $aid = $this->fixture(['pengalaman' => 'Sales 2 tahun']);
+        $this->nilai($aid, 1);   // semua Poor: skor interview 0
+
+        $html = (string) $this->withSession($this->sesiRec)->get("recruiter/profil/{$aid}")->getBody();
+
+        $this->assertStringContainsString('Not Recommended', $html);
+    }
+
+    /** Belum diputus (skor CV tidak ada, Gate 2 diserahkan ke recruiter): belum ada hasil. */
+    public function testBelumDiputusTidakMenampilkanHasil(): void
+    {
+        $aid = $this->fixture();
+        $this->nilai($aid, 4);
+
+        $html = (string) $this->withSession($this->sesiRec)->get("recruiter/profil/{$aid}")->getBody();
+
+        $this->assertStringContainsString('Above Average', $html, 'penilaiannya tetap tampil');
+        $this->assertStringNotContainsString('Recommended', $html);
     }
 
     /** Radar digambar sendiri dengan SVG, tanpa pustaka grafik. */

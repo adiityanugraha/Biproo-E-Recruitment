@@ -48,7 +48,7 @@ final class InterviewScheduleTest extends CIUnitTestCase
      */
     private function lembar(int $n): array
     {
-        return ['nilai' => array_fill(0, count(L::HRD), $n), 'hasil' => 'recommended'];
+        return ['nilai' => array_fill(0, count(L::HRD), $n)];
     }
 
     /**

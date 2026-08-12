@@ -168,19 +168,29 @@ SYSTEM_STRUKTUR = (
     "6. Minat, cita-cita, tujuan karier, dan daftar kemampuan BUKAN riwayat "
     'kerja. Kalimat seperti "tertarik pada X" atau "menguasai Y" jangan '
     "dimasukkan. CV tanpa riwayat kerja: kembalikan daftar kosong.\n"
-    "7. Jangan mengarang perusahaan, periode, alasan keluar, atau gaji yang "
-    "tidak tertulis di CV. Tidak tertulis = string kosong.\n\n"
+    "7. Jangan mengarang perusahaan, periode, bidang usaha, alasan keluar, atau "
+    "gaji yang tidak tertulis di CV. Tidak tertulis = string kosong. "
+    "'bidang_usaha' adalah bidang usaha PERUSAHAANNYA (mis. 'pengadaan barang', "
+    "'retail elektronik'), bukan jabatan kandidat, dan hanya diisi bila memang "
+    "tertulis - JANGAN menyimpulkannya dari nama perusahaan.\n\n"
     "Terakhir keluarkan 'data_pribadi' untuk lembar profil kandidat. Isi APA "
     "ADANYA dari CV, jangan menyimpulkan dan jangan menebak.\n"
     "8. usia hanya diisi bila tertulis sebagai angka usia di CV. JANGAN "
     "menghitungnya sendiri dari tanggal lahir.\n"
+    # Larangan itu bukan berarti usianya hilang: lembar profil menghitungnya
+    # sendiri dari tanggal_lahir (usia_dari_dob() di webapp/app/Common.php).
+    # Yang disimpan cukup tanggal lahirnya, karena usia yang disimpan pasti
+    # basi begitu kandidat berulang tahun - dan aritmetika tanggal adalah hal
+    # yang paling tidak layak diserahkan ke model bahasa: salahnya tidak
+    # meninggalkan jejak apa pun.
     "9. agama, status_kawin, dan jumlah_anak diisi HANYA bila memang tertulis. "
     "Tidak tertulis = string kosong. Jangan menduga dari nama, foto, atau "
     "apa pun.\n"
     "10. Jawab HANYA JSON: "
     '{"pengalaman": "...", "skill": "...", "pendidikan": "...", '
     '"riwayat": [{"jabatan": "...", "perusahaan": "...", "periode": "...", '
-    '"alasan_keluar": "...", "gaji_terakhir": "...", "deskripsi": "..."}], '
+    '"bidang_usaha": "...", "alasan_keluar": "...", "gaji_terakhir": "...", '
+    '"deskripsi": "..."}], '
     '"data_pribadi": {"nama": "...", "alamat": "...", "tempat_lahir": "...", '
     '"tanggal_lahir": "...", "usia": "...", "jenis_kelamin": "...", '
     '"status_kawin": "...", "jumlah_anak": "...", "bahasa": "...", '
@@ -211,7 +221,7 @@ KUNCI_RIWAYAT = (
     "jabatan", "perusahaan", "periode",
     # Diminta lembar profil BIPROO. Sering tidak ada di CV kandidat, dan itu
     # wajar: yang tidak tertulis tetap string kosong, bukan ditebak.
-    "alasan_keluar", "gaji_terakhir", "deskripsi",
+    "bidang_usaha", "alasan_keluar", "gaji_terakhir", "deskripsi",
 )
 
 # Kunci biodata yang boleh masuk. Daftar tertutup, bukan apa pun yang dikirim

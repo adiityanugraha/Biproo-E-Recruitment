@@ -55,19 +55,18 @@
         <tr><th>Butir</th><th>Nilai</th><th>Catatan</th></tr>
         <?php foreach ($penilaian as $p): ?>
           <?php
-            // Satu tabel memuat tiga jenis baris: kompetensi berangka, kotak
-            // narasi, dan hasil akhir. Kolom Nilai menyesuaikan jenisnya.
+            // Satu tabel memuat dua jenis baris: kompetensi berangka dan kotak
+            // narasi. Kolom Nilai menyesuaikan jenisnya.
             $kat  = $p['kategori'] ?? '';
             $t    = (string) ($p['tingkat'] ?? '');
             $nilai = match (true) {
-                $kat === LembarPenilaian::KAT_HRD   => $t . ' - ' . (LembarPenilaian::SKALA[(int) $t] ?? '?'),
-                $kat === LembarPenilaian::KAT_USER  => $t . '/' . LembarPenilaian::MAKS_USER,
-                $kat === LembarPenilaian::KAT_HASIL => LembarPenilaian::HASIL[$t] ?? $t,
-                default                             => '-',
+                $kat === LembarPenilaian::KAT_HRD  => $t . ' - ' . (LembarPenilaian::SKALA[(int) $t] ?? '?'),
+                $kat === LembarPenilaian::KAT_USER => $t . '/' . LembarPenilaian::MAKS_USER,
+                default                            => '-',
             };
             $label = $kat === LembarPenilaian::KAT_NARASI
                 ? (LembarPenilaian::NARASI[$p['kompetensi']] ?? $p['kompetensi'])
-                : ($p['kompetensi'] === 'interview_result' ? 'Interview Result' : $p['kompetensi']);
+                : $p['kompetensi'];
           ?>
           <tr>
             <td><?= esc($label) ?></td>
@@ -75,6 +74,12 @@
             <td><small><?= esc($p['catatan'] ?? '') ?></small></td>
           </tr>
         <?php endforeach ?>
+        <?php if (($hasil = LembarPenilaian::hasil($gate2)) !== ''): ?>
+          <tr>
+            <td><b>Interview Result</b></td>
+            <td colspan="2"><b><?= esc($hasil) ?></b></td>
+          </tr>
+        <?php endif ?>
       </table>
     <?php endif ?>
 
@@ -112,13 +117,6 @@
                   maxlength="<?= LembarPenilaian::MAKS_CATATAN ?>"
                   style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid #e2e6ee;border-radius:8px;font-family:inherit;font-size:13px"></textarea>
       <?php endforeach ?>
-
-      <label style="margin-top:14px">Interview Result</label>
-      <div class="pilih">
-        <?php foreach (LembarPenilaian::HASIL as $kunci => $label): ?>
-          <label><input type="radio" name="hasil" value="<?= $kunci ?>" required><span><?= esc($label) ?></span></label>
-        <?php endforeach ?>
-      </div>
 
       <p style="color:#888;font-size:12px;margin:14px 0">
         Skor CV kandidat ini: <?= badge_skor($skorCv) ?>. Keputusan akhir menggabungkan

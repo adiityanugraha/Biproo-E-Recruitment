@@ -101,6 +101,89 @@ if (! function_exists('kemiripan_teks')) {
     }
 }
 
+if (! function_exists('usia_dari_dob')) {
+    /**
+     * Usia dalam tahun penuh dari tanggal lahir yang tertulis di CV.
+     *
+     * Dihitung DI SINI, bukan oleh model bahasa (structure.py aturan 8 melarangnya
+     * secara eksplisit). Dua alasan, keduanya penting:
+     *
+     * 1. Model bahasa salah berhitung tanpa memberi tanda apa pun. Aritmetika
+     *    tanggal adalah hal yang paling tidak layak diserahkan kepadanya, dan
+     *    hasilnya tidak bisa dibedakan dari hasil yang benar.
+     * 2. Usia yang DISIMPAN pasti basi. Kandidat yang CV-nya dibaca hari ini
+     *    berulang tahun bulan depan, sementara angka di basis data tidak ikut
+     *    berubah. Yang disimpan cukup tanggal lahirnya; usianya dihitung ulang
+     *    tiap kali lembar profil dibuka.
+     *
+     * Tanggal Indonesia ditulis hari-bulan-tahun, dan itu yang diasumsikan untuk
+     * bentuk berangka ("01/05/1991" = 1 Mei). Bentuk ISO (1991-05-01) dikenali
+     * terpisah karena tahun empat digit di depan tidak mungkin salah baca.
+     *
+     * @param string|null            $dob teks apa adanya dari CV, mis. "01 Mei 1991"
+     * @param DateTimeImmutable|null $per titik hitung, untuk uji yang tidak boleh ikut menua
+     *
+     * @return int|null null bila tanggalnya tidak terbaca atau hasilnya tidak masuk akal
+     */
+    function usia_dari_dob(?string $dob, ?DateTimeImmutable $per = null): ?int
+    {
+        $teks = mb_strtolower(trim((string) $dob));
+        if ($teks === '') {
+            return null;
+        }
+
+        $bulan = [
+            'januari' => 1, 'jan' => 1, 'january' => 1,
+            'februari' => 2, 'pebruari' => 2, 'feb' => 2, 'february' => 2,
+            'maret' => 3, 'mar' => 3, 'march' => 3,
+            'april' => 4, 'apr' => 4,
+            'mei' => 5, 'may' => 5,
+            'juni' => 6, 'jun' => 6, 'june' => 6,
+            'juli' => 7, 'jul' => 7, 'july' => 7,
+            'agustus' => 8, 'agt' => 8, 'agu' => 8, 'aug' => 8, 'august' => 8,
+            'september' => 9, 'sept' => 9, 'sep' => 9,
+            'oktober' => 10, 'okt' => 10, 'oct' => 10, 'october' => 10,
+            'november' => 11, 'nopember' => 11, 'nov' => 11,
+            'desember' => 12, 'des' => 12, 'dec' => 12, 'december' => 12,
+        ];
+
+        // Nama bulan jadi angka. Kata yang tidak dikenal sengaja DIBIARKAN utuh
+        // supaya pencocokan di bawah gagal - lebih baik kosong daripada tanggal
+        // hasil tebakan dari kalimat yang kebetulan memuat angka.
+        $teks = preg_replace_callback(
+            '/[a-z]+/u',
+            static fn (array $m): string => isset($bulan[$m[0]]) ? ' ' . $bulan[$m[0]] . ' ' : $m[0],
+            $teks
+        );
+
+        if (preg_match('/\b(\d{1,2})\D{1,3}(\d{1,2})\D{1,3}(\d{4})\b/', $teks, $m)) {
+            [, $hari, $bln, $tahun] = $m;
+        } elseif (preg_match('/\b(\d{4})\D{1,3}(\d{1,2})\D{1,3}(\d{1,2})\b/', $teks, $m)) {
+            [, $tahun, $bln, $hari] = $m;
+        } else {
+            return null;
+        }
+
+        if (! checkdate((int) $bln, (int) $hari, (int) $tahun)) {
+            return null;
+        }
+
+        $lahir = DateTimeImmutable::createFromFormat('!Y-n-j', $tahun . '-' . (int) $bln . '-' . (int) $hari);
+        $per ??= new DateTimeImmutable();
+        if ($lahir === false || $lahir > $per) {
+            return null;
+        }
+
+        // Batas kewajaran. Bukan aturan perusahaan, melainkan penyaring salah
+        // baca: tanggal yang tercomot dari bagian lain CV (tahun lulus, periode
+        // kerja) hampir selalu jatuh di luar rentang ini, dan "Age: 6" di lembar
+        // profil lebih merusak kepercayaan daripada kolom yang dikosongkan.
+        $usia = $lahir->diff($per)->y;
+
+        return $usia >= 15 && $usia <= 80 ? $usia : null;
+    }
+}
+
 if (! function_exists('badge_skor')) {
     /**
      * Badge kemiripan CV. Warnanya bantuan visual untuk urutan prioritas review,

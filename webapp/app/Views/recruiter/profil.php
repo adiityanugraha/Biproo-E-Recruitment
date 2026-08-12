@@ -22,7 +22,6 @@ use App\Libraries\LembarPenilaian as L;
 
 // --- rakit baris penilaian jadi bentuk yang mudah dibaca template ---
 $hrd = $user = $narasi = [];
-$hasilAkhir = '';
 foreach ($penilaian as $p) {
     $kat = $p['kategori'] ?? '';
     if ($kat === L::KAT_HRD) {
@@ -31,10 +30,13 @@ foreach ($penilaian as $p) {
         $user[$p['kompetensi']] = (int) $p['tingkat'];
     } elseif ($kat === L::KAT_NARASI) {
         $narasi[$p['kompetensi']] = (string) $p['catatan'];
-    } elseif ($kat === L::KAT_HASIL) {
-        $hasilAkhir = (string) $p['tingkat'];
     }
 }
+
+// Interview Result mengikuti keputusan Gate 2, bukan isian tersendiri: lolos
+// berarti Recommended. Selama keputusannya belum ada (termasuk saat kandidat
+// masih 'flagged' menunggu recruiter), barisnya kosong.
+$hasilAkhir = L::hasil($gate2);
 
 $pribadi = $bukti['pribadi'] ?? [];
 $kosong  = '<span class="kosong">-</span>';
@@ -81,9 +83,31 @@ $titik = static function (array $nilai, float $skala) use ($hrd): string {
              padding: 6px 10px; border: 1px solid #f2e2c9; }
   .data td { padding: 6px 10px; border: 1px solid #f2e2c9; }
   .kosong { color: #b9b9b9; }
-  .kerja { border: 1px solid #f2e2c9; border-radius: 6px; padding: 12px 14px; margin-bottom: 10px; font-size: 12px; }
-  .kerja .judul { font-weight: 700; }
-  .kerja .meta { color: #777; margin: 2px 0 6px; }
+  /* Riwayat kerja, tata letak dokumen BIPROO: kolom kiri rata kanan berisi
+     periode dan perusahaan, garis waktu di tengah, rincian jabatan di kanan. */
+  .kerja { display: flex; gap: 0; font-size: 11px; margin-bottom: 18px; }
+  .kerja .kiri { width: 190px; flex-shrink: 0; text-align: right; padding-right: 12px; }
+  .kerja .periode { color: #444; }
+  .kerja .firma { font-weight: 700; color: #222; }
+  .kerja .bidang { color: #888; }
+  /* Garis waktu: batang tipis setinggi entri, dengan bulatan tepat di sumbunya.
+     Bulatannya BUKAN karakter teks lagi. Sebelumnya dipakai glyph "&#9679;",
+     dan lebar glyph berbeda-beda antar font sehingga pusatnya meleset dari
+     sumbu garis (terukur 456,5 versus 457,8) dan tingginya ikut line-height.
+     Bentuk CSS bisa ditaruh persis: left -6px dari kotak padding = tepat di
+     tengah border 2px, dan top 3px menyejajarkannya dengan baris jabatan. */
+  .kerja .garis { width: 14px; flex-shrink: 0; position: relative; border-left: 2px solid #F7941D; }
+  .kerja .garis::before { content: ''; position: absolute; left: -6px; top: 3px;
+                          width: 10px; height: 10px; border-radius: 50%;
+                          background: #F7941D; box-shadow: 0 0 0 2px #fff; }
+  .kerja .kanan { flex: 1; padding-left: 6px; }
+  .kerja .jabatan { font-weight: 700; text-decoration: underline; color: #222; margin-bottom: 3px; }
+  .kerja .rinci { width: auto; }
+  .kerja .rinci td { border: none; padding: 0 0 1px; vertical-align: top; }
+  .kerja .rinci td.l { width: 120px; }
+  .kerja .rinci td.p { width: 10px; }
+  .kerja .deskripsi-l { font-weight: 700; margin-top: 3px; }
+  .kerja .deskripsi { padding-left: 14px; line-height: 1.5; }
   .nilai th, .nilai td { border: 1px solid #f2e2c9; padding: 6px 10px; }
   .nilai th { background: #FDF3E4; color: #7a5a13; text-align: left; font-weight: 600; }
   .nilai td.v { text-align: right; width: 150px; }
@@ -98,6 +122,24 @@ $titik = static function (array $nilai, float $skala) use ($hrd): string {
   @media (max-width: 850px) {
     body { padding: 10px; }
     .lembar { width: 100%; }
+  }
+  /* Di bawah 620px, dua kolom riwayat kerja tidak lagi muat: kolom kiri
+     mempertahankan 190px-nya dan menggencet kolom kanan sampai ~90px, sehingga
+     "Reason for Leaving" terpotong jadi "Reas". Jadi ditumpuk: periode dan
+     perusahaan di atas, rincian jabatan di bawah, garis waktu jadi garis tepi
+     satu blok. Tampilan cetak A4 TIDAK terpengaruh - kertasnya selalu lebih
+     lebar dari ambang ini. */
+  @media (max-width: 620px) {
+    .kerja { display: block; border-left: 2px solid #F7941D; padding-left: 12px; position: relative; }
+    /* bulatan penanda ikut pindah ke garis tepi blok, sumbunya tetap sama */
+    .kerja::before { content: ''; position: absolute; left: -6px; top: 3px;
+                     width: 10px; height: 10px; border-radius: 50%;
+                     background: #F7941D; box-shadow: 0 0 0 2px #fff; }
+    .kerja .kiri { width: auto; text-align: left; padding: 0 0 5px; }
+    .kerja .bidang:empty { display: none; }
+    .kerja .garis { display: none; }
+    .kerja .kanan { padding-left: 0; }
+    .kerja .rinci td.l { width: auto; padding-right: 8px; }
   }
   @media print {
     body { background: #fff; padding: 0; }
@@ -121,11 +163,17 @@ $titik = static function (array $nilai, float $skala) use ($hrd): string {
   <div class="isi">
     <table class="data">
       <?php
+        // Usia dihitung dari tanggal lahir, dan tanggal lahir yang menang bila
+        // keduanya ada: angka usia yang tertulis di CV adalah usia kandidat pada
+        // hari CV itu dibuat, bukan hari ini. CV yang dipakai melamar sering
+        // berumur satu-dua tahun, dan lembar ini dibaca sebagai keadaan sekarang.
+        $usia = usia_dari_dob($pribadi['tanggal_lahir'] ?? null) ?? ($pribadi['usia'] ?? '');
+
         $baris = [
             'Full Name'         => $pribadi['nama'] ?? $app['nama'],
             'Current Address'   => $pribadi['alamat'] ?? '',
             'Place, DOB'        => trim(($pribadi['tempat_lahir'] ?? '') . ', ' . ($pribadi['tanggal_lahir'] ?? ''), ', '),
-            'Age'               => $pribadi['usia'] ?? '',
+            'Age'               => $usia,
             'Gender'            => $pribadi['jenis_kelamin'] ?? '',
             'Marital Status'    => $pribadi['status_kawin'] ?? '',
             'Number of Children' => $pribadi['jumlah_anak'] ?? '',
@@ -159,25 +207,40 @@ $titik = static function (array $nilai, float $skala) use ($hrd): string {
         Tidak satu pun posisi di CV ini disertai nama tempat kerja atau rentang waktu.
       </div>
     <?php else: ?>
+      <?php
+        // Tata letak dua kolom mengikuti dokumen BIPROO: periode dan perusahaan
+        // rata kanan di kiri, penanda garis waktu di tengah, rincian jabatan di
+        // kanan. Bidang yang CV-nya tidak menuliskan tetap muncul dengan ":  -",
+        // sama seperti dokumen aslinya, supaya barisnya tidak hilang berpindah.
+        $rincian = [
+            'Reason for Leaving' => 'alasan_keluar',
+            'Last Salary'        => 'gaji_terakhir',
+        ];
+      ?>
       <?php foreach ($bukti['riwayat'] as $r): ?>
         <div class="kerja">
-          <div class="judul"><?= esc($r['jabatan'] ?? '') ?: $kosong ?></div>
-          <div class="meta">
-            <?= esc($r['perusahaan'] ?? '') ?: $kosong ?> &middot; <?= esc($r['periode'] ?? '') ?: $kosong ?>
+          <div class="kiri">
+            <div class="periode"><?= esc($r['periode'] ?? '') ?: '-' ?></div>
+            <div class="firma"><?= esc($r['perusahaan'] ?? '') ?: '-' ?></div>
+            <div class="bidang"><?= esc($r['bidang_usaha'] ?? '') ?: '&nbsp;' ?></div>
           </div>
-          <?php if (! empty($r['deskripsi'])): ?>
-            <div><?= esc($r['deskripsi']) ?></div>
-          <?php endif ?>
-          <?php if (! empty($r['alasan_keluar']) || ! empty($r['gaji_terakhir'])): ?>
-            <div style="color:#777;margin-top:5px">
-              <?php if (! empty($r['alasan_keluar'])): ?>
-                Reason for Leaving: <?= esc($r['alasan_keluar']) ?><br>
-              <?php endif ?>
-              <?php if (! empty($r['gaji_terakhir'])): ?>
-                Last Salary: <?= esc($r['gaji_terakhir']) ?>
-              <?php endif ?>
-            </div>
-          <?php endif ?>
+
+          <div class="garis"></div>
+
+          <div class="kanan">
+            <div class="jabatan"><?= esc($r['jabatan'] ?? '') ?: '-' ?></div>
+            <table class="rinci">
+              <?php foreach ($rincian as $label => $kunci): ?>
+                <tr>
+                  <td class="l"><?= esc($label) ?></td>
+                  <td class="p">:</td>
+                  <td><?= esc($r[$kunci] ?? '') ?: '-' ?></td>
+                </tr>
+              <?php endforeach ?>
+            </table>
+            <div class="deskripsi-l">Description</div>
+            <div class="deskripsi"><?= esc($r['deskripsi'] ?? '') ?: '-' ?></div>
+          </div>
         </div>
       <?php endforeach ?>
     <?php endif ?>
@@ -263,7 +326,7 @@ $titik = static function (array $nilai, float $skala) use ($hrd): string {
       <table class="nilai" style="margin-top:6px">
         <tr>
           <th>Interview Result</th>
-          <td class="v"><b><?= $hasilAkhir !== '' ? esc(L::HASIL[$hasilAkhir] ?? $hasilAkhir) : $kosong ?></b></td>
+          <td class="v"><b><?= $hasilAkhir !== '' ? esc($hasilAkhir) : $kosong ?></b></td>
         </tr>
       </table>
     <?php endif ?>
