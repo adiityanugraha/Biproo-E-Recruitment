@@ -599,19 +599,169 @@ def test_jumlah_pertanyaan_dibatasi_atas_dan_bawah():
 
 
 def test_keluaran_llm_kebanyakan_dipotong():
+    """
+    Dipotong sebanyak yang DIMINTA, bukan sebanyak batas atas.
+
+    Revisi 12 Agustus menetapkan tepat tiga pertanyaan. LLM yang mengembalikan
+    lima puluh tidak boleh membuat recruiter menghadapi lima puluh.
+    """
     app.state.chat_provider = _LLMPertanyaan(
         '{"pertanyaan":[' + ",".join(f'"p{i}"' for i in range(50)) + ']}'
     )
     with TestClient(app) as client:
         r = client.post("/pertanyaan", json=VALID_LOWONGAN)
+        assert len(r.json()["pertanyaan"]) == 3
 
-    assert len(r.json()["pertanyaan"]) == 12
+        r = client.post("/pertanyaan", json={**VALID_LOWONGAN, "jumlah": 12})
+        assert len(r.json()["pertanyaan"]) == 12
 
 
 def test_judul_kosong_ditolak():
     app.state.chat_provider = _LLMPertanyaan('{"pertanyaan":["a"]}')
     with TestClient(app) as client:
         assert client.post("/pertanyaan", json={**VALID_LOWONGAN, "judul": "  "}).status_code == 400
+
+
+# --- pertanyaan dari pengalaman kandidat (revisi 12 Agustus 2026) ---
+#
+# Riwayat nyata, disalin dari CV Reza Rahmansyah di folder unggahan: empat
+# pekerjaan berurutan lengkap dengan periode. Memakai contoh sungguhan bukan
+# kerapian belaka - CV karangan selalu lebih rapi daripada yang sebenarnya
+# masuk, dan uji yang dibangun di atasnya menyembunyikan bentuk yang liar.
+RIWAYAT_REZA = [
+    {"jabatan": "Clerk Distribution Center", "perusahaan": "PT. Indomarco Prismatama",
+     "periode": "2012 - 2015", "deskripsi": "Menginput dan memeriksa data barang masuk dan keluar."},
+    {"jabatan": "Assistant Chief Store", "perusahaan": "PT. Sumber Alfaria Trijaya, Tbk",
+     "periode": "2015 - 2017", "deskripsi": "Mengawasi operasional harian toko dan stock opname."},
+]
+
+
+def test_riwayat_kerja_kandidat_ikut_dikirim_ke_llm():
+    llm = _LLMPertanyaan('{"pertanyaan":["a","b","c"]}')
+    app.state.chat_provider = llm
+    with TestClient(app) as client:
+        client.post("/pertanyaan", json={**VALID_LOWONGAN, "riwayat": RIWAYAT_REZA})
+
+    q = llm.terakhir["question"]
+    assert "RIWAYAT KERJA KANDIDAT" in q
+    assert "Assistant Chief Store di PT. Sumber Alfaria Trijaya, Tbk" in q
+    assert "2012 - 2015" in q
+
+
+def test_sumber_pengalaman_saat_kandidat_punya_riwayat():
+    app.state.chat_provider = _LLMPertanyaan('{"pertanyaan":["a","b","c"]}')
+    with TestClient(app) as client:
+        r = client.post("/pertanyaan", json={**VALID_LOWONGAN, "riwayat": RIWAYAT_REZA})
+
+    assert r.json()["sumber"] == "pengalaman"
+
+
+def test_sumber_posisi_saat_kandidat_tanpa_riwayat():
+    """Fresh graduate. Bukan kegagalan, cuma tidak ada pengalaman untuk digali."""
+    llm = _LLMPertanyaan('{"pertanyaan":["a","b","c"]}')
+    app.state.chat_provider = llm
+    with TestClient(app) as client:
+        r = client.post("/pertanyaan", json=VALID_LOWONGAN)
+
+    assert r.json()["sumber"] == "posisi"
+
+
+def test_ketiadaan_riwayat_dinyatakan_terang_terangan():
+    """
+    Bagian riwayat TIDAK boleh sekadar dihilangkan saat kandidat belum pernah
+    bekerja. Terukur 12 Agustus: dengan bagian itu dihapus, LLM tetap bertanya
+    "di posisi Admin Gudang Anda sebelumnya" kepada kandidat tanpa riwayat
+    kerja, karena yang dibacanya cuma "Pengalaman yang diminta: 1 tahun".
+    Bagian yang absen tidak mengatakan apa-apa; kalimat eksplisit mengatakan.
+    """
+    llm = _LLMPertanyaan('{"pertanyaan":["a","b","c"]}')
+    app.state.chat_provider = llm
+    with TestClient(app) as client:
+        client.post("/pertanyaan", json=VALID_LOWONGAN)
+
+    q = llm.terakhir["question"]
+    assert "RIWAYAT KERJA KANDIDAT: TIDAK ADA" in q
+    assert "belum pernah bekerja" in q
+
+
+def test_entri_riwayat_tanpa_jabatan_dan_perusahaan_dilewati():
+    """
+    Hasil baca CV tidak selalu utuh. Entri yang cuma berisi periode tidak bisa
+    ditanyakan apa pun, dan mengirimnya cuma memancing LLM mengarang.
+    """
+    llm = _LLMPertanyaan('{"pertanyaan":["a","b","c"]}')
+    app.state.chat_provider = llm
+    with TestClient(app) as client:
+        r = client.post("/pertanyaan", json={
+            **VALID_LOWONGAN,
+            "riwayat": [{"jabatan": "", "perusahaan": "", "periode": "2019-2020"}],
+        })
+
+    assert r.json()["sumber"] == "posisi", "riwayat yang tidak terpakai = tidak ada riwayat"
+    assert "2019-2020" not in llm.terakhir["question"]
+
+
+def test_gaji_terakhir_tidak_pernah_sampai_ke_llm():
+    """
+    Hasil baca CV memuat gaji terakhir dan alasan keluar. Keduanya tidak ada
+    urusannya dengan menyusun pertanyaan, dan bidang yang tidak didaftarkan di
+    RiwayatKerja memang tidak akan pernah ikut terkirim.
+    """
+    llm = _LLMPertanyaan('{"pertanyaan":["a","b","c"]}')
+    app.state.chat_provider = llm
+    with TestClient(app) as client:
+        client.post("/pertanyaan", json={**VALID_LOWONGAN, "riwayat": [{
+            "jabatan": "Kasir", "perusahaan": "Toko Maju", "periode": "2020-2022",
+            "gaji_terakhir": "Rp 4.500.000", "alasan_keluar": "Kontrak habis",
+        }]})
+
+    q = llm.terakhir["question"]
+    assert "4.500.000" not in q
+    assert "Kontrak habis" not in q
+
+
+def test_riwayat_panjang_dibatasi():
+    llm = _LLMPertanyaan('{"pertanyaan":["a","b","c"]}')
+    app.state.chat_provider = llm
+    with TestClient(app) as client:
+        client.post("/pertanyaan", json={**VALID_LOWONGAN, "riwayat": [
+            {"jabatan": f"Jabatan{i}", "perusahaan": "PT Contoh"} for i in range(10)
+        ]})
+
+    q = llm.terakhir["question"]
+    assert "Jabatan3" in q
+    assert "Jabatan4" not in q, "lebih dari empat pekerjaan tidak ikut dikirim"
+
+
+def test_aturan_menggali_pengalaman_nyata_ada_di_system_prompt():
+    """Inti revisi 12 Agustus: pertanyaan berangkat dari pengalaman, baru posisi."""
+    llm = _LLMPertanyaan('{"pertanyaan":["a","b","c"]}')
+    app.state.chat_provider = llm
+    with TestClient(app) as client:
+        client.post("/pertanyaan", json=VALID_LOWONGAN)
+
+    s = llm.terakhir["system"].lower()
+    assert "riwayat kerja kandidat" in s
+    # 5W1H: jawaban harus memuat keenamnya
+    for unsur in ("apa", "kapan", "di mana", "siapa", "kenapa", "bagaimana"):
+        assert unsur in s
+
+
+def test_prompt_melarang_mengandaikan_pengalaman_yang_tidak_ada():
+    """
+    Cacat yang terlihat pada percobaan sungguhan, bukan dugaan.
+
+    Tanpa larangan ini, kandidat TANPA riwayat kerja justru ditanyai
+    "ceritakan pengalaman Anda di posisi Admin Gudang sebelumnya" - pertanyaan
+    yang mustahil dijawab, dan kandidat yang menanggung akibatnya.
+    """
+    llm = _LLMPertanyaan('{"pertanyaan":["a","b","c"]}')
+    app.state.chat_provider = llm
+    with TestClient(app) as client:
+        client.post("/pertanyaan", json=VALID_LOWONGAN)
+
+    s = llm.terakhir["system"].lower()
+    assert "jangan mengandaikan kandidat pernah memegang posisi" in s
 
 
 def test_llm_gagal_jadi_502_tanpa_membocorkan_api_key():

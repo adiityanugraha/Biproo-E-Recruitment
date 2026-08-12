@@ -291,31 +291,79 @@ def chat(req: ChatRequest) -> ChatReply:
     return ChatReply(answer=answer)
 
 
-# --- Pertanyaan interview per lowongan (arahan atasan 4 Agustus 2026) ---
+# --- Pertanyaan interview (arahan atasan 4 Agustus 2026, direvisi 12 Agustus) ---
 # Sinkron seperti /chat: recruiter menunggu hasilnya di layar.
 #
-# Dibuat PER LOWONGAN, bukan per kandidat. Tier gratis cuma memberi 20 panggilan
-# generateContent per hari dan screening CV sudah memakai 1-2 per CV; per
-# kandidat akan menghabiskannya dalam sehari. CI4 menyimpan hasilnya di
-# jobs.pertanyaan_json dan tidak memanggil ulang kecuali diminta recruiter.
+# Semula dibuat PER LOWONGAN demi kuota: tier gratis cuma memberi 20 panggilan
+# generateContent per hari dan screening CV sudah memakai 1-2 per CV. Revisi 12
+# Agustus meminta pertanyaan disusun dari pengalaman kandidat sendiri, jadi
+# mau tidak mau per KANDIDAT. Kuotanya memang jadi lebih sempit (sekitar empat
+# kandidat sehari); yang menahan pemborosan sekarang bukan lagi bentuk endpoint
+# ini, melainkan CI4 yang menyimpan hasilnya di applications.pertanyaan_json dan
+# tidak memanggil ulang kecuali recruiter meminta.
+#
+# Endpoint ini tetap melayani pemakaian lama tanpa riwayat kandidat (bank soal
+# per lowongan), yang kini berperan sebagai cadangan saat kuota habis.
 
 MAKS_PERTANYAAN = 12
 
+# Tepat tiga: satu menggali pengalaman nyata, satu berupa kasus, satu menguji
+# kesiapan posisi. Wawancara 30 menit tidak muat lebih dari itu kalau tiap
+# jawaban memang digali sampai dalam.
+JUMLAH_PERTANYAAN = 3
+
+# Riwayat kerja yang ikut dikirim dibatasi. Bukan cuma soal token: daftar
+# panjang menenggelamkan pekerjaan yang paling relevan di antara pekerjaan
+# sepuluh tahun lalu, dan pertanyaannya jadi menyasar yang tidak penting.
+MAKS_RIWAYAT = 4
+MAKS_PANJANG_DESKRIPSI = 300
+
+SUMBER_PENGALAMAN = "pengalaman"
+SUMBER_POSISI = "posisi"
+
 SYSTEM_PERTANYAAN = (
     "Kamu perekrut senior di perusahaan retail gadget Indonesia. Susun daftar "
-    "pertanyaan wawancara untuk SATU posisi, berdasarkan uraian lowongan yang "
-    "diberikan.\n\n"
+    "pertanyaan wawancara untuk SATU kandidat pada SATU posisi.\n\n"
     "ATURAN:\n"
-    "1. Pertanyaan harus SPESIFIK untuk posisi itu, bukan pertanyaan umum yang "
-    'cocok untuk semua pekerjaan ("Apa kelebihan Anda?" dilarang).\n'
-    "2. Gali pengalaman nyata dan cara kerja, bukan definisi. Utamakan bentuk "
-    '"Ceritakan saat Anda ..." dan "Bagaimana Anda menangani ...".\n'
-    "3. Bahasa Indonesia, sopan, satu kalimat per pertanyaan.\n"
-    "4. JANGAN menanyakan usia, agama, suku, status pernikahan, rencana punya "
+    "1. Pertanyaan harus SPESIFIK, bukan pertanyaan umum yang cocok untuk semua "
+    'orang ("Apa kelebihan Anda?" dilarang).\n'
+    "2. Bila RIWAYAT KERJA KANDIDAT diberikan, pertanyaan pertama WAJIB menggali "
+    "salah satu pekerjaan nyata di riwayat itu dan menyebut jabatan atau nama "
+    "perusahaannya.\n"
+    "3. Bila riwayat kerjanya TIDAK diberikan, susun seluruh pertanyaan dari "
+    "uraian lowongan, dan JANGAN mengandaikan kandidat pernah memegang posisi "
+    'itu. Bentuk seperti "di posisi X Anda sebelumnya" dilarang; kandidat tanpa '
+    "riwayat kerja tidak bisa menjawabnya, dan pertanyaan yang mustahil dijawab "
+    "menghukum kandidat atas kesalahan penyusunnya.\n"
+    "4. Tiap pertanyaan harus menuntut jawaban bercerita, bukan ya/tidak, dan "
+    "memancing kandidat menjelaskan situasinya (apa, kapan, di mana), perannya "
+    "sendiri (siapa), alasan tindakannya (kenapa), serta langkah yang ditempuh "
+    "(bagaimana).\n"
+    "5. Susunannya berurutan: pertanyaan pertama menggali pengalaman nyata, "
+    "kedua berupa kasus yang mungkin terjadi di posisi yang dilamar, ketiga "
+    "menguji kesiapan kandidat untuk posisi itu.\n"
+    "6. Bahasa Indonesia, sopan, satu kalimat per pertanyaan.\n"
+    "7. JANGAN menanyakan usia, agama, suku, status pernikahan, rencana punya "
     "anak, kondisi kesehatan, atau hal pribadi lain yang tidak berkaitan dengan "
     "pekerjaan. Ini larangan keras.\n"
-    "5. Jawab HANYA JSON: {\"pertanyaan\": [\"...\", \"...\"]}"
+    "8. Jawab HANYA JSON: {\"pertanyaan\": [\"...\", \"...\"]}"
 )
+
+
+class RiwayatKerja(BaseModel):
+    """
+    Satu baris riwayat kerja kandidat dari hasil baca CV.
+
+    Bidangnya DIDAFTAR satu per satu, bukan diterima sebagai dict apa adanya,
+    dan itu penjaganya: hasil baca CV juga memuat gaji_terakhir dan alasan
+    keluar. Keduanya tidak ada urusannya dengan menyusun pertanyaan, dan bidang
+    yang tidak disebut di sini tidak akan pernah sampai ke penyedia LLM.
+    """
+
+    jabatan: str = ""
+    perusahaan: str = ""
+    periode: str = ""
+    deskripsi: str = ""
 
 
 class PertanyaanRequest(BaseModel):
@@ -324,11 +372,34 @@ class PertanyaanRequest(BaseModel):
     pendidikan: str = ""
     pengalaman: str = ""
     deskripsi: str = ""
-    jumlah: int = 8
+    jumlah: int = JUMLAH_PERTANYAAN
+    # Riwayat kerja kandidat. Kosong = pertanyaan disusun dari lowongan saja,
+    # yang juga terjadi pada kandidat fresh graduate.
+    riwayat: list[RiwayatKerja] = []
 
 
 class PertanyaanReply(BaseModel):
     pertanyaan: list[str]
+    # 'pengalaman' | 'posisi' - dari mana pertanyaannya disusun. Ditentukan DI
+    # SINI dari ada tidaknya riwayat, bukan ditanyakan ke LLM: ini fakta tentang
+    # masukan, bukan penilaian, dan recruiter berhak tahu tanpa harus percaya
+    # pada laporan model.
+    sumber: str = SUMBER_POSISI
+
+
+def _blok_riwayat(riwayat: list[RiwayatKerja]) -> str:
+    """Riwayat kerja jadi daftar ringkas untuk prompt. '' bila tak satu pun layak."""
+    baris = []
+    for r in riwayat[:MAKS_RIWAYAT]:
+        judul = " di ".join(x for x in (r.jabatan.strip(), r.perusahaan.strip()) if x)
+        if not judul:
+            continue   # entri tanpa jabatan DAN tanpa perusahaan tidak bisa ditanyakan
+        periode = r.periode.strip()
+        teks = f"- {judul}" + (f" ({periode})" if periode else "")
+        deskripsi = r.deskripsi.strip()[:MAKS_PANJANG_DESKRIPSI]
+        baris.append(f"{teks}: {deskripsi}" if deskripsi else teks)
+
+    return "\n".join(baris)
 
 
 @app.post("/pertanyaan", response_model=PertanyaanReply)
@@ -336,15 +407,34 @@ def pertanyaan(req: PertanyaanRequest) -> PertanyaanReply:
     if not req.judul.strip():
         raise HTTPException(400, "judul lowongan kosong")
 
-    jumlah = max(3, min(MAKS_PERTANYAAN, req.jumlah))
+    jumlah = max(JUMLAH_PERTANYAAN, min(MAKS_PERTANYAAN, req.jumlah))
+    blok = _blok_riwayat(req.riwayat)
+    sumber = SUMBER_PENGALAMAN if blok else SUMBER_POSISI
+
     uraian = (
         f"Posisi: {req.judul}\n"
         f"Keahlian yang dicari: {req.skill}\n"
         f"Pendidikan minimal: {req.pendidikan}\n"
         f"Pengalaman yang diminta: {req.pengalaman}\n"
-        f"Uraian pekerjaan: {req.deskripsi}\n\n"
-        f"Buat tepat {jumlah} pertanyaan."
+        f"Uraian pekerjaan: {req.deskripsi}\n"
     )
+    # Ketiadaan riwayat dinyatakan TERANG-TERANGAN, bukan dengan menghilangkan
+    # bagiannya. Percobaan sungguhan 12 Agustus: dengan bagian riwayat sekadar
+    # dihapus, LLM tetap bertanya "di posisi Admin Gudang Anda sebelumnya" pada
+    # kandidat tanpa riwayat kerja - larangan di aturan sistem tidak menolongnya.
+    # Wajar: yang dibacanya hanya "Pengalaman yang diminta: 1 tahun", dan bagian
+    # yang absen tidak mengatakan apa-apa. Kalimat eksplisit di sini menang atas
+    # aturan mana pun di prompt sistem.
+    if blok:
+        uraian += f"\nRIWAYAT KERJA KANDIDAT:\n{blok}\n"
+    else:
+        uraian += (
+            "\nRIWAYAT KERJA KANDIDAT: TIDAK ADA. CV kandidat tidak mencantumkan "
+            "satu pun pekerjaan, jadi anggap ia belum pernah bekerja. Pertanyaan "
+            "TIDAK BOLEH mengandaikan ia punya pengalaman kerja atau pernah "
+            "memegang posisi ini.\n"
+        )
+    uraian += f"\nBuat tepat {jumlah} pertanyaan."
 
     provider = getattr(app.state, "chat_provider", None) or get_chat_provider()
     try:
@@ -363,7 +453,7 @@ def pertanyaan(req: PertanyaanRequest) -> PertanyaanReply:
     if not bersih:
         raise HTTPException(502, "LLM tidak menghasilkan pertanyaan")
 
-    return PertanyaanReply(pertanyaan=bersih[:MAKS_PERTANYAAN])
+    return PertanyaanReply(pertanyaan=bersih[:jumlah], sumber=sumber)
 
 
 @app.get("/health")
