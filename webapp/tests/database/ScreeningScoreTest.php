@@ -5,6 +5,8 @@ use App\Libraries\StageLogger;
 use App\Models\ApplicationModel;
 use App\Models\CandidateModel;
 use App\Models\InterviewModel;
+use App\Models\InterviewPenilaianModel;
+use App\Models\InterviewTranskripModel;
 use App\Models\JobModel;
 use App\Models\ScreeningResultModel;
 use App\Models\StageHistoryModel;
@@ -36,16 +38,41 @@ final class ScreeningScoreTest extends CIUnitTestCase
     private array $sesiRec = ['recruiter_id' => 1, 'recruiter_nama' => 'Irpan'];
 
     /**
-     * Lembar penilaian penuh dengan satu nilai seragam 1-5.
+     * Lembar interview terisi lewat jalur yang sebenarnya (revisi 12 Agustus 2026).
      *
-     * Menggantikan slider 0-100 yang dipakai uji ini sebelum 12 Agustus 2026.
-     * Skornya: 1 -> 0, 2 -> 25, 3 -> 50, 4 -> 75, 5 -> 100.
+     * Menggantikan POST ke recruiter/interview/putus, form sembilan kompetensi
+     * yang diisi recruiter dari ingatan dan sudah dihapus. Sekarang tiga
+     * kompetensi mata manusia ditulis saat mengunggah rekaman dan enam sisanya
+     * dinilai dari transkrip; callback ai-service itulah yang menutup Gate 2.
      *
-     * @return array<string, mixed>
+     * Skornya sama persis dengan yang lama pada nilai seragam, jadi ambang yang
+     * diuji berkas ini tidak bergeser: 1 -> 0, 3 -> 50, 4 -> 75, 5 -> 100.
      */
-    private function lembar(int $n): array
+    private function nilaiLewatTranskrip(int $aid, int $n): void
     {
-        return ['nilai' => array_fill(0, count(L::HRD), $n)];
+        $model = new InterviewPenilaianModel();
+        foreach (L::MATA_MANUSIA as $kompetensi) {
+            $model->insert([
+                'application_id' => $aid, 'kompetensi' => $kompetensi, 'kategori' => L::KAT_HRD,
+                'sumber' => L::DARI_RECRUITER, 'bobot' => 1, 'tingkat' => (string) $n, 'catatan' => '',
+            ]);
+        }
+        (new InterviewTranskripModel())->insert([
+            'application_id' => $aid, 'sumber' => 'unggahan', 'status' => 'proses',
+            'berkas' => 'uploads/rekaman/x.wav',
+        ]);
+
+        config('AiService')->sharedToken = 'token-uji';
+        $this->withHeaders(['X-Token' => 'token-uji'])->withBodyFormat('json')
+            ->post('interview/callback', [
+                'application_id' => $aid,
+                'status'         => 'selesai',
+                'teks'           => 'Pewawancara: Halo. Kandidat: Saya cek ulang stoknya.',
+                'penilaian'      => array_map(
+                    static fn (string $k): array => ['kompetensi' => $k, 'nilai' => $n, 'alasan' => 'Mengutip transkrip.'],
+                    L::dariTranskrip()
+                ),
+            ]);
     }
 
     /** @return array{0:int,1:int} [candidateId, applicationId] */
@@ -151,7 +178,7 @@ final class ScreeningScoreTest extends CIUnitTestCase
         $this->siapDiputus($aid, 'passed');
 
         // gate2 = 0.4*0.90 (CV) + 0.6*0.75 (interview, semua Above Average) = 0.81 -> LOLOS
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(4));
+        $this->nilaiLewatTranskrip($aid, 4);
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'passed']);
         $this->assertStringContainsString('Skor akhir 81/100', $this->skorAkhir($aid));
@@ -166,7 +193,7 @@ final class ScreeningScoreTest extends CIUnitTestCase
 
         // gate2 = 0.4*0.30 + 0.6*0.75 = 0.57 < 0.7 -> TIDAK LOLOS
         // skor interview IDENTIK dengan test di atas; yang membedakan hanya skor CV
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(4));
+        $this->nilaiLewatTranskrip($aid, 4);
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'failed']);
         $this->assertStringContainsString('Skor akhir 57/100', $this->skorAkhir($aid));
@@ -186,7 +213,7 @@ final class ScreeningScoreTest extends CIUnitTestCase
         [, $aid] = $this->fixture();   // tanpa baris screening_results
         $this->siapDiputus($aid, 'passed');
 
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(3));
+        $this->nilaiLewatTranskrip($aid, 3);
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'flagged']);
         $catatan = $this->skorAkhir($aid);
@@ -201,7 +228,7 @@ final class ScreeningScoreTest extends CIUnitTestCase
         [, $aid] = $this->fixture();
         $this->siapDiputus($aid, 'passed');
 
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(3));
+        $this->nilaiLewatTranskrip($aid, 3);
 
         $this->dontSeeInDatabase('email_queue', ['template' => 'hasil_gate']);
     }
@@ -210,7 +237,7 @@ final class ScreeningScoreTest extends CIUnitTestCase
     {
         [, $aid] = $this->fixture();
         $this->siapDiputus($aid, 'passed');
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(3));
+        $this->nilaiLewatTranskrip($aid, 3);
 
         $this->withSession($this->sesiRec)->post("recruiter/gate2/{$aid}", ['keputusan' => 'lolos']);
 
@@ -223,7 +250,7 @@ final class ScreeningScoreTest extends CIUnitTestCase
     {
         [, $aid] = $this->fixture();
         $this->siapDiputus($aid, 'passed');
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(3));
+        $this->nilaiLewatTranskrip($aid, 3);
 
         $this->withSession($this->sesiRec)->post("recruiter/gate2/{$aid}", ['keputusan' => 'gagal']);
 
@@ -239,7 +266,7 @@ final class ScreeningScoreTest extends CIUnitTestCase
     {
         [, $aid] = $this->fixture();
         $this->siapDiputus($aid, 'passed');
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(3));
+        $this->nilaiLewatTranskrip($aid, 3);
         $this->withSession($this->sesiRec)->post("recruiter/gate2/{$aid}", ['keputusan' => 'lolos']);
 
         $this->withSession($this->sesiRec)->post("recruiter/gate2/{$aid}", ['keputusan' => 'gagal']);
@@ -253,15 +280,17 @@ final class ScreeningScoreTest extends CIUnitTestCase
     {
         [, $aid] = $this->fixture();
         $this->siapDiputus($aid, 'passed');
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(3));
+        $this->nilaiLewatTranskrip($aid, 3);
 
         $html = (string) $this->withSession($this->sesiRec)
             ->get('recruiter/tahap/interview_online?status=completed')->getBody();
 
         $this->assertStringContainsString('recruiter/gate2/' . $aid, $html);
         $this->assertStringContainsString('Loloskan', $html);
-        $this->assertStringContainsString('tanpa skor CV', $html, 'alasannya harus terbaca, bukan tombol yang muncul entah kenapa');
-        // tombol menilai sudah tidak relevan: penilaiannya sudah tersimpan
+        // Penandanya harus terbaca, bukan tombol yang muncul entah kenapa.
+        // Sejak Gate 2 menutup sendiri, DUA tombol ini justru yang tidak biasa:
+        // kandidat yang datanya lengkap langsung tampil Lolos / Tidak Lolos.
+        $this->assertStringContainsString('perlu keputusan', $html);
         $this->assertStringNotContainsString('Nilai Interview', $html);
     }
 
@@ -272,7 +301,7 @@ final class ScreeningScoreTest extends CIUnitTestCase
         $this->screening($aid, 0.90);
         $this->siapDiputus($aid, 'passed');
 
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(4));
+        $this->nilaiLewatTranskrip($aid, 4);
 
         $this->dontSeeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'flagged']);
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'passed']);

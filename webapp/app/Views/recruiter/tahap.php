@@ -152,24 +152,23 @@ foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
                   <span style="color:#1d6b3d;font-weight:700">✅ Lolos</span>
                 <?php elseif ($a['gate2'] === 'failed'): ?>
                   <span style="color:#a12734;font-weight:700">❌ Tidak Lolos</span>
-                <?php elseif ($a['gate2'] === 'flagged'): ?>
-                  <?php // Skor CV tidak tersedia, jadi sistem tidak memutus. Penilaian
-                        // interviewnya sudah tersimpan dan bisa dilihat lewat View;
-                        // yang tersisa keputusan manusia. ?>
+                <?php else: ?>
+                  <?php // Belum diputus. Dua sebab, keduanya berarti datanya kurang:
+                        // rekamannya belum diunggah (gate2 null), atau sudah tapi
+                        // transkripsi/skor CV-nya tidak menghasilkan apa-apa (flagged).
+                        //
+                        // Yang normal BUKAN dua tombol ini: kandidat yang rekamannya
+                        // sudah ditranskripsi diputuskan sistem sendiri dan langsung
+                        // muncul sebagai Lolos / Tidak Lolos. Dua tombol ini jalan
+                        // keluar, dan sengaja terlihat begitu. ?>
                   <form method="post" action="<?= site_url('recruiter/gate2/' . $a['id']) ?>">
                     <?= csrf_field() ?>
-                    <span class="tanpa-cv" title="Skor CV tidak tersedia, keputusan diserahkan ke recruiter">tanpa skor CV</span>
+                    <span class="tanpa-cv" title="Sistem tidak memutus karena datanya kurang. Buka Ruang Interview untuk melihat sebabnya.">perlu keputusan</span>
                     <button name="keputusan" value="lolos" class="b-lolos"
                             onclick="return confirm('Loloskan kandidat ini? Kandidat akan dikabari via email.')">Loloskan</button>
                     <button name="keputusan" value="gagal" class="b-gagal"
                             onclick="return confirm('Tidak meloloskan kandidat ini? Kandidat akan dikabari via email.')">Tidak Lolos</button>
                   </form>
-                <?php else: ?>
-                  <?php // Slider di dalam sel tabel diganti halaman penilaian: 15 butir
-                        // rubrik tidak muat di sini, dan angka geseran itu tidak punya
-                        // dasar apa pun padahal ikut menentukan Gate 2. ?>
-                  <a href="<?= site_url('recruiter/nilai/' . $a['id']) ?>">
-                    <button class="b-aksi">Nilai Interview</button></a>
                 <?php endif ?>
               <?php endif ?>
             </div>

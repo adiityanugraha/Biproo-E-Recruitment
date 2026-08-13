@@ -5,6 +5,8 @@ use App\Libraries\StageLogger;
 use App\Models\ApplicationModel;
 use App\Models\CandidateModel;
 use App\Models\InterviewModel;
+use App\Models\InterviewPenilaianModel;
+use App\Models\InterviewTranskripModel;
 use App\Models\JobModel;
 use App\Models\ScreeningResultModel;
 use CodeIgniter\Test\CIUnitTestCase;
@@ -53,17 +55,50 @@ final class LembarProfilTest extends CIUnitTestCase
         return $aid;
     }
 
-    /** Isi lembar penilaian lewat HTTP, seperti recruiter menekan Simpan. */
+    /**
+     * Lembar penilaian terisi lewat jalur yang sebenarnya (revisi 12 Agustus 2026).
+     *
+     * Dua sumber, seperti di produksi: tiga kompetensi mata manusia beserta
+     * narasinya ditulis recruiter saat mengunggah rekaman, sisanya dinilai dari
+     * transkrip dan mendarat lewat callback ai-service. Callback itu juga yang
+     * menutup Gate 2, jadi memanggilnya di sini sekaligus menyiapkan keadaan
+     * yang dibaca baris Interview Result di lembar profil.
+     */
     private function nilai(int $aid, int $n = 4): void
     {
         (new InterviewModel())->insert([
             'application_id' => $aid, 'status' => 'approved',
             'scheduled_at' => '2020-01-01 10:00:00', 'meeting_id' => '1', 'join_url' => 'https://zoom.us/j/1',
         ]);
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", [
-            'nilai'  => array_fill(0, count(L::HRD), $n),
-            'narasi' => ['strengths' => 'Ramah dan cekatan'],
+
+        $model = new InterviewPenilaianModel();
+        foreach (L::MATA_MANUSIA as $kompetensi) {
+            $model->insert([
+                'application_id' => $aid, 'kompetensi' => $kompetensi, 'kategori' => L::KAT_HRD,
+                'sumber' => L::DARI_RECRUITER, 'bobot' => 1, 'tingkat' => (string) $n, 'catatan' => '',
+            ]);
+        }
+        $model->insert([
+            'application_id' => $aid, 'kompetensi' => 'strengths', 'kategori' => L::KAT_NARASI,
+            'sumber' => L::DARI_RECRUITER, 'bobot' => 0, 'tingkat' => '', 'catatan' => 'Ramah dan cekatan',
         ]);
+
+        (new InterviewTranskripModel())->insert([
+            'application_id' => $aid, 'sumber' => 'unggahan', 'status' => 'proses',
+            'berkas' => 'uploads/rekaman/x.wav',
+        ]);
+
+        config('AiService')->sharedToken = 'token-uji';
+        $this->withHeaders(['X-Token' => 'token-uji'])->withBodyFormat('json')
+            ->post('interview/callback', [
+                'application_id' => $aid,
+                'status'         => 'selesai',
+                'teks'           => 'Pewawancara: Halo. Kandidat: Saya cek ulang stoknya.',
+                'penilaian'      => array_map(
+                    static fn (string $k): array => ['kompetensi' => $k, 'nilai' => $n, 'alasan' => 'Mengutip transkrip.'],
+                    L::dariTranskrip()
+                ),
+            ]);
     }
 
     /**

@@ -127,20 +127,33 @@ Skor interview 83/100 (dari 12 kompetensi), terlemah: Ketelitian.
 Skor CV tidak tersedia, keputusan diserahkan ke recruiter
 ```
 
-Email ke kandidat baru terkirim setelah recruiter benar-benar memutuskan, bukan
-saat penilaian interview disimpan.
+Email ke kandidat baru terkirim setelah keputusan Gate 2 benar-benar dibuat,
+bukan saat penilaian interview disimpan.
 
-## Alur keputusan
+## Alur keputusan (revisi 12 Agustus 2026)
 
-Recruiter mengisi skor interview lalu menekan putusan; `Recruiter::putusInterview`
-menulis dua baris sekaligus:
+Recruiter tidak lagi mengetik sembilan nilai dari ingatan. Yang ia lakukan:
+mewawancarai lewat Zoom, mengunggah rekamannya, dan menilai TIGA kompetensi yang
+hanya bisa dilihat mata (`LembarPenilaian::MATA_MANUSIA`). Enam sisanya dinilai
+dari transkrip, dan `Interview::callback` itulah yang menutup Gate 2 - tanpa ada
+yang menekan apa pun.
+
+Ketiga nilai recruiter dikirim dalam form yang SAMA dengan rekamannya. Kalau
+terpisah, callback bisa tiba lebih dulu dan kandidat diputuskan dari lembar yang
+belum lengkap.
 
 | Kejadian | Baris `candidate_stage_history` | Email |
 |---|---|---|
-| Skor interview masuk | `interview_online / passed / recruiter:<nama>` | tidak ada |
-| Putusan gate, skor CV ada | `gate_2 / passed atau failed / recruiter:<nama>` | `hasil_gate` |
-| Putusan gate, skor CV tidak ada | `gate_2 / flagged / recruiter:<nama>` | tidak ada |
+| Penilaian transkrip masuk | `interview_online / passed / system:transkrip` | tidak ada |
+| Skor CV ada, transkrip berhasil | `gate_2 / passed atau failed / system:transkrip` | `hasil_gate` |
+| Transkripsi gagal | `gate_2 / flagged / system:transkrip` | tidak ada |
+| Skor CV tidak ada | `gate_2 / flagged / system:transkrip` | tidak ada |
 | Keputusan manual menyusul | `gate_2 / passed atau failed / recruiter:<nama>` | `hasil_gate` |
+
+Baris `flagged` berarti DATANYA kurang, bukan kandidatnya buruk. Recruiter
+memutuskan lewat tombol Loloskan / Tidak Lolos (`Recruiter::putusGate2`), satu
+satunya jalan keluar manusia yang tersisa; sebab manualnya diturunkan dari
+keadaan dan ikut tercatat di `note`.
 
 Kedua hasil Gate 2 mengirim email, lolos maupun tidak (`StageLogger::EMAIL_MAP`).
 Setelah `gate_2 / passed`, kandidat masuk `berkas_kontrak / entered`.

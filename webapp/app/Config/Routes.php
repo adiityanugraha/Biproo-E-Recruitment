@@ -40,11 +40,10 @@ $routes->group('recruiter', ['filter' => 'recruiterauth'], static function ($rou
     $routes->get('ruang/(:num)', 'Recruiter::ruangInterview/$1');
     $routes->post('ruang/(:num)/pertanyaan', 'Recruiter::simpanPertanyaan/$1');
     $routes->post('ruang/(:num)/rekaman', 'Recruiter::unggahRekaman/$1');
-    $routes->get('nilai/(:num)', 'Recruiter::formNilai/$1');
     // lembar profil kandidat 3 halaman, dibuka di tab baru untuk dicetak
     $routes->get('profil/(:num)', 'Recruiter::profil/$1');
-    $routes->post('interview/putus/(:num)', 'Recruiter::putusInterview/$1');
-    // keputusan Gate 2 manual, dipakai saat skor CV tidak tersedia
+    // Keputusan Gate 2 manual - satu-satunya jalan keluar manusia sejak Gate 2
+    // menutup sendiri dari transkrip. Dipakai saat datanya memang kurang.
     $routes->post('gate2/(:num)', 'Recruiter::putusGate2/$1');
     $routes->match(['GET', 'POST'], 'review/(:num)', 'Recruiter::review/$1');
     $routes->match(['GET', 'POST'], 'pertanyaan/(:num)', 'Recruiter::pertanyaan/$1');

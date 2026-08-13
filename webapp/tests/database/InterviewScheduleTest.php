@@ -9,6 +9,8 @@ use App\Models\ApplicationModel;
 use App\Models\CandidateModel;
 use App\Models\EmailQueueModel;
 use App\Models\InterviewModel;
+use App\Models\InterviewPenilaianModel;
+use App\Models\InterviewTranskripModel;
 use App\Models\JobModel;
 use App\Models\ScreeningResultModel;
 use CodeIgniter\Config\Services;
@@ -39,16 +41,37 @@ final class InterviewScheduleTest extends CIUnitTestCase
     private array $sesiRec = ['recruiter_id' => 1, 'recruiter_nama' => 'Irpan'];
 
     /**
-     * Lembar penilaian penuh dengan satu nilai seragam 1-5.
+     * Lembar interview terisi lewat jalur yang sebenarnya (revisi 12 Agustus 2026).
      *
-     * Menggantikan slider 0-100 yang dipakai uji ini sebelum 12 Agustus 2026.
-     * Skornya: 1 -> 0, 2 -> 25, 3 -> 50, 4 -> 75, 5 -> 100.
-     *
-     * @return array<string, mixed>
+     * Menggantikan POST ke recruiter/interview/putus, form sembilan kompetensi
+     * yang diisi recruiter dari ingatan dan sudah dihapus. Skor akhirnya sama
+     * persis pada nilai seragam, jadi ambang yang diuji di sini tidak bergeser.
      */
-    private function lembar(int $n): array
+    private function nilaiLewatTranskrip(int $aid, int $n): void
     {
-        return ['nilai' => array_fill(0, count(L::HRD), $n)];
+        $model = new InterviewPenilaianModel();
+        foreach (L::MATA_MANUSIA as $kompetensi) {
+            $model->insert([
+                'application_id' => $aid, 'kompetensi' => $kompetensi, 'kategori' => L::KAT_HRD,
+                'sumber' => L::DARI_RECRUITER, 'bobot' => 1, 'tingkat' => (string) $n, 'catatan' => '',
+            ]);
+        }
+        (new InterviewTranskripModel())->insert([
+            'application_id' => $aid, 'sumber' => 'unggahan', 'status' => 'proses',
+            'berkas' => 'uploads/rekaman/x.wav',
+        ]);
+
+        config('AiService')->sharedToken = 'token-uji';
+        $this->withHeaders(['X-Token' => 'token-uji'])->withBodyFormat('json')
+            ->post('interview/callback', [
+                'application_id' => $aid,
+                'status'         => 'selesai',
+                'teks'           => 'Pewawancara: Halo. Kandidat: Saya cek ulang stoknya.',
+                'penilaian'      => array_map(
+                    static fn (string $k): array => ['kompetensi' => $k, 'nilai' => $n, 'alasan' => 'Mengutip transkrip.'],
+                    L::dariTranskrip()
+                ),
+            ]);
     }
 
     /**
@@ -252,7 +275,7 @@ final class InterviewScheduleTest extends CIUnitTestCase
         $this->skorCv($aid, 0.80);
 
         // 0.4*0.80 + 0.6*0.90 = 0.86 -> di atas ambang -> LOLOS otomatis
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(5));
+        $this->nilaiLewatTranskrip($aid, 5);
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'passed']);
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'berkas_kontrak', 'status' => 'entered']);
@@ -266,7 +289,7 @@ final class InterviewScheduleTest extends CIUnitTestCase
         $this->skorCv($aid, 0.80);
 
         // 0.4*0.80 + 0.6*0.20 = 0.44 -> di bawah ambang -> TIDAK LOLOS otomatis
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(2));
+        $this->nilaiLewatTranskrip($aid, 2);
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'failed']);
         $this->dontSeeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'berkas_kontrak']);
@@ -583,12 +606,12 @@ final class InterviewScheduleTest extends CIUnitTestCase
     public function testKeputusanAkhirMenyalaKeStatusLamaranSetelahSkorInterviewKeluar(): void
     {
         [$cid, $aid] = $this->fixture('passed');
-        // jadwal yang sudah jelas lewat: putusInterview membandingkan lewat SQL
+        // jadwal yang sudah jelas lewat: tab Completed membandingkan lewat SQL
         // CURRENT_TIMESTAMP, dan di SQLite (test) itu UTC sementara aplikasi WIB
         $this->pastApprovedInterview($aid);
 
         // recruiter memasukkan skor interview -> Keputusan Akhir terbuka
-        $this->withSession($this->sesiRec)->post("recruiter/interview/putus/{$aid}", $this->lembar(4));
+        $this->nilaiLewatTranskrip($aid, 4);
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'interview_online']);
 
         $langkah = $this->langkah($this->stepperDashboard($cid, $aid), 'Keputusan Akhir');

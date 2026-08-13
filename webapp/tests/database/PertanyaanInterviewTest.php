@@ -181,7 +181,12 @@ final class PertanyaanInterviewTest extends CIUnitTestCase
 
         $this->assertStringNotContainsString('Bagas', $progress);
         $this->assertStringContainsString('Bagas', $completed);
-        $this->assertStringContainsString('Nilai Interview', $completed);
+        // Tombol "Nilai Interview" hilang bersama form sembilan kompetensi yang
+        // diisi dari ingatan (revisi 12 Agustus 2026). Penggantinya Ruang
+        // Interview: di situ rekamannya diunggah, dan Gate 2 menutup sendiri
+        // setelah transkripnya dinilai.
+        $this->assertStringContainsString('Ruang Interview', $completed);
+        $this->assertStringNotContainsString('Nilai Interview', $completed);
     }
 
     /**

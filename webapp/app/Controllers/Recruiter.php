@@ -846,7 +846,7 @@ class Recruiter extends BaseController
             'berkas'         => 'uploads/rekaman/' . $nama,
         ]);
 
-        $this->simpanMataManusia($appId, $nilai);
+        $this->simpanMataManusia($appId, $nilai, (array) ($this->request->getPost('narasi') ?? []));
 
         // Rekaman TETAP tersimpan walau pengirimannya gagal, dan barisnya
         // ditandai supaya bisa dicoba ulang. Wawancara sudah terjadi; kehilangan
@@ -881,186 +881,64 @@ class Recruiter extends BaseController
         return $out;
     }
 
-    /** @param array<string, int> $nilai */
-    private function simpanMataManusia(int $appId, array $nilai): void
+    /**
+     * @param array<string, int>   $nilai  kompetensi mata manusia
+     * @param array<string, mixed> $narasi kotak isian bebas lembar BIPROO
+     */
+    private function simpanMataManusia(int $appId, array $nilai, array $narasi = []): void
     {
+        $baris = [];
+        foreach ($nilai as $kompetensi => $n) {
+            $baris[] = [
+                'kompetensi' => $kompetensi,
+                'kategori'   => LembarPenilaian::KAT_HRD,
+                'bobot'      => 1,
+                'tingkat'    => (string) $n,
+                'catatan'    => '',
+            ];
+        }
+
+        // Kotak narasi lembar BIPROO (Strengths, Weaknesses, Notes, Remarks).
+        // Ikut di form yang sama, bukan halaman tersendiri: keempatnya ditulis
+        // dari ingatan wawancara, dan ingatan itu paling utuh persis sekarang.
+        // Bobot 0 - narasi tidak pernah ikut dihitung jadi skor.
+        foreach (LembarPenilaian::NARASI as $kunci => $label) {
+            $teks = trim(preg_replace('/\s+/u', ' ', (string) ($narasi[$kunci] ?? '')));
+            if ($teks === '') {
+                continue;
+            }
+            $baris[] = [
+                'kompetensi' => $kunci,
+                'kategori'   => LembarPenilaian::KAT_NARASI,
+                'bobot'      => 0,
+                'tingkat'    => '',
+                'catatan'    => mb_substr($teks, 0, LembarPenilaian::MAKS_CATATAN),
+            ];
+        }
+
         $db = db_connect();
         $db->transException(true)->transStart();
         $model = new InterviewPenilaianModel();
-        foreach ($nilai as $kompetensi => $n) {
-            $model->insert([
-                'application_id' => $appId,
-                'kompetensi'     => $kompetensi,
-                'kategori'       => LembarPenilaian::KAT_HRD,
-                'sumber'         => LembarPenilaian::DARI_RECRUITER,
-                'bobot'          => 1,
-                'tingkat'        => (string) $n,
-                'catatan'        => '',
-            ]);
+        foreach ($baris as $r) {
+            $model->insert($r + ['application_id' => $appId, 'sumber' => LembarPenilaian::DARI_RECRUITER]);
         }
         $db->transComplete();
     }
 
-    /**
-     * Form penilaian interview per kompetensi.
-     *
-     * Menggantikan slider 0-100 yang dulu menempel di sel tabel tab Completed.
-     * Lima belas butir rubrik tidak muat di sana, dan yang lebih penting: angka
-     * slider itu tidak punya dasar apa pun sementara ia ikut menentukan Gate 2.
-     *
-     * Lowongan tanpa rubrik (3 dari 34) tetap memakai slider - lebih baik jalur
-     * lama yang jujur daripada rubrik karangan.
-     */
-    public function formNilai(int $appId)
-    {
-        $app = $this->lamaranDetail($appId);
-        if ($app === null) {
-            return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
-        }
-
-        $job    = (new JobModel())->find($app['job_id']);
-        $rubrik = $job === null ? [] : $this->pertanyaanJob($job);
-        $gate2  = (new StageHistoryModel())->latestStatus($appId, 'gate_2');
-
-        return view('recruiter/nilai', [
-            'judul'     => 'Penilaian Interview',
-            'app'       => $app,
-            'rubrik'    => $rubrik,
-            'gate2'     => $gate2,
-            'sudah'     => $gate2 !== null,
-            'penilaian' => (new InterviewPenilaianModel())->untukLamaran($appId),
-            'skorCv'    => $this->skorCv($appId),
-        ]);
-    }
-
-    public function putusInterview(int $appId)
-    {
-        $app = $this->lamaranDetail($appId);
-        if ($app === null) {
-            return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
-        }
-        $kembali = '/recruiter/tahap/interview_online?status=completed';
-
-        // Syaratnya HARUS sama persis dengan tab Completed, kalau tidak kandidat
-        // muncul di daftar siap dinilai tapi penilaiannya ditolak: sesi 30 menit
-        // sudah berakhir, bukan sekadar jam mulai terlewat.
-        $selesai = (new DateTime())->modify('-' . InterviewModel::TUTUP_MENIT . ' minutes')->format('Y-m-d H:i:s');
-        $iv      = (new InterviewModel())
-            ->where('application_id', $appId)
-            ->where('status', 'approved')
-            ->where('scheduled_at <=', $selesai)
-            ->orderBy('id', 'DESC')
-            ->first();
-        if ($iv === null) {
-            return redirect()->to($kembali)->with('error', 'Interview belum bisa dinilai (sesinya belum selesai).');
-        }
-        if ((new StageHistoryModel())->latestStatus($appId, 'gate_2') !== null) {
-            return redirect()->to($kembali)->with('error', 'Kandidat ini sudah diputuskan.');
-        }
-
-        // Lembar penilaian BIPROO: sembilan kompetensi tetap, sama untuk semua
-        // posisi. Slider 0-100 untuk lowongan tanpa bank soal sudah tidak ada -
-        // lembarnya kini tidak bergantung pada bank pertanyaan sama sekali.
-        $penilaian = LembarPenilaian::rakitHrd(
-            (array) ($this->request->getPost('nilai') ?? []),
-            (array) ($this->request->getPost('narasi') ?? [])
-        );
-
-        // Separuh terisi bukan penilaian, itu tebakan dengan langkah lebih
-        // banyak. Butir yang belum diisi TIDAK dihitung nol - itu akan
-        // menggugurkan kandidat karena recruiter belum selesai mengklik.
-        $dinilai = count(array_filter(
-            $penilaian,
-            static fn (array $p): bool => $p['kategori'] === LembarPenilaian::KAT_HRD
-        ));
-        if ($dinilai < count(LembarPenilaian::HRD)) {
-            return redirect()->to('recruiter/nilai/' . $appId)->with('error',
-                'Masih ada ' . (count(LembarPenilaian::HRD) - $dinilai) . ' kompetensi yang belum dinilai. '
-                . 'Lengkapi dulu supaya skornya tidak dihitung dari penilaian separuh.');
-        }
-        $skorInterview = LembarPenilaian::skor($penilaian);
-
-        $skorCv = $this->skorCv($appId);
-        $logger = new StageLogger();
-        $actor  = 'recruiter:' . session('recruiter_nama');
-        $email  = ['to' => $app['email'], 'nama' => $app['nama'], 'posisi' => $app['judul']];
-
-        // Kompetensi terlemah ikut dicatat. Inilah yang membuat keputusan bisa
-        // dijelaskan ke kandidat yang bertanya: bukan "skor 62", melainkan butir
-        // mana yang kurang.
-        $lemah = LembarPenilaian::terlemah($penilaian);
-        // HANYA baris kompetensi yang dihitung. $penilaian juga memuat kotak
-        // narasi dan baris hasil akhir, dan ikut menghitungnya membuat catatan
-        // berbunyi "dari 10 kompetensi" padahal kompetensinya sembilan.
-        $dasar = 'Skor interview ' . $skorInterview . '/100'
-            . ($dinilai === 0 ? '' : ' (dari ' . $dinilai . ' kompetensi)')
-            . ($lemah === [] ? '' : ', terlemah: ' . implode(', ', $lemah));
-
-        // Satu transaksi untuk seluruh lembar. Tanpa ini, kegagalan di tengah
-        // meninggalkan penilaian separuh yang tidak akan pernah dibersihkan -
-        // tabel ini tambah-saja, tidak punya jalur perbaikan.
-        //
-        // Bukan kekhawatiran teoretis: 12 Agustus 2026 baris 'hasil' ditolak
-        // SQL Server karena melebihi lebar kolom, dan sembilan baris kompetensi
-        // sebelumnya sudah terlanjur masuk. Lamaran itu jadi punya 18 baris
-        // kompetensi untuk satu kali penilaian.
-        if ($penilaian !== []) {
-            $db = db_connect();
-            $db->transException(true)->transStart();
-            $model = new InterviewPenilaianModel();
-            foreach ($penilaian as $p) {
-                $model->insert($p + ['application_id' => $appId]);
-            }
-            $db->transComplete();
-        }
-
-        $logger->log($appId, 'interview_online', 'passed', $actor, 'Skor interview ' . $skorInterview . '/100');
-
-        // TANPA SKOR CV, SISTEM TIDAK MEMUTUS.
-        //
-        // Sebelumnya bobot CV dialihkan seluruhnya ke interview, sehingga satu
-        // komponen yang hilang diam-diam berubah menjadi rumus yang berbeda:
-        // kandidat yang CV-nya gagal terbaca dinilai dengan aturan lain dari
-        // kandidat sebelahnya, tanpa ada yang tahu. Yang jujur adalah mengakui
-        // datanya kurang dan menyerahkan keputusannya ke recruiter, sama seperti
-        // Gate 1 menandai kandidat 'flagged' alih-alih menebak.
-        //
-        // Skor interview tetap dihitung, disimpan, dan ditampilkan - bukan
-        // sebagai penentu, melainkan bahan pertimbangan.
-        if ($skorCv === null) {
-            $logger->log($appId, 'gate_2', 'flagged', $actor,
-                $dasar . '. Skor CV tidak tersedia, keputusan diserahkan ke recruiter');
-
-            return redirect()->to($kembali)->with('sukses',
-                'Penilaian tersimpan (skor interview ' . $skorInterview . '/100). '
-                . 'Skor CV tidak tersedia untuk kandidat ini, jadi keputusan akhirnya '
-                . 'Anda yang tentukan lewat tombol Loloskan / Tidak Lolos.');
-        }
-
-        // Gate 2 = skor CV digabung skor interview (bobot per posisi dari jobs).
-        $config = GateTwo::configFromJob($app['bobot_json'] ?? null, $app['threshold_json'] ?? null);
-        $rec    = GateTwo::recommend($skorCv, $skorInterview / 100, $config);
-        $lolos  = $rec['recommendation'] === 'hire';
-
-        $rincian = $dasar . ', kemiripan CV ' . kemiripan_teks($skorCv)
-            . '. Skor akhir ' . skor_100($rec['score']) . '/100';
-
-        $logger->log($appId, 'gate_2', $lolos ? 'passed' : 'failed', $actor, $rincian, $email);
-        if ($lolos) {
-            $logger->log($appId, 'berkas_kontrak', 'entered', $actor);
-        }
-
-        return redirect()->to($kembali)->with('sukses', 'Skor tersimpan. Keputusan akhir: '
-            . ($lolos ? 'LOLOS' : 'TIDAK LOLOS') . ' (skor akhir ' . skor_100($rec['score']) . '/100)'
-            . ' - kandidat dikabari via email.');
-    }
 
     /**
-     * Keputusan Gate 2 manual, untuk kandidat yang skor CV-nya tidak tersedia.
+     * Keputusan Gate 2 manual - satu-satunya jalan keluar manusia.
      *
-     * Dipisah dari putusInterview() karena memang dua tindakan berbeda: yang satu
-     * mencatat penilaian interview, yang ini memutuskan nasib kandidat. Polanya
-     * sama dengan review Gate 1: sistem menandai, manusia memutuskan.
+     * Sejak Gate 2 menutup sendiri dari transkrip (revisi 12 Agustus 2026), ini
+     * dipakai untuk keadaan yang sistem memang TIDAK boleh putuskan: transkripsi
+     * gagal, skor CV tidak tersedia, atau rekamannya tidak pernah ada. Ketiganya
+     * berarti datanya kurang, dan memutus dengan data yang kurang bukan
+     * otomatisasi melainkan tebakan yang dikirim lewat email.
+     *
+     * Menggantikan form sembilan kompetensi yang dulu diisi dari ingatan. Form
+     * itu justru yang diminta revisi untuk dihilangkan, dan mempertahankannya
+     * sebagai cadangan berarti menyediakan jalan pintas ke persis kebiasaan
+     * yang sedang ditinggalkan.
      */
     public function putusGate2(int $appId)
     {
@@ -1070,11 +948,16 @@ class Recruiter extends BaseController
         }
         $kembali = '/recruiter/tahap/interview_online?status=completed';
 
-        // Hanya yang memang sedang menunggu keputusan. Tanpa pemeriksaan ini,
-        // form yang dikirim ulang dari riwayat browser bisa menimpa keputusan
-        // yang sudah dibuat, dan kandidat menerima dua email yang bertentangan.
-        if ((new StageHistoryModel())->latestStatus($appId, 'gate_2') !== 'flagged') {
-            return redirect()->to($kembali)->with('error', 'Kandidat ini tidak sedang menunggu keputusan.');
+        // Sekali diputus, berhenti. Tanpa pemeriksaan ini, form yang dikirim
+        // ulang dari riwayat browser bisa menimpa keputusan yang sudah dibuat,
+        // dan kandidat menerima dua email yang bertentangan.
+        //
+        // null ikut diterima, bukan cuma 'flagged': kalau rekamannya belum
+        // pernah diunggah, tidak ada yang menandai apa pun, dan recruiter tetap
+        // harus punya cara memutuskan kandidat yang wawancaranya sudah selesai.
+        $gate2 = (new StageHistoryModel())->latestStatus($appId, 'gate_2');
+        if ($gate2 !== null && $gate2 !== 'flagged') {
+            return redirect()->to($kembali)->with('error', 'Kandidat ini sudah diputuskan.');
         }
 
         $lolos  = $this->request->getPost('keputusan') === 'lolos';
@@ -1082,7 +965,7 @@ class Recruiter extends BaseController
         $actor  = 'recruiter:' . session('recruiter_nama');
 
         $logger->log($appId, 'gate_2', $lolos ? 'passed' : 'failed', $actor,
-            'Keputusan manual recruiter (skor CV tidak tersedia)',
+            'Keputusan manual recruiter. ' . $this->sebabManual($appId),
             ['to' => $app['email'], 'nama' => $app['nama'], 'posisi' => $app['judul']]);
 
         if ($lolos) {
@@ -1091,6 +974,31 @@ class Recruiter extends BaseController
 
         return redirect()->to($kembali)->with('sukses', 'Keputusan tersimpan: kandidat '
             . ($lolos ? 'LOLOS' : 'TIDAK LOLOS') . ' - kandidat dikabari via email.');
+    }
+
+    /**
+     * Kenapa keputusannya manual, diturunkan dari keadaan - bukan ditanyakan.
+     *
+     * Recruiter tidak perlu mengetik alasan yang sudah tercatat di basis data,
+     * dan alasan yang diketik cenderung berbunyi "ok" pada penekanan kelima.
+     * Yang ditulis di sini yang akan dibaca orang setahun lagi saat bertanya
+     * kenapa kandidat ini tidak diputuskan sistem.
+     */
+    private function sebabManual(int $appId): string
+    {
+        $t = (new InterviewTranskripModel())->terakhirUntuk($appId);
+
+        if ($t === null) {
+            return 'Rekaman wawancara tidak pernah diunggah.';
+        }
+        if ($t['status'] !== 'selesai') {
+            return 'Transkripsi rekaman ' . ($t['status'] === 'gagal' ? 'gagal' : 'belum selesai')
+                . ($t['catatan'] === null || $t['catatan'] === '' ? '' : ': ' . mb_substr((string) $t['catatan'], 0, 150));
+        }
+
+        return $this->skorCv($appId) === null
+            ? 'Skor CV tidak tersedia.'
+            : 'Penilaian dari transkrip tidak menghasilkan skor.';
     }
 
     /**

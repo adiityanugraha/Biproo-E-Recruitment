@@ -377,6 +377,39 @@ final class RuangInterviewTest extends CIUnitTestCase
         $this->assertNull((new InterviewTranskripModel())->terakhirUntuk($aid));
     }
 
+    /**
+     * Empat kotak narasi lembar BIPROO pindah ke form unggah.
+     *
+     * Dulu ada di halaman penilaian tersendiri yang sudah dihapus. Keempatnya
+     * ditulis dari ingatan wawancara, dan ingatan itu paling utuh persis saat
+     * recruiter mengunggah rekamannya.
+     */
+    public function testFormUnggahMemuatKotakNarasi(): void
+    {
+        $aid = $this->fixture();
+        $this->tigaPertanyaan();
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/ruang/' . $aid)->getBody();
+
+        foreach (L::NARASI as $kunci => $label) {
+            $this->assertStringContainsString('narasi[' . $kunci . ']', $html);
+            // Label diperiksa tanpa tanda kutipnya: esc() CI4 memakai ENT_HTML5
+            // sehingga apostrof jadi &apos;, sedangkan esc() yang dipanggil dari
+            // uji ini menghasilkan &#039;. Keduanya benar dan tidak akan sama.
+            $this->assertStringContainsString(strtok($label, "'"), $html);
+        }
+    }
+
+    /** Ruang interview milik recruiter. Kandidat tidak boleh masuk. */
+    public function testKandidatTidakBisaMembukaRuangInterview(): void
+    {
+        $aid = $this->fixture();
+
+        $this->withSession(['candidate_id' => 1, 'candidate_nama' => 'Sinta'])
+            ->get('recruiter/ruang/' . $aid)
+            ->assertRedirectTo(site_url('recruiter/login'));
+    }
+
     public function testFormUnggahMemuatTigaKompetensiMataManusia(): void
     {
         $aid = $this->fixture();
