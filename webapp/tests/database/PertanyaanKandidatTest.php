@@ -240,6 +240,65 @@ final class PertanyaanKandidatTest extends CIUnitTestCase
         $this->assertSame('dua spasi berlebih', $hasil[1]['pertanyaan']);
     }
 
+    /**
+     * Pertanyaan yang disusun SEBELUM CV terbaca harus disusun ulang.
+     *
+     * Terjadi sungguhan 13 Agustus 2026: ai-service mati saat CV masuk,
+     * screening gagal terkirim, lalu recruiter membuka ruang interview. Riwayat
+     * kerjanya belum ada, jadi pertanyaannya jatuh ke 'posisi' - dan tersimpan
+     * begitu. Kandidat dengan empat riwayat kerja permanen ditanyai pertanyaan
+     * umum, dan tidak ada yang tahu kecuali membandingkan sendiri dengan CV-nya.
+     */
+    public function testPertanyaanYangDibuatSebelumCvTerbacaDisusunUlang(): void
+    {
+        $aid = $this->lamaran();   // belum ada hasil screening
+        $lib = new PertanyaanKandidat();
+        $this->mockAi(['pertanyaan' => ['Umum sekali'], 'sumber' => 'posisi']);
+        $lib->untukLamaran($aid);
+        $this->assertFalse($lib->perluDisusunUlang($aid), 'selama CV belum terbaca, belum ada yang bisa diperbaiki');
+
+        // Screening menyusul, riwayat kerjanya muncul.
+        (new ScreeningResultModel())->insert([
+            'application_id' => $aid, 'screening_job_id' => 'susulan', 'status' => 'success',
+            'score_overall' => 0.7, 'extracted_json' => json_encode(['riwayat' => self::RIWAYAT]),
+            'provider' => 'dummy', 'model_version' => 'uji',
+        ]);
+
+        $this->assertTrue($lib->perluDisusunUlang($aid));
+    }
+
+    /**
+     * Fresh graduate TIDAK dianggap perlu disusun ulang.
+     *
+     * CV-nya sudah terbaca dan memang tidak memuat riwayat kerja; pertanyaan
+     * dari posisi itu jawaban yang benar, bukan keadaan yang perlu diperbaiki.
+     */
+    public function testFreshGraduateTidakDianggapPerluDisusunUlang(): void
+    {
+        $aid = $this->lamaran();
+        (new ScreeningResultModel())->insert([
+            'application_id' => $aid, 'screening_job_id' => 'kosong', 'status' => 'success',
+            'score_overall' => 0.6, 'extracted_json' => json_encode(['riwayat' => []]),
+            'provider' => 'dummy', 'model_version' => 'uji',
+        ]);
+        $lib = new PertanyaanKandidat();
+        $this->mockAi(['pertanyaan' => ['Dari posisi'], 'sumber' => 'posisi']);
+        $lib->untukLamaran($aid);
+
+        $this->assertFalse($lib->perluDisusunUlang($aid));
+    }
+
+    /** Yang sudah dari pengalaman tidak pernah disusun ulang lagi. */
+    public function testSumberPengalamanTidakPernahDisusunUlang(): void
+    {
+        $aid = $this->lamaran(self::RIWAYAT);
+        $lib = new PertanyaanKandidat();
+        $this->mockAi(['pertanyaan' => ['Dari pengalaman'], 'sumber' => 'pengalaman']);
+        $lib->untukLamaran($aid);
+
+        $this->assertFalse($lib->perluDisusunUlang($aid));
+    }
+
     public function testLebihDariTigaDipotong(): void
     {
         $aid = $this->lamaran();

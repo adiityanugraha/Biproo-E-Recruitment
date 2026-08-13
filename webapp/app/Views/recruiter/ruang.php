@@ -130,6 +130,15 @@ $LENCANA = [
     <p class="ket"><?= esc($LENCANA[$sumber][2]) ?></p>
   <?php endif ?>
 
+  <?php if ($disusunUlang ?? false): ?>
+    <?php // Disebutkan, bukan dikerjakan diam-diam: recruiter yang membuka
+          // halaman ini sedetik lalu mungkin sudah membaca daftar yang lama. ?>
+    <p class="ket" style="color:#a53a1c">
+      Pertanyaan disusun ulang otomatis. Yang tersimpan sebelumnya dibuat saat CV kandidat
+      belum selesai dibaca, sehingga belum memakai riwayat kerjanya.
+    </p>
+  <?php endif ?>
+
   <?php if ($pertanyaan === []): ?>
     <p class="kosong">Pertanyaan belum berhasil disusun.</p>
   <?php endif ?>

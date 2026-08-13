@@ -55,6 +55,30 @@ class PertanyaanKandidat
     }
 
     /**
+     * Apakah pertanyaan tersimpan boleh dipakai selamanya.
+     *
+     * TIDAK, bila ia disusun sebelum CV kandidat selesai dibaca. Terjadi
+     * sungguhan 13 Agustus 2026: ai-service mati saat CV masuk, screening-nya
+     * gagal terkirim, lalu recruiter membuka ruang interview. Riwayat kerjanya
+     * belum ada, jadi pertanyaannya jatuh ke 'posisi' - dan tersimpan begitu.
+     * Kandidat dengan empat riwayat kerja permanen ditanyai pertanyaan umum,
+     * dan tidak ada yang tahu kecuali membandingkan sendiri dengan CV-nya.
+     *
+     * Yang diperiksa keberadaan HASIL SCREENING, bukan ada tidaknya riwayat:
+     * fresh graduate yang CV-nya sudah terbaca memang seharusnya dapat
+     * pertanyaan dari posisi, dan itu bukan keadaan yang perlu diperbaiki.
+     */
+    public function perluDisusunUlang(int $appId): bool
+    {
+        $tersimpan = $this->baca($appId);
+        if ($tersimpan === [] || $tersimpan[0]['sumber'] !== self::SUMBER_POSISI) {
+            return false;
+        }
+
+        return $this->riwayat($appId) !== [];
+    }
+
+    /**
      * Paksa susun ulang, menimpa yang tersimpan.
      *
      * Dipakai tombol "buat ulang" recruiter. Pertanyaan hasil AI kadang meleset

@@ -61,6 +61,10 @@ class KirimRekaman
      * Ekstensi sudah dijaga saat unggah (Recruiter::REKAMAN_EKSTENSI), jadi di
      * sini cukup pemetaan. Yang tak dikenal jatuh ke audio/mp4, tipe rekaman
      * bawaan Zoom.
+     *
+     * Keempat ekstensi ini yang MUNGKIN ada di disk: Recruiter::unggahRekaman
+     * menamai berkasnya menurut jenis yang terbaca dari isinya (REKAMAN_MIME),
+     * bukan menurut nama kiriman, jadi tidak ada ekstensi liar yang masuk.
      */
     private function mime(string $berkas): string
     {

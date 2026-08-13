@@ -168,9 +168,8 @@ final class RuangInterviewTest extends CIUnitTestCase
     /**
      * WAV senyap yang sah, seukuran yang diminta.
      *
-     * Harus berkas audio SUNGGUHAN, bukan sekadar berakhiran .m4a: aturan
-     * ext_in CI4 mencocokkan ekstensi dengan tipe yang ditebak dari magic bytes,
-     * jadi berkas berisi teks akan tertolak sebagai text/plain. Itu memang yang
+     * Harus berkas audio SUNGGUHAN, bukan sekadar berakhiran .wav: yang
+     * diperiksa isi berkasnya lewat finfo, bukan namanya. Itu memang yang
      * diinginkan - berkas palsu bernama .m4a tidak boleh lolos.
      */
     private function wav(int $ukuran): string
@@ -179,6 +178,33 @@ final class RuangInterviewTest extends CIUnitTestCase
 
         return 'RIFF' . pack('V', 36 + $n) . 'WAVEfmt ' . pack('VvvVVvv', 16, 1, 1, 8000, 8000, 1, 8)
             . 'data' . pack('V', $n) . str_repeat("\x00", $n);
+    }
+
+    /**
+     * Wadah ISO-BMFF, merek bisa dipilih.
+     *
+     * M4A sungguhan datang dengan merek berbeda-beda, dan itu yang dulu
+     * menentukan diterima atau tidak: hanya merek 'M4A ' terbaca audio/x-m4a,
+     * sedangkan 'mp42' dan 'isom' - sama-sama m4a sah - terbaca video/mp4.
+     */
+    private function m4a(string $merek = 'M4A '): string
+    {
+        $b    = $merek . pack('N', 512) . 'M4A mp42isomiso2';
+        $ftyp = pack('N', 8 + strlen($b)) . 'ftyp' . $b;
+
+        return $ftyp . pack('N', 8 + 64) . 'mdat' . str_repeat("\x00", 64);
+    }
+
+    private function siapkanIsi(string $namaAsli, string $isi): void
+    {
+        $tmp = tempnam(sys_get_temp_dir(), 'rek');
+        file_put_contents($tmp, $isi);
+        $this->sampah[] = $tmp;
+
+        service('superglobals')->setFilesArray(['rekaman' => [
+            'name' => $namaAsli, 'type' => 'audio/mp4', 'tmp_name' => $tmp,
+            'error' => UPLOAD_ERR_OK, 'size' => strlen($isi),
+        ]]);
     }
 
     // --- halaman ---
@@ -312,12 +338,91 @@ final class RuangInterviewTest extends CIUnitTestCase
 
     // --- unggah rekaman ---
 
+    /**
+    /**
+     * M4A diterima apa pun merek wadahnya, dan MP3 juga.
+     *
+     * Dulu tidak. Aturan ext_in DAN mime_in CI4 sama-sama menuntut nama
+     * ekstensi PULANG-PERGI: keduanya menebak ekstensi dari tipe hasil finfo
+     * lalu mengharuskannya sama persis dengan yang ditulis pemakai. Untuk audio
+     * itu tidak pernah cocok - audio/mpeg ditebak 'mpga' bukan 'mp3', dan m4a
+     * bermerek 'mp42' terbaca video/mp4 lalu ditebak 'mp4' bukan 'm4a'.
+     * Akibatnya .mp3 SELALU ditolak dan .m4a ditolak tergantung merek wadahnya,
+     * hal yang tidak bisa ditebak recruiter dari luar.
+     *
+     * Diperiksa di tingkat KEPUTUSANNYA, bukan lewat HTTP: unggahan yang lolos
+     * lanjut ke pemindahan berkas, yang memang tidak bisa dijalankan di
+     * lingkungan uji (lihat siapkanBerkas).
+     *
+     * @dataProvider wadahRekaman
+     */
+    public function testJenisRekamanDikenaliDariIsiBukanNama(string $isi, string $harapMime, string $harapExt): void
+    {
+        $tmp = tempnam(sys_get_temp_dir(), 'rek');
+        file_put_contents($tmp, $isi);
+        $this->sampah[] = $tmp;
+
+        $mime = (new finfo(FILEINFO_MIME_TYPE))->file($tmp);
+
+        $this->assertSame($harapMime, $mime, 'prasyarat: begini finfo membacanya');
+        $this->assertArrayHasKey($mime, Recruiter::REKAMAN_MIME, 'jenis ini harus diterima');
+        // Ekstensi simpanannya ikut ISI berkas, bukan nama kiriman: rekaman sah
+        // bernama .exe tidak boleh tersimpan sebagai .exe.
+        $this->assertSame($harapExt, Recruiter::REKAMAN_MIME[$mime]);
+    }
+
+    public static function wadahRekaman(): array
+    {
+        // pack(), bukan urutan escape: berkas uji ini pernah berubah jadi biner
+        // karena byte mentah ikut tertulis ke dalam sumbernya.
+        $nol = static fn (int $n): string => str_repeat(pack('C', 0), $n);
+        $m4a = static function (string $merek) use ($nol): string {
+            $b = $merek . pack('N', 512) . 'M4A mp42isomiso2';
+
+            return pack('N', 8 + strlen($b)) . 'ftyp' . $b . pack('N', 72) . 'mdat' . $nol(64);
+        };
+        $n   = 800;
+        $wav = 'RIFF' . pack('V', 36 + $n) . 'WAVEfmt ' . pack('VvvVVvv', 16, 1, 1, 8000, 8000, 1, 8)
+             . 'data' . pack('V', $n) . $nol($n);
+        // tag ID3v2 lalu kepala bingkai MPEG-1 Layer III
+        $mp3 = 'ID3' . pack('C*', 3, 0, 0, 0, 0, 0, 0) . pack('C*', 0xFF, 0xFB, 0x90, 0x00) . $nol(400);
+
+        return [
+            'wav'            => [$wav, 'audio/x-wav', 'wav'],
+            'm4a merek M4A'  => [$m4a('M4A '), 'audio/x-m4a', 'm4a'],
+            'm4a merek mp42' => [$m4a('mp42'), 'video/mp4', 'mp4'],
+            'm4a merek isom' => [$m4a('isom'), 'video/mp4', 'mp4'],
+            'mp3'            => [$mp3, 'audio/mpeg', 'mp3'],
+        ];
+    }
+
+    /** Berkas lain yang disamarkan sebagai rekaman tetap tertolak. */
+    public function testBerkasDisamarkanSebagaiRekamanTetapDitolak(): void
+    {
+        $aid = $this->fixture();
+        $this->siapkanIsi('wawancara.m4a', "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
+
+        $this->withSession($this->sesiRec)->post('recruiter/ruang/' . $aid . '/rekaman', [
+            'nilai' => [0 => 4, 1 => 4, 2 => 4],
+        ]);
+
+        $this->assertNull((new InterviewTranskripModel())->terakhirUntuk($aid));
+        $this->assertStringContainsString('bukan rekaman', (string) session('error'));
+    }
+
+    /**
+     * Yang dinilai ISI berkasnya, bukan namanya.
+     *
+     * Program yang disamarkan sebagai rekaman tertolak walau bernama .m4a;
+     * sebaliknya rekaman sah tetap diterima apa pun namanya, karena berkasnya
+     * toh disimpan dengan nama acak dan ekstensi hasil bacaan isinya.
+     */
     public function testBerkasBukanRekamanDitolak(): void
     {
         $aid = $this->fixture();
-        $this->siapkanBerkas('virus.exe');
+        $this->siapkanIsi('wawancara.m4a', "MZ\x90\x00\x03\x00\x00\x00");   // header .exe
 
-        $res = $this->withSession($this->sesiRec)->post('recruiter/ruang/' . $aid . '/rekaman');
+        $this->withSession($this->sesiRec)->post('recruiter/ruang/' . $aid . '/rekaman');
 
         $this->assertNull((new InterviewTranskripModel())->terakhirUntuk($aid));
         $this->assertStringContainsString('rekaman audio atau video', session('error'));
@@ -542,6 +647,39 @@ final class RuangInterviewTest extends CIUnitTestCase
 
         $this->assertStringContainsString('Tidak bisa dinilai dari transkrip ini', $html);
         $this->assertStringContainsString('Adaptability', $html);
+    }
+
+    /**
+     * 'flagged' BUKAN "sudah diputus": rekaman masih bisa dikirim ulang.
+     *
+     * Terlihat saat e2e 13 Agustus 2026 - kuota LLM habis, transkripsi gagal,
+     * Gate 2 jadi 'flagged', dan form unggah ikut hilang. Recruiter jadi tidak
+     * bisa mencoba lagi besok saat kuotanya pulih, padahal rekamannya masih ada
+     * dan itu satu-satunya jalan kembali ke penilaian otomatis.
+     */
+    public function testFlaggedMasihBolehMengunggahUlang(): void
+    {
+        $aid = $this->fixture();
+        $this->tigaPertanyaan();
+        (new StageLogger())->log($aid, 'gate_2', 'flagged', 'system:transkrip', 'Transkripsi gagal');
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/ruang/' . $aid)->getBody();
+
+        $this->assertStringContainsString('name="rekaman"', $html);
+        $this->assertStringNotContainsString('Kandidat ini sudah diputuskan', $html);
+    }
+
+    /** Penjaga di controller memakai syarat yang sama - bukan cuma tampilannya. */
+    public function testFlaggedTidakDitolakPenjagaUnggahan(): void
+    {
+        $aid = $this->fixture();
+        (new StageLogger())->log($aid, 'gate_2', 'flagged', 'system:transkrip', 'Transkripsi gagal');
+
+        $this->withSession($this->sesiRec)->post('recruiter/ruang/' . $aid . '/rekaman');
+
+        // Ditolak karena berkasnya memang tidak ada, BUKAN karena dianggap
+        // sudah diputus. Kalau penjaganya salah lagi, pesannya akan berubah.
+        $this->assertStringNotContainsString('sudah diputuskan', (string) session('error'));
     }
 
     public function testStatusRekamanTampilDiHalaman(): void

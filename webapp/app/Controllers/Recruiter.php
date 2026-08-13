@@ -681,10 +681,52 @@ class Recruiter extends BaseController
      * (slider) + putuskan Lolos/Tidak. Selalu manual - sistem hanya merekomendasi.
      */
     /**
-     * Berkas rekaman yang diterima. Zoom merekam lokal ke M4A (audio saja) atau
-     * MP4 (audio + video); MP3 dan WAV ikut diterima karena recruiter kadang
-     * mengonversinya dulu agar berkasnya lebih kecil.
+     * Berkas rekaman yang diterima, DIPERIKSA DARI ISINYA bukan namanya.
+     *
+     * Zoom merekam lokal ke M4A (audio saja) atau MP4 (audio + video); MP3 dan
+     * WAV ikut diterima karena recruiter kadang mengonversinya dulu agar
+     * berkasnya lebih kecil.
+     *
+     * KENAPA DIPERIKSA SENDIRI, BUKAN LEWAT ext_in / mime_in
+     *
+     * Keduanya menuntut nama ekstensi PULANG-PERGI: CI4 menebak ekstensi dari
+     * tipe hasil finfo, lalu mengharuskan tebakan itu sama persis dengan
+     * ekstensi yang ditulis pemakai. Untuk PDF itu jalan. Untuk audio tidak,
+     * karena satu tipe dipakai beberapa nama ekstensi:
+     *
+     *   .mp3  -> audio/mpeg -> CI4 menebak 'mpga' (bukan 'mp3') -> DITOLAK
+     *   .m4a  -> video/mp4  -> CI4 menebak 'mp4'  (bukan 'm4a') -> DITOLAK
+     *
+     * M4A yang lolos hanya yang merek wadahnya persis 'M4A '; yang bermerek
+     * 'isom' atau 'mp42' - sama-sama m4a sah, dan itu yang dihasilkan banyak
+     * perekam - terbaca video/mp4. Jadi diterima atau tidak bergantung pada isi
+     * wadahnya, bukan pada berkasnya benar atau salah, dan recruiter tidak
+     * punya cara menebak mana yang akan lolos.
+     *
+     * mime_in TIDAK menyelesaikannya: aturan itu memanggil pemeriksaan
+     * pulang-pergi yang sama (hasMismatchedClientExtension) setelah mencocokkan
+     * tipenya - hal yang tidak disebut di dokumentasi dan baru terlihat setelah
+     * membaca sumbernya.
+     *
+     * Memeriksa TIPE-nya sendiri menjawab pertanyaan yang sebenarnya: apakah
+     * ini berkas audio atau video. Penjagaannya justru LEBIH kuat daripada
+     * ekstensi - finfo membaca isi berkas, dan .exe yang disamarkan jadi .m4a
+     * tetap tertolak.
      */
+    public const REKAMAN_MIME = [
+        'audio/x-m4a'    => 'm4a',
+        'audio/mp4'      => 'm4a',
+        'audio/mpeg'     => 'mp3',
+        'audio/mpg'      => 'mp3',
+        'audio/mp3'      => 'mp3',
+        'audio/x-wav'    => 'wav',
+        'audio/wav'      => 'wav',
+        'audio/wave'     => 'wav',
+        'audio/x-pn-wav' => 'wav',
+        'video/mp4'      => 'mp4',
+    ];
+
+    /** Untuk atribut accept di form - petunjuk bagi pemakai, bukan penjagaan. */
     public const REKAMAN_EKSTENSI = 'm4a,mp4,mp3,wav';
 
     /**
@@ -718,7 +760,16 @@ class Recruiter extends BaseController
         // Kalau kuota habis di detik Gate 1, kandidat akan tersangkut tanpa
         // pertanyaan dan tanpa jalan keluar; di sini kegagalan masih bisa
         // jatuh ke bank soal lowongan, dan recruiter melihatnya seketika.
-        $pertanyaan = (new PertanyaanKandidat())->untukLamaran($appId);
+        $lib = new PertanyaanKandidat();
+
+        // Pertanyaan yang disusun SEBELUM CV-nya selesai dibaca disusun ulang
+        // sekali, tanpa diminta. Membiarkannya berarti kandidat dengan riwayat
+        // kerja panjang tetap ditanyai pertanyaan umum seumur lamarannya -
+        // kegagalan yang tidak terlihat kecuali seseorang membandingkan sendiri
+        // dengan CV-nya. Sekali jalan saja: sesudahnya sumbernya jadi
+        // 'pengalaman' dan syaratnya tidak terpenuhi lagi.
+        $disusunUlang = $lib->perluDisusunUlang($appId);
+        $pertanyaan   = $disusunUlang ? $lib->buatUlang($appId) : $lib->untukLamaran($appId);
 
         return view('recruiter/ruang', [
             'judul'      => 'Ruang Interview',
@@ -732,8 +783,9 @@ class Recruiter extends BaseController
             // kutipan" cuma berlaku di dalam basis data - dan penilaian yang
             // tidak pernah dibaca siapa pun sama saja dengan tidak beralasan.
             'penilaian'  => (new InterviewPenilaianModel())->untukLamaran($appId),
-            'sudah'      => (new StageHistoryModel())->latestStatus($appId, 'gate_2') !== null,
+            'sudah'      => $this->sudahDiputus($appId),
             'bingkai'    => $this->request->getGet('bingkai') === '1',
+            'disusunUlang' => $disusunUlang,
         ]);
     }
 
@@ -755,7 +807,7 @@ class Recruiter extends BaseController
         // Setelah kandidat diputus, pertanyaannya jadi catatan: ia dasar
         // penilaian yang sudah terlanjur dipakai. Mengubahnya di belakang
         // membuat lembar profil bercerita tentang wawancara yang tidak terjadi.
-        if ((new StageHistoryModel())->latestStatus($appId, 'gate_2') !== null) {
+        if ($this->sudahDiputus($appId)) {
             return redirect()->to($tujuan)->with('error',
                 'Kandidat ini sudah diputuskan, pertanyaannya tidak bisa diubah lagi.');
         }
@@ -802,23 +854,31 @@ class Recruiter extends BaseController
         // menyembunyikan form bukan penjagaan: kiriman ulang dari riwayat
         // browser tetap sampai ke sini. Rekaman yang mendarat sesudah keputusan
         // akan tampak sebagai dasar penilaian padahal tidak pernah dibaca.
-        if ((new StageHistoryModel())->latestStatus($appId, 'gate_2') !== null) {
+        if ($this->sudahDiputus($appId)) {
             return redirect()->to($tujuan)->with('error',
                 'Kandidat ini sudah diputuskan, rekamannya tidak bisa ditambah lagi.');
         }
 
         $aturan = ['rekaman' => [
-            'rules'  => 'uploaded[rekaman]|max_size[rekaman,' . self::REKAMAN_MAKS_KB . ']'
-                        . '|ext_in[rekaman,' . self::REKAMAN_EKSTENSI . ']',
+            'rules'  => 'uploaded[rekaman]|max_size[rekaman,' . self::REKAMAN_MAKS_KB . ']',
             'errors' => [
                 'uploaded' => 'Belum ada berkas rekaman yang dipilih.',
                 'max_size' => 'Ukuran rekaman maksimal ' . round(self::REKAMAN_MAKS_KB / 1024) . ' MB. '
                               . 'Rekam audio saja (bukan video) supaya berkasnya jauh lebih kecil.',
-                'ext_in'   => 'Berkas harus rekaman audio atau video (' . self::REKAMAN_EKSTENSI . ').',
             ],
         ]];
         if (! $this->validate($aturan)) {
             return redirect()->to($tujuan)->with('error', implode(' ', $this->validator->getErrors()));
+        }
+
+        // Jenis berkas diperiksa dari ISINYA, terpisah dari aturan validasi -
+        // alasannya panjang, lihat REKAMAN_MIME.
+        $berkas = $this->request->getFile('rekaman');
+        $jenis  = $berkas->getMimeType();
+        if (! isset(self::REKAMAN_MIME[$jenis])) {
+            return redirect()->to($tujuan)->with('error',
+                'Isi berkas bukan rekaman audio atau video. Format yang diterima: '
+                . self::REKAMAN_EKSTENSI . '.');
         }
 
         // Ketiganya wajib, dan diperiksa SEBELUM berkasnya dipindahkan: lembar
@@ -835,8 +895,13 @@ class Recruiter extends BaseController
         // dan tanggalnya, dan berkas rekaman wawancara jauh lebih peka daripada
         // CV - isinya seluruh pembicaraan, bukan ringkasan yang dipilih sendiri
         // oleh kandidat.
-        $berkas = $this->request->getFile('rekaman');
-        $nama   = $berkas->getRandomName();
+        //
+        // Ekstensinya diturunkan dari ISI berkas, bukan dari nama kiriman.
+        // getRandomName() bawaan CI4 memakai ekstensi kiriman, sehingga rekaman
+        // sah yang kebetulan bernama .exe akan tersimpan sebagai .exe - dan
+        // ekstensi itulah yang nanti dipakai memberi tahu jenisnya ke layanan
+        // transkripsi.
+        $nama = time() . '_' . bin2hex(random_bytes(10)) . '.' . self::REKAMAN_MIME[$jenis];
         $berkas->move(WRITEPATH . 'uploads/rekaman', $nama);
 
         $id = (new InterviewTranskripModel())->insert([
@@ -1128,6 +1193,21 @@ class Recruiter extends BaseController
             'penilaian'  => (new InterviewPenilaianModel())->untukLamaran($appId),
             'gate2'      => $sh->latestStatus($appId, 'gate_2'),
         ]);
+    }
+
+    /**
+     * Kandidat sudah benar-benar diputus (lolos atau tidak).
+     *
+     * 'flagged' TIDAK termasuk, dan itu inti bedanya: ia berarti sistem belum
+     * memutus apa-apa karena datanya kurang. Terlihat saat e2e 13 Agustus 2026 -
+     * kuota LLM habis, transkripsi gagal, Gate 2 jadi 'flagged', dan form unggah
+     * ikut hilang. Recruiter jadi tidak bisa mencoba lagi besok saat kuotanya
+     * pulih, padahal rekamannya masih ada dan itu satu-satunya jalan kembali ke
+     * penilaian otomatis.
+     */
+    private function sudahDiputus(int $appId): bool
+    {
+        return in_array((new StageHistoryModel())->latestStatus($appId, 'gate_2'), ['passed', 'failed'], true);
     }
 
     private function lamaranDetail(int $appId): ?array
