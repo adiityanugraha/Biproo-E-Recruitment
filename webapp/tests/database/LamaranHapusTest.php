@@ -6,6 +6,7 @@ use App\Libraries\ZoomService;
 use App\Models\ApplicationModel;
 use App\Models\CandidateModel;
 use App\Models\InterviewModel;
+use App\Models\InterviewTranskripModel;
 use App\Models\JobModel;
 use App\Models\ScreeningResultModel;
 use CodeIgniter\Config\Services;
@@ -90,6 +91,21 @@ final class LamaranHapusTest extends CIUnitTestCase
             'join_url' => 'https://zoom.us/j/777',
         ]);
 
+        // Rekaman wawancara, dua baris: unggah ulang menambah baris dan tidak
+        // menimpa, jadi satu lamaran bisa meninggalkan beberapa berkas.
+        foreach (['a', 'b'] as $ke) {
+            $rekaman = 'uji-rekaman-' . $ke . '-' . bin2hex(random_bytes(4)) . '.wav';
+            (new InterviewTranskripModel())->insert([
+                'application_id' => $aid, 'sumber' => 'unggahan', 'status' => 'selesai',
+                'berkas' => 'uploads/rekaman/' . $rekaman, 'teks' => 'Kandidat: halo.',
+            ]);
+            if ($berkasAda) {
+                $path = WRITEPATH . 'uploads/rekaman/' . $rekaman;
+                file_put_contents($path, 'rekaman uji');
+                $this->berkas[] = $path;
+            }
+        }
+
         if ($berkasAda) {
             $path = WRITEPATH . 'uploads/cv/' . $nama;
             file_put_contents($path, 'cv uji');
@@ -109,6 +125,34 @@ final class LamaranHapusTest extends CIUnitTestCase
         $this->dontSeeInDatabase('screening_results', ['application_id' => $aid]);
         $this->dontSeeInDatabase('candidate_stage_history', ['application_id' => $aid]);
         $this->dontSeeInDatabase('interviews', ['application_id' => $aid]);
+        $this->dontSeeInDatabase('interview_transkrip', ['application_id' => $aid]);
+    }
+
+    /**
+     * Rekaman wawancara ikut terhapus dari disk.
+     *
+     * Ia berkas PALING PEKA di sistem ini: isinya suara kandidat dan seluruh
+     * isi pembicaraan, bukan ringkasan yang ia pilih sendiri seperti CV.
+     * Menghapus barisnya tanpa berkasnya berarti rekaman itu tetap ada tanpa
+     * satu pun baris yang menunjuk ke sana - tidak akan pernah ada yang tahu.
+     */
+    public function testRekamanWawancaraIkutDihapusDariDisk(): void
+    {
+        [, $aid] = $this->fixture();
+        $paths   = array_map(
+            static fn (array $t): string => WRITEPATH . $t['berkas'],
+            (new InterviewTranskripModel())->where('application_id', $aid)->findAll()
+        );
+        $this->assertCount(2, $paths, 'prasyarat uji: dua rekaman');
+        foreach ($paths as $p) {
+            $this->assertFileExists($p, 'prasyarat uji');
+        }
+
+        command('lamaran:hapus --email sinta@example.com');
+
+        foreach ($paths as $p) {
+            $this->assertFileDoesNotExist($p);
+        }
     }
 
     /** Akun harus selamat - kandidat masih bisa masuk dan melamar lagi. */

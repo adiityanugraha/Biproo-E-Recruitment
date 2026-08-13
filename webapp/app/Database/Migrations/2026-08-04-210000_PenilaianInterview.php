@@ -34,7 +34,9 @@ class PenilaianInterview extends Migration
             'kompetensi'     => ['type' => 'VARCHAR', 'constraint' => 120],
             'kategori'       => ['type' => 'VARCHAR', 'constraint' => 40, 'null' => true],
             'bobot'          => ['type' => 'INT'],
-            // kurang | cukup | baik - tiga tingkat, lihat PenilaianRubrik
+            // Semula 'kurang' | 'cukup' | 'baik' (rubrik tiga tingkat per
+            // lowongan). Sejak lembar BIPROO dipakai isinya angka '1'-'5';
+            // lebarnya dinaikkan di LebarkanTingkatPenilaian.
             'tingkat'        => ['type' => 'VARCHAR', 'constraint' => 10],
             'catatan'        => ['type' => 'VARCHAR', 'constraint' => 500, 'null' => true],
             'created_at'     => ['type' => 'DATETIME', 'default' => new RawSql('CURRENT_TIMESTAMP')],

@@ -142,6 +142,8 @@ sumbernya CSV tim DS.
 - [ ] `php spark migrate` selesai tanpa error
 - [ ] `php spark db:seed RecruiterSeeder`, lalu sandinya diganti
 - [ ] `php spark phpini:check` diperiksa
+- [ ] `upload_max_filesize` dan `post_max_size` >= 40M (lihat php.ini di bawah)
+- [ ] folder `writable/uploads/rekaman` bisa ditulis web server
 
 Seluruh urutan ini sudah diuji pada basis data SQL Server kosong (6 Agustus
 2026): 12 migrasi jalan dari nol tanpa error, termasuk filtered index di
@@ -173,6 +175,22 @@ Satu lagi di luar daftar itu: `date.timezone` di php.ini ini terisi
 dikunci uji otomatis, jadi jam interview tetap benar. Tetap saja setel php.ini
 server ke `Asia/Jakarta` supaya log dan galat PHP tidak memakai zona yang lain
 sendiri.
+
+#### Batas unggah (rekaman wawancara)
+
+`phpini:check` TIDAK memeriksa ini, dan kegagalannya paling menyesatkan: PHP
+membuang berkas yang kebesaran **sebelum** CI4 sempat memeriksanya, sehingga
+yang terlihat recruiter cuma form yang kembali kosong tanpa pesan apa pun.
+
+| Directive | Minimal | Kenapa |
+|---|---|---|
+| `upload_max_filesize` | `40M` | rekaman audio Zoom 30 menit 15-30 MB |
+| `post_max_size` | `40M` | harus >= `upload_max_filesize` |
+| `max_execution_time` | `120` | unggah 30 MB di jaringan kantor bisa lama |
+
+Angkanya harus di ATAS `Recruiter::REKAMAN_MAKS_KB` (35 MB), yang jadi batas
+sebenarnya dan yang punya pesan galat manusiawi. Mesin pengembangan sekarang
+sudah `40M`; server produksi bawaannya biasanya `2M`.
 
 ---
 
@@ -268,6 +286,31 @@ bukan keputusan Anda, jadi tanyakan ke atasan sedini mungkin.
       menampilkan error apa pun. Gejalanya cuma skor CV yang tidak pernah
       terisi, dan itu bisa berhari-hari tidak disadari.
 - [ ] **Rotasi log** `webapp/writable/logs/`.
+- [ ] **Rekaman wawancara menumpuk.** `writable/uploads/rekaman/` tumbuh jauh
+      lebih cepat daripada `uploads/cv/` (puluhan MB per kandidat, dan unggah
+      ulang menambah berkas tanpa menimpa). Belum ada pembersihan otomatis.
+      `php spark lamaran:hapus` ikut menghapusnya, tapi hanya untuk lamaran yang
+      memang dihapus.
+
+      Berkas ini yang PALING PEKA di sistem: isinya suara kandidat dan seluruh
+      isi pembicaraan, bukan ringkasan yang ia pilih sendiri seperti CV.
+      Perlakukan folder itu setidaknya seketat basis datanya.
+
+### Transkripsi yang tersangkut
+
+`ai-service` menyimpan status pekerjaannya di memori saja. Kalau callback-nya
+gagal mendarat - jaringan putus sesaat, CI4 direstart, layanannya mati di tengah
+jalan - transkrip yang sudah jadi ikut hilang, dan barisnya tertinggal
+berstatus `proses` sementara layar recruiter berbunyi "sedang ditranskripsi".
+
+```bash
+php spark transkrip:resend --kering    # lihat mana yang tersangkut
+php spark transkrip:resend             # kirim ulang yang antre/proses
+php spark transkrip:resend --gagal     # ikut yang sudah ditandai gagal
+```
+
+Yang berstatus `selesai` tidak pernah ikut. Tiap pengiriman ulang memakan dua
+panggilan LLM dari jatah harian.
 
 ---
 

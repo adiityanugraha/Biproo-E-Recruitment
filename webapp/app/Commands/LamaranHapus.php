@@ -26,7 +26,9 @@ use Throwable;
  *   2. Ruang Zoom hidup di server Zoom, bukan di basis data. Menghapus barisnya
  *      saja meninggalkan ruangan yang masih bisa dimasuki siapa pun yang
  *      menyimpan tautannya.
- *   3. Berkas CV ada di disk. Baris hilang, berkasnya menumpuk jadi yatim.
+ *   3. Berkas CV dan rekaman wawancara ada di disk. Baris hilang, berkasnya
+ *      menumpuk jadi yatim - dan rekaman wawancara adalah berkas paling peka
+ *      di sistem ini: isinya suara kandidat dan seluruh isi pembicaraan.
  */
 class LamaranHapus extends BaseCommand
 {
@@ -42,6 +44,7 @@ class LamaranHapus extends BaseCommand
     /** Anak lebih dulu, applications paling akhir. */
     private const TABEL_TURUNAN = [
         'interview_penilaian',
+        'interview_transkrip',
         'interviews',
         'screening_results',
         'candidate_stage_history',
@@ -74,9 +77,18 @@ class LamaranHapus extends BaseCommand
         }
 
         // Diambil SEKARANG, selagi barisnya masih ada.
-        $ids    = array_column($lamaran, 'id');
-        $zoom   = $this->meetingIds($db, $ids);
-        $berkas = array_filter(array_column($lamaran, 'cv_path'));
+        $ids  = array_column($lamaran, 'id');
+        $zoom = $this->meetingIds($db, $ids);
+        // CV dan rekaman wawancara sekaligus. Rekaman ikut karena ia BERKAS
+        // PALING PEKA di sistem ini: isinya suara kandidat dan seluruh isi
+        // pembicaraan, bukan ringkasan yang ia pilih sendiri seperti CV.
+        // Menghapus barisnya tanpa menghapus berkasnya berarti rekaman itu
+        // tetap ada di disk tanpa satu pun baris yang menunjuk ke sana - tidak
+        // akan pernah ada yang tahu ia masih di sana, apalagi menghapusnya.
+        $berkas = array_merge(
+            array_filter(array_column($lamaran, 'cv_path')),
+            $this->berkasRekaman($db, $ids)
+        );
 
         CLI::write(count($lamaran) . " lamaran milik {$email}:", 'yellow');
         foreach ($lamaran as $l) {
@@ -86,7 +98,7 @@ class LamaranHapus extends BaseCommand
             CLI::write('  ' . $t . ': ' . $this->hitung($db, $t, $ids) . ' baris');
         }
         CLI::write('  ruang Zoom: ' . (count($zoom) ?: 'tidak ada'));
-        CLI::write('  berkas CV: ' . count($berkas));
+        CLI::write('  berkas (CV + rekaman): ' . count($berkas));
 
         if ($kering) {
             CLI::write('Kering: tidak ada yang diubah.', 'green');
@@ -158,6 +170,26 @@ class LamaranHapus extends BaseCommand
             ->get()->getResultArray();
 
         return array_values(array_filter(array_column($baris, 'meeting_id')));
+    }
+
+    /**
+     * Berkas rekaman wawancara milik lamaran-lamaran ini.
+     *
+     * Satu lamaran bisa punya beberapa: unggah ulang menambah baris, tidak
+     * menimpa. Semuanya harus ikut terhapus - yang lama sama pekanya dengan
+     * yang terakhir.
+     *
+     * @param list<int> $ids
+     *
+     * @return list<string>
+     */
+    private function berkasRekaman(object $db, array $ids): array
+    {
+        $baris = $db->table('interview_transkrip')->select('berkas')
+            ->whereIn('application_id', $ids)->where('berkas IS NOT NULL', null, false)
+            ->get()->getResultArray();
+
+        return array_values(array_filter(array_column($baris, 'berkas')));
     }
 
     /**
