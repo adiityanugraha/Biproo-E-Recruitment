@@ -22,16 +22,28 @@ use App\Libraries\LembarPenilaian as L;
 
 // --- rakit baris penilaian jadi bentuk yang mudah dibaca template ---
 $hrd = $user = $narasi = [];
+// Siapa yang memberi nilai, per kompetensi. Sejak penilaian dibaca dari
+// transkrip (revisi 12 Agustus 2026), satu lembar diisi DUA pihak: AI membaca
+// apa yang terucap, recruiter menilai apa yang hanya bisa dilihat mata.
+// Pembaca lembar ini - user departemen, manajemen - berhak tahu yang mana.
+$asal = $alasan = [];
 foreach ($penilaian as $p) {
     $kat = $p['kategori'] ?? '';
     if ($kat === L::KAT_HRD) {
-        $hrd[$p['kompetensi']] = (int) $p['tingkat'];
+        $hrd[$p['kompetensi']]    = (int) $p['tingkat'];
+        $asal[$p['kompetensi']]   = (string) ($p['sumber'] ?? '');
+        $alasan[$p['kompetensi']] = (string) ($p['catatan'] ?? '');
     } elseif ($kat === L::KAT_USER) {
         $user[$p['kompetensi']] = (int) $p['tingkat'];
     } elseif ($kat === L::KAT_NARASI) {
         $narasi[$p['kompetensi']] = (string) $p['catatan'];
     }
 }
+
+// Lembar lama tidak punya kolom sumber, jadi barisnya kosong. Ditandai
+// tersendiri, bukan dianggap dinilai recruiter: yang tidak diketahui tidak
+// boleh diaku-akui, dan lembar cetak inilah yang paling lama dipercaya orang.
+$adaSumber = array_filter($asal) !== [];
 
 // Interview Result mengikuti keputusan Gate 2, bukan isian tersendiri: lolos
 // berarti Recommended. Selama keputusannya belum ada (termasuk saat kandidat
@@ -111,6 +123,19 @@ $titik = static function (array $nilai, float $skala) use ($hrd): string {
   .nilai th, .nilai td { border: 1px solid #f2e2c9; padding: 6px 10px; }
   .nilai th { background: #FDF3E4; color: #7a5a13; text-align: left; font-weight: 600; }
   .nilai td.v { text-align: right; width: 150px; }
+  .nilai td.s { width: 74px; text-align: center; }
+
+  /* Penanda siapa yang menilai. Warnanya sengaja lembut: ini keterangan asal
+     usul, bukan penilaian bahwa yang satu lebih sahih daripada yang lain. */
+  .tag { display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: .3px;
+         padding: 1px 6px; border-radius: 10px; white-space: nowrap; }
+  .t-ai  { background: #E8EEFA; color: #33518c; }
+  .t-org { background: #EDF6EE; color: #2f6b3c; }
+  .ket-sumber { font-size: 10px; color: #777; line-height: 1.7; margin: 8px 0 0; }
+  .sub-bar { background: #FDF3E4; color: #7a5a13; font-weight: 700; font-size: 11px;
+             padding: 4px 10px; border: 1px solid #f2e2c9; border-bottom: none; }
+  .alasan td { font-size: 10.5px; line-height: 1.55; color: #444; }
+  .alasan th { width: 34%; }
   .narasi { border: 1px solid #f2e2c9; margin-bottom: 8px; font-size: 12px; }
   .narasi .l { background: #FDF3E4; color: #7a5a13; font-weight: 600; padding: 5px 10px; }
   .narasi .t { padding: 8px 10px; min-height: 24px; }
@@ -309,10 +334,56 @@ $titik = static function (array $nilai, float $skala) use ($hrd): string {
               <td class="v">
                 <?= isset($hrd[$kompetensi]) ? esc(L::SKALA[$hrd[$kompetensi]] ?? '?') : $kosong ?>
               </td>
+              <?php if ($adaSumber): ?>
+                <td class="s">
+                  <?php // Tanda per baris, bukan cuma keterangan di bawah tabel:
+                        // yang perlu diketahui pembaca adalah nilai INI datang
+                        // dari mana, dan itu tidak terbaca kalau keterangannya
+                        // menggantung terpisah dari angkanya. ?>
+                  <?php if (isset($hrd[$kompetensi])): ?>
+                    <span class="tag <?= ($asal[$kompetensi] ?? '') === L::DARI_AI ? 't-ai' : 't-org' ?>">
+                      <?= ($asal[$kompetensi] ?? '') === L::DARI_AI ? 'AI' : 'recruiter' ?></span>
+                  <?php endif ?>
+                </td>
+              <?php endif ?>
             </tr>
           <?php endforeach ?>
         </table>
       </div>
+
+      <?php if ($adaSumber): ?>
+        <p class="ket-sumber">
+          <span class="tag t-ai">AI</span> dinilai otomatis dari transkrip rekaman wawancara, dengan
+          alasan yang mengutip ucapan kandidat.
+          <span class="tag t-org">recruiter</span> dinilai langsung oleh pewawancara; ketiganya tidak
+          bisa dibaca dari transkrip.
+          Butir bertanda &ldquo;-&rdquo; tidak cukup bahannya di wawancara ini dan tidak ikut dihitung.
+        </p>
+      <?php endif ?>
+
+      <?php
+        // Alasan penilaian AI ikut dicetak. Inilah yang membedakan skor yang
+        // bisa dipertanggungjawabkan dari angka yang muncul entah dari mana -
+        // dan lembar ini yang dibawa ke rapat, bukan layar recruiter.
+        $beralasan = array_filter(
+            $alasan,
+            static fn (string $t, string $k): bool => $t !== '' && ($asal[$k] ?? '') === L::DARI_AI,
+            ARRAY_FILTER_USE_BOTH
+        );
+      ?>
+      <?php if ($beralasan !== []): ?>
+        <div style="margin-top:14px">
+          <div class="sub-bar">Dasar penilaian dari transkrip</div>
+          <table class="nilai alasan">
+            <?php foreach ($beralasan as $kompetensi => $teks): ?>
+              <tr>
+                <th><?= esc($kompetensi) ?></th>
+                <td><?= esc($teks) ?></td>
+              </tr>
+            <?php endforeach ?>
+          </table>
+        </div>
+      <?php endif ?>
 
       <div style="margin-top:14px">
         <?php foreach (L::NARASI as $kunci => $label): ?>

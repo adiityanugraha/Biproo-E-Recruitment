@@ -311,6 +311,66 @@ final class LembarProfilTest extends CIUnitTestCase
         $this->assertStringNotContainsString('Recommended', $html);
     }
 
+    /**
+     * Lembar menandai siapa yang menilai tiap kompetensi.
+     *
+     * Satu lembar diisi DUA pihak: AI membaca apa yang terucap di transkrip,
+     * recruiter menilai apa yang hanya bisa dilihat mata. Lembar ini dibawa ke
+     * rapat dan dibaca orang yang tidak ikut wawancara, jadi asal-usul tiap
+     * angka harus terbaca dari lembarnya sendiri.
+     */
+    public function testTiapKompetensiDitandaiSiapaYangMenilai(): void
+    {
+        $aid = $this->fixture(['data_pribadi' => ['nama' => 'Sinta']]);
+        $this->nilai($aid);
+
+        $html = (string) $this->withSession($this->sesiRec)->get("recruiter/profil/{$aid}")->getBody();
+
+        // Dihitung hanya yang di dalam sel tabel: legenda di bawahnya memakai
+        // kelas yang sama, dan ikut menghitungnya membuat uji ini lulus walau
+        // penandanya cuma ada di legenda.
+        preg_match_all('#<td class="s">(.*?)</td>#s', $html, $sel);
+        $isi = implode('', $sel[1]);
+
+        $this->assertSame(6, substr_count($isi, 't-ai'), 'enam kompetensi dinilai dari transkrip');
+        $this->assertSame(3, substr_count($isi, 't-org'), 'tiga kompetensi dinilai recruiter');
+    }
+
+    /** Alasan penilaian AI ikut DICETAK, bukan cuma tersimpan. */
+    public function testAlasanPenilaianAiIkutTercetakDiLembar(): void
+    {
+        $aid = $this->fixture(['data_pribadi' => ['nama' => 'Sinta']]);
+        $this->nilai($aid);
+
+        $html = (string) $this->withSession($this->sesiRec)->get("recruiter/profil/{$aid}")->getBody();
+
+        $this->assertStringContainsString('Dasar penilaian dari transkrip', $html);
+        $this->assertStringContainsString('Mengutip transkrip.', $html);
+    }
+
+    /**
+     * Lembar lama tidak punya kolom sumber. Penandanya TIDAK muncul, bukan
+     * mengaku-aku semuanya dinilai recruiter - yang tidak diketahui tidak boleh
+     * ditulis sebagai fakta di dokumen yang dipercaya orang bertahun-tahun.
+     */
+    public function testPenilaianTanpaKolomSumberTidakDiberiTandaKarangan(): void
+    {
+        $aid = $this->fixture(['data_pribadi' => ['nama' => 'Sinta']]);
+        $model = new InterviewPenilaianModel();
+        foreach (L::HRD as $kompetensi) {
+            $model->insert([
+                'application_id' => $aid, 'kompetensi' => $kompetensi, 'kategori' => L::KAT_HRD,
+                'sumber' => null, 'bobot' => 1, 'tingkat' => '4', 'catatan' => '',
+            ]);
+        }
+
+        $html = (string) $this->withSession($this->sesiRec)->get("recruiter/profil/{$aid}")->getBody();
+
+        $this->assertStringContainsString('Above Average', $html, 'nilainya tetap tampil');
+        $this->assertStringNotContainsString('class="tag t-ai"', $html);
+        $this->assertStringNotContainsString('class="tag t-org"', $html);
+    }
+
     /** Radar digambar sendiri dengan SVG, tanpa pustaka grafik. */
     public function testRadarDigambarDariNilaiYangTersimpan(): void
     {
