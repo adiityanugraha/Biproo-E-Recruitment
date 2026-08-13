@@ -5,6 +5,7 @@ namespace App\Controllers;
 use App\Libraries\AiServiceException;
 use App\Libraries\GateTwo;
 use App\Libraries\KategoriPosisi;
+use App\Libraries\KirimRekaman;
 use App\Libraries\LembarPenilaian;
 use App\Libraries\PertanyaanKandidat;
 use App\Libraries\StageLogger;
@@ -726,6 +727,11 @@ class Recruiter extends BaseController
                 ->where('application_id', $appId)->orderBy('id', 'DESC')->first(),
             'pertanyaan' => $pertanyaan,
             'transkrip'  => (new InterviewTranskripModel())->terakhirUntuk($appId),
+            // Penilaian AI beserta alasannya ditampilkan DI SINI, bukan cuma
+            // tersimpan. Tanpa itu, kalimat "setiap nilai wajib disertai
+            // kutipan" cuma berlaku di dalam basis data - dan penilaian yang
+            // tidak pernah dibaca siapa pun sama saja dengan tidak beralasan.
+            'penilaian'  => (new InterviewPenilaianModel())->untukLamaran($appId),
             'sudah'      => (new StageHistoryModel())->latestStatus($appId, 'gate_2') !== null,
             'bingkai'    => $this->request->getGet('bingkai') === '1',
         ]);
@@ -773,11 +779,16 @@ class Recruiter extends BaseController
     }
 
     /**
-     * Unggah rekaman wawancara.
+     * Unggah rekaman wawancara SEKALIGUS menilai tiga kompetensi yang butuh mata.
      *
-     * Berkasnya disimpan dan barisnya dicatat berstatus 'antre'. Transkripsi dan
-     * penilaiannya menyusul di tahap berikutnya; yang penting sekarang rekaman
-     * tidak hilang, karena ia satu-satunya jejak wawancara yang sudah terjadi.
+     * Satu form, sekali kirim, dan itu disengaja. Gate 2 ditutup otomatis begitu
+     * penilaian AI mendarat; kalau tiga nilai ini dikirim terpisah, callback
+     * bisa tiba lebih dulu dan kandidat diputuskan dari lembar yang belum
+     * lengkap. Menggabungkannya membuat urutannya tidak mungkin terbalik.
+     *
+     * Appearance, Personal Grooming, dan Self-Presentation Skills tidak bisa
+     * dibaca dari transkrip - yang tersimpan di sana cuma kata-kata yang
+     * terucap. Recruiter yang menonton wawancaranya yang menilai.
      */
     public function unggahRekaman(int $appId)
     {
@@ -810,6 +821,16 @@ class Recruiter extends BaseController
             return redirect()->to($tujuan)->with('error', implode(' ', $this->validator->getErrors()));
         }
 
+        // Ketiganya wajib, dan diperiksa SEBELUM berkasnya dipindahkan: lembar
+        // yang separuh terisi bukan penilaian, dan Gate 2 akan menutup sendiri
+        // dari apa pun yang ada di tabel saat callback tiba.
+        $nilai = $this->nilaiMataManusia();
+        if ($nilai === null) {
+            return redirect()->to($tujuan)->with('error',
+                'Nilai ' . implode(', ', LembarPenilaian::MATA_MANUSIA) . ' harus diisi semua. '
+                . 'Ketiganya tidak bisa dibaca dari transkrip, jadi hanya Anda yang bisa menilainya.');
+        }
+
         // Nama acak, sama seperti CV: nama asli dari Zoom memuat nama peserta
         // dan tanggalnya, dan berkas rekaman wawancara jauh lebih peka daripada
         // CV - isinya seluruh pembicaraan, bukan ringkasan yang dipilih sendiri
@@ -818,15 +839,66 @@ class Recruiter extends BaseController
         $nama   = $berkas->getRandomName();
         $berkas->move(WRITEPATH . 'uploads/rekaman', $nama);
 
-        (new InterviewTranskripModel())->insert([
+        $id = (new InterviewTranskripModel())->insert([
             'application_id' => $appId,
             'sumber'         => 'unggahan',
             'status'         => 'antre',
             'berkas'         => 'uploads/rekaman/' . $nama,
         ]);
 
-        return redirect()->to($tujuan)->with('sukses',
-            'Rekaman tersimpan dan menunggu ditranskripsi.');
+        $this->simpanMataManusia($appId, $nilai);
+
+        // Rekaman TETAP tersimpan walau pengirimannya gagal, dan barisnya
+        // ditandai supaya bisa dicoba ulang. Wawancara sudah terjadi; kehilangan
+        // rekamannya berarti meminta kandidat mengulang.
+        $terkirim = (new KirimRekaman())->kirim((int) $id);
+
+        return redirect()->to($tujuan)->with(
+            $terkirim ? 'sukses' : 'error',
+            $terkirim
+                ? 'Rekaman tersimpan dan sedang ditranskripsi. Keputusan akhir muncul otomatis setelah selesai.'
+                : 'Rekaman tersimpan, tapi layanan AI tidak menjawab. Coba kirim ulang nanti.'
+        );
+    }
+
+    /**
+     * Tiga nilai dari form, atau null bila ada yang belum diisi.
+     *
+     * @return array<string, int>|null
+     */
+    private function nilaiMataManusia(): ?array
+    {
+        $kiriman = (array) ($this->request->getPost('nilai') ?? []);
+        $out     = [];
+        foreach (LembarPenilaian::MATA_MANUSIA as $i => $kompetensi) {
+            $n = $kiriman[$i] ?? null;
+            if (! is_numeric($n) || (int) $n < 1 || (int) $n > LembarPenilaian::MAKS_SKALA) {
+                return null;
+            }
+            $out[$kompetensi] = (int) $n;
+        }
+
+        return $out;
+    }
+
+    /** @param array<string, int> $nilai */
+    private function simpanMataManusia(int $appId, array $nilai): void
+    {
+        $db = db_connect();
+        $db->transException(true)->transStart();
+        $model = new InterviewPenilaianModel();
+        foreach ($nilai as $kompetensi => $n) {
+            $model->insert([
+                'application_id' => $appId,
+                'kompetensi'     => $kompetensi,
+                'kategori'       => LembarPenilaian::KAT_HRD,
+                'sumber'         => LembarPenilaian::DARI_RECRUITER,
+                'bobot'          => 1,
+                'tingkat'        => (string) $n,
+                'catatan'        => '',
+            ]);
+        }
+        $db->transComplete();
     }
 
     /**

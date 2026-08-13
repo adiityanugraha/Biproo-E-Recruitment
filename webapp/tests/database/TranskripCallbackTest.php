@@ -1,0 +1,405 @@
+<?php
+
+use App\Libraries\LembarPenilaian as L;
+use App\Libraries\StageLogger;
+use App\Models\ApplicationModel;
+use App\Models\CandidateModel;
+use App\Models\InterviewPenilaianModel;
+use App\Models\InterviewTranskripModel;
+use App\Models\JobModel;
+use App\Models\ScreeningResultModel;
+use App\Models\StageHistoryModel;
+use CodeIgniter\Test\CIUnitTestCase;
+use CodeIgniter\Test\DatabaseTestTrait;
+use CodeIgniter\Test\FeatureTestTrait;
+
+/**
+ * Callback transkripsi: penilaian dari transkrip lalu Gate 2 ditutup sendiri
+ * (revisi 12 Agustus 2026).
+ *
+ * Inilah ujung rantainya. Recruiter mengunggah rekaman dan menilai tiga
+ * kompetensi yang butuh mata; sisanya dinilai dari transkrip, dan begitu
+ * hasilnya mendarat di sini lembarnya lengkap sehingga keputusannya bisa
+ * dihitung tanpa menunggu siapa pun lagi.
+ *
+ * @internal
+ */
+final class TranskripCallbackTest extends CIUnitTestCase
+{
+    use DatabaseTestTrait;
+    use FeatureTestTrait;
+
+    protected $migrate   = true;
+    protected $refresh   = true;
+    protected $namespace = 'App';
+
+    private string $token = 'token-uji-transkrip';
+    private int $urut     = 0;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        config('AiService')->sharedToken = $this->token;
+    }
+
+    /**
+     * @param float|null $skorCv null = screening belum menghasilkan skor
+     * @param bool       $mataManusia sertakan tiga nilai dari recruiter
+     */
+    private function fixture(?float $skorCv = 0.8, bool $mataManusia = true): int
+    {
+        $n   = ++$this->urut;
+        $cid = (new CandidateModel())->insert([
+            'nama' => 'Reza ' . $n, 'email' => "reza{$n}@example.com", 'password_hash' => 'x',
+        ]);
+        $jid = (int) (new JobModel())->insert([
+            'judul' => 'Admin Gudang', 'req_skill' => 'Stok', 'req_pendidikan' => 'D3', 'req_pengalaman' => '1th',
+        ]);
+        $aid = (int) (new ApplicationModel())->insert([
+            'candidate_id' => $cid, 'job_id' => $jid, 'cv_path' => 'uploads/cv/x.pdf',
+        ]);
+
+        if ($skorCv !== null) {
+            (new ScreeningResultModel())->insert([
+                'application_id' => $aid, 'screening_job_id' => 'uji-' . $aid, 'status' => 'success',
+                'score_overall'  => $skorCv, 'provider' => 'dummy', 'model_version' => 'uji',
+            ]);
+        }
+
+        (new InterviewTranskripModel())->insert([
+            'application_id' => $aid, 'sumber' => 'unggahan', 'status' => 'proses',
+            'berkas'         => 'uploads/rekaman/x.wav',
+        ]);
+
+        if ($mataManusia) {
+            $model = new InterviewPenilaianModel();
+            foreach (L::MATA_MANUSIA as $kompetensi) {
+                $model->insert([
+                    'application_id' => $aid, 'kompetensi' => $kompetensi,
+                    'kategori' => L::KAT_HRD, 'sumber' => L::DARI_RECRUITER,
+                    'bobot' => 1, 'tingkat' => '4', 'catatan' => '',
+                ]);
+            }
+        }
+
+        return $aid;
+    }
+
+    /** @param list<array<string, mixed>>|null $penilaian null = pakai nilai bagus untuk enam kompetensi */
+    private function kirim(int $aid, string $status = 'selesai', ?array $penilaian = null, string $catatan = '', ?string $token = null)
+    {
+        $penilaian ??= array_map(
+            static fn (string $k): array => ['kompetensi' => $k, 'nilai' => 4, 'alasan' => 'Kandidat berkata "saya cek ulang stoknya".'],
+            L::dariTranskrip()
+        );
+
+        return $this->withHeaders(['X-Token' => $token ?? $this->token])
+            ->withBodyFormat('json')
+            ->post('interview/callback', [
+                'application_id' => $aid,
+                'status'         => $status,
+                'teks'           => "Pewawancara: Selamat pagi.\nKandidat: Selamat pagi, saya Reza.",
+                'penilaian'      => $penilaian,
+                'catatan'        => $catatan,
+            ]);
+    }
+
+    private function gate2(int $aid): ?string
+    {
+        return (new StageHistoryModel())->latestStatus($aid, 'gate_2');
+    }
+
+    // --- penjagaan ---
+
+    public function testTanpaTokenDitolak(): void
+    {
+        $aid = $this->fixture();
+
+        $this->kirim($aid, token: 'salah')->assertStatus(403);
+        $this->assertNull($this->gate2($aid));
+    }
+
+    /**
+     * Token kosong menolak SEMUANYA, bukan menerima semuanya.
+     *
+     * Instalasi yang belum dikonfigurasi tidak boleh diam-diam menyerahkan
+     * rekaman wawancara ke siapa pun yang menebak URL-nya.
+     */
+    public function testTokenKosongMenolakSemuanya(): void
+    {
+        config('AiService')->sharedToken = '';
+        $aid = $this->fixture();
+
+        $this->kirim($aid, token: '')->assertStatus(403);
+    }
+
+    public function testLamaranTidakDikenalDitolak(): void
+    {
+        $this->kirim(9999)->assertStatus(422);
+    }
+
+    public function testStatusTidakDikenalDitolak(): void
+    {
+        $this->kirim($this->fixture(), 'entah')->assertStatus(422);
+    }
+
+    // --- jalur normal ---
+
+    public function testPenilaianTersimpanBesertaAlasannya(): void
+    {
+        $aid = $this->fixture();
+
+        $this->kirim($aid)->assertStatus(200);
+
+        $baris = (new InterviewPenilaianModel())
+            ->where(['application_id' => $aid, 'sumber' => L::DARI_AI])->findAll();
+
+        $this->assertCount(count(L::dariTranskrip()), $baris);
+        // Alasan bukan hiasan: tanpa kutipan transkrip, penilaian otomatis cuma
+        // angka yang tidak bisa dibantah siapa pun, termasuk kandidat yang
+        // bertanya kenapa ia gugur.
+        $this->assertStringContainsString('saya cek ulang stoknya', $baris[0]['catatan']);
+    }
+
+    public function testTranskripTersimpanDanStatusnyaSelesai(): void
+    {
+        $aid = $this->fixture();
+
+        $this->kirim($aid);
+
+        $t = (new InterviewTranskripModel())->terakhirUntuk($aid);
+        $this->assertSame('selesai', $t['status']);
+        $this->assertStringContainsString('saya Reza', $t['teks']);
+    }
+
+    /** Sembilan kompetensi: enam dari transkrip, tiga dari recruiter. */
+    public function testLembarLengkapDariDuaSumber(): void
+    {
+        $aid = $this->fixture();
+
+        $this->kirim($aid);
+
+        $baris = (new InterviewPenilaianModel())->untukLamaran($aid);
+        $this->assertCount(count(L::HRD), $baris);
+        $this->assertCount(3, array_filter($baris, static fn ($b) => $b['sumber'] === L::DARI_RECRUITER));
+        $this->assertCount(6, array_filter($baris, static fn ($b) => $b['sumber'] === L::DARI_AI));
+    }
+
+    public function testGateDuaDitutupOtomatisSaatKandidatBagus(): void
+    {
+        $aid = $this->fixture(0.85);
+
+        $this->kirim($aid);
+
+        $this->assertSame('passed', $this->gate2($aid));
+        $this->assertSame('entered', (new StageHistoryModel())->latestStatus($aid, 'berkas_kontrak'));
+    }
+
+    public function testGateDuaMenggugurkanKandidatBernilaiRendah(): void
+    {
+        $aid = $this->fixture(0.55);
+        $buruk = array_map(
+            static fn (string $k): array => ['kompetensi' => $k, 'nilai' => 1, 'alasan' => 'Jawaban tidak menyentuh pertanyaan.'],
+            L::dariTranskrip()
+        );
+
+        $this->kirim($aid, penilaian: $buruk);
+
+        $this->assertSame('failed', $this->gate2($aid));
+    }
+
+    public function testCatatanGateDuaMemuatSkorDanKompetensiTerlemah(): void
+    {
+        $aid   = $this->fixture(0.85);
+        $nilai = array_map(
+            static fn (string $k): array => ['kompetensi' => $k, 'nilai' => 4, 'alasan' => 'baik'],
+            L::dariTranskrip()
+        );
+        $nilai[0]['nilai'] = 1;   // satu kompetensi jeblok
+
+        $this->kirim($aid, penilaian: $nilai);
+
+        $catatan = (new StageHistoryModel())
+            ->where(['application_id' => $aid, 'stage' => 'gate_2'])->orderBy('id', 'DESC')->first()['note'];
+        $this->assertStringContainsString('Skor interview', $catatan);
+        $this->assertStringContainsString('terlemah: ' . L::dariTranskrip()[0], $catatan);
+    }
+
+    // --- keadaan yang TIDAK boleh diputus mesin ---
+
+    /**
+     * Transkripsi gagal berarti datanya tidak ada, bukan kandidatnya buruk.
+     *
+     * Memutus dengan data yang kurang bukan otomatisasi melainkan tebakan yang
+     * dikirim lewat email.
+     */
+    public function testTranskripsiGagalDiserahkanKeRecruiter(): void
+    {
+        $aid = $this->fixture();
+
+        $this->kirim($aid, 'gagal', [], 'Rekaman tidak memuat suara orang berbicara.');
+
+        $this->assertSame('flagged', $this->gate2($aid));
+        $this->assertSame('gagal', (new InterviewTranskripModel())->terakhirUntuk($aid)['status']);
+        $this->assertCount(0, (new InterviewPenilaianModel())
+            ->where(['application_id' => $aid, 'sumber' => L::DARI_AI])->findAll());
+    }
+
+    /** Sebabnya ikut disimpan: kolom kosong tanpa keterangan tidak bisa ditindaklanjuti. */
+    public function testSebabKegagalanTersimpanUntukDibacaRecruiter(): void
+    {
+        $aid = $this->fixture();
+
+        $this->kirim($aid, 'gagal', [], 'Audio senyap sepanjang rekaman.');
+
+        $this->assertStringContainsString('Audio senyap',
+            (new InterviewTranskripModel())->terakhirUntuk($aid)['catatan']);
+    }
+
+    /**
+     * Tanpa skor CV, sistem tidak memutus - sama seperti jalur lama.
+     *
+     * Mengalihkan bobot CV ke interview diam-diam mengubah rumusnya, sehingga
+     * kandidat yang CV-nya gagal terbaca dinilai dengan aturan lain dari
+     * kandidat sebelahnya tanpa ada yang tahu.
+     */
+    public function testTanpaSkorCvKeputusanDiserahkanKeRecruiter(): void
+    {
+        $aid = $this->fixture(null);
+
+        $this->kirim($aid);
+
+        $this->assertSame('flagged', $this->gate2($aid));
+        // Penilaiannya tetap tersimpan: yang kurang skor CV, bukan interviewnya.
+        $this->assertCount(6, (new InterviewPenilaianModel())
+            ->where(['application_id' => $aid, 'sumber' => L::DARI_AI])->findAll());
+    }
+
+    /** Tak satu pun kompetensi bisa dinilai: sama saja transkripnya tidak berguna. */
+    public function testSemuaKompetensiNullDiserahkanKeRecruiter(): void
+    {
+        $aid  = $this->fixture(0.85, mataManusia: false);
+        $null = array_map(
+            static fn (string $k): array => ['kompetensi' => $k, 'nilai' => null, 'alasan' => 'Tidak cukup bahan.'],
+            L::dariTranskrip()
+        );
+
+        $this->kirim($aid, penilaian: $null);
+
+        $this->assertSame('flagged', $this->gate2($aid));
+    }
+
+    // --- kekokohan ---
+
+    /**
+     * Callback yang datang dua kali tidak boleh menilai dua kali.
+     *
+     * Tabel penilaian tambah-saja dan tidak punya jalur perbaikan, jadi yang
+     * menjaga di sini keputusan Gate 2: sekali ada, berhenti.
+     */
+    public function testCallbackKeduaTidakMenilaiUlang(): void
+    {
+        $aid = $this->fixture();
+
+        $this->kirim($aid);
+        $this->kirim($aid)->assertStatus(200);
+
+        $this->assertCount(count(L::HRD), (new InterviewPenilaianModel())->untukLamaran($aid));
+        $this->assertCount(1, (new StageHistoryModel())
+            ->where(['application_id' => $aid, 'stage' => 'gate_2'])->findAll());
+    }
+
+    /** Keputusan recruiter yang sudah dibuat lebih dulu tidak boleh ditimpa mesin. */
+    public function testKeputusanRecruiterTidakDitimpa(): void
+    {
+        $aid = $this->fixture();
+        (new StageLogger())->log($aid, 'gate_2', 'failed', 'recruiter:Irpan', 'Keputusan manual');
+
+        $this->kirim($aid)->assertStatus(200);
+
+        $this->assertSame('failed', $this->gate2($aid));
+        $this->assertCount(0, (new InterviewPenilaianModel())
+            ->where(['application_id' => $aid, 'sumber' => L::DARI_AI])->findAll());
+    }
+
+    /**
+     * Kompetensi di luar daftar yang diminta DIBUANG.
+     *
+     * Yang boleh masuk tabel penilaian ditentukan LembarPenilaian, bukan oleh
+     * apa pun yang dikirim ke endpoint ini - dan endpoint ini terbuka bagi siapa
+     * saja yang memegang token bersama.
+     */
+    public function testKompetensiAsingDibuang(): void
+    {
+        $aid = $this->fixture();
+
+        $this->kirim($aid, penilaian: [
+            ['kompetensi' => 'Communication Skills', 'nilai' => 4, 'alasan' => 'jelas'],
+            ['kompetensi' => 'Appearance', 'nilai' => 5, 'alasan' => 'tidak sah: butuh mata'],
+            ['kompetensi' => 'Kesetiaan Pada Perusahaan', 'nilai' => 5, 'alasan' => 'karangan'],
+        ]);
+
+        $ai = (new InterviewPenilaianModel())
+            ->where(['application_id' => $aid, 'sumber' => L::DARI_AI])->findAll();
+        $this->assertCount(1, $ai);
+        $this->assertSame('Communication Skills', $ai[0]['kompetensi']);
+    }
+
+    public function testNilaiDiLuarSkalaDibuang(): void
+    {
+        $aid = $this->fixture();
+
+        $this->kirim($aid, penilaian: [
+            ['kompetensi' => 'Communication Skills', 'nilai' => 9, 'alasan' => 'x'],
+            ['kompetensi' => 'Adaptability', 'nilai' => 0, 'alasan' => 'x'],
+            ['kompetensi' => 'Service Orientation', 'nilai' => 3, 'alasan' => 'x'],
+        ]);
+
+        $ai = (new InterviewPenilaianModel())
+            ->where(['application_id' => $aid, 'sumber' => L::DARI_AI])->findAll();
+        $this->assertCount(1, $ai);
+        $this->assertSame('Service Orientation', $ai[0]['kompetensi']);
+    }
+
+    /**
+     * Butir yang tidak bisa dinilai DILEWATI, bukan disimpan bernilai nol.
+     *
+     * Butir kosong tidak ikut dihitung LembarPenilaian::skor(); nol akan
+     * menyeret rata-ratanya turun dan menggugurkan kandidat karena bahannya
+     * kurang, bukan karena jawabannya.
+     */
+    public function testButirTanpaNilaiTidakDisimpanSebagaiNol(): void
+    {
+        $aid   = $this->fixture();
+        $nilai = array_map(
+            static fn (string $k): array => ['kompetensi' => $k, 'nilai' => 5, 'alasan' => 'baik'],
+            L::dariTranskrip()
+        );
+        $nilai[0]['nilai'] = null;
+
+        $this->kirim($aid, penilaian: $nilai);
+
+        $ai = (new InterviewPenilaianModel())
+            ->where(['application_id' => $aid, 'sumber' => L::DARI_AI])->findAll();
+        $this->assertCount(count(L::dariTranskrip()) - 1, $ai);
+        $this->assertSame([], array_filter($ai, static fn ($b) => $b['tingkat'] === '0'));
+    }
+
+    // --- unduhan rekaman untuk ai-service ---
+
+    public function testRekamanHanyaBisaDiunduhDenganToken(): void
+    {
+        $aid = $this->fixture();
+        $id  = (new InterviewTranskripModel())->terakhirUntuk($aid)['id'];
+
+        $this->withHeaders(['X-Token' => 'salah'])->get('internal/rekaman/' . $id)->assertStatus(403);
+    }
+
+    public function testRekamanYangBerkasnyaHilangJadi404(): void
+    {
+        $aid = $this->fixture();
+        $id  = (new InterviewTranskripModel())->terakhirUntuk($aid)['id'];
+
+        $this->withHeaders(['X-Token' => $this->token])->get('internal/rekaman/' . $id)->assertStatus(404);
+    }
+}

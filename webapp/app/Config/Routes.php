@@ -12,6 +12,8 @@ $routes->get('logout', 'Auth::logout');
 // jalur internal ai-service (tanpa sesi; dijaga token X-Token, lihat Screening.php)
 $routes->get('internal/cv/(:num)', 'Screening::cvFile/$1');
 $routes->post('screening/callback', 'Screening::callback');
+$routes->get('internal/rekaman/(:num)', 'Interview::rekamanFile/$1');
+$routes->post('interview/callback', 'Interview::callback');
 
 $routes->group('', ['filter' => 'candidateauth'], static function ($routes) {
     $routes->get('dashboard', 'Lamaran::dashboard');

@@ -37,6 +37,39 @@ final class LembarPenilaian
         'Service Orientation',
     ];
 
+    /**
+     * Tiga kompetensi yang HANYA bisa dinilai manusia yang melihat kandidat.
+     *
+     * Tidak ada cara jujur menilai penampilan, kerapian, atau cara membawa diri
+     * dari transkrip: yang tersimpan cuma kata-kata yang terucap. Menyerahkannya
+     * ke AI berarti menghasilkan angka yang terlihat sah tanpa dasar apa pun.
+     *
+     * Sisanya (enam) dinilai dari transkrip. Pembagiannya bukan soal apa yang
+     * mampu dikerjakan mesin, melainkan apa yang datanya memang ada.
+     */
+    public const MATA_MANUSIA = [
+        'Appearance',
+        'Personal Grooming',
+        'Self-Presentation Skills',
+    ];
+
+    /** Asal sebuah nilai, disimpan di interview_penilaian.sumber. */
+    public const DARI_AI = 'ai';
+    public const DARI_RECRUITER = 'recruiter';
+
+    /**
+     * Kompetensi yang dinilai dari transkrip.
+     *
+     * Diturunkan dari HRD dikurangi MATA_MANUSIA, bukan didaftar ulang: dua
+     * daftar yang harus dijaga tetap sama pada akhirnya selalu berbeda.
+     *
+     * @return list<string>
+     */
+    public static function dariTranskrip(): array
+    {
+        return array_values(array_diff(self::HRD, self::MATA_MANUSIA));
+    }
+
     /** Skala 1-5, label mengikuti lembar aslinya yang berbahasa Inggris. */
     public const SKALA = [
         1 => 'Poor',

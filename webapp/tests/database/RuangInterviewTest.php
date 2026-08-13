@@ -3,10 +3,12 @@
 use App\Controllers\Recruiter;
 use App\Libraries\AiService;
 use App\Libraries\AiServiceException;
+use App\Libraries\LembarPenilaian as L;
 use App\Libraries\StageLogger;
 use App\Models\ApplicationModel;
 use App\Models\CandidateModel;
 use App\Models\InterviewModel;
+use App\Models\InterviewPenilaianModel;
 use App\Models\InterviewTranskripModel;
 use App\Models\JobModel;
 use App\Models\ScreeningResultModel;
@@ -148,7 +150,7 @@ final class RuangInterviewTest extends CIUnitTestCase
     private function siapkanBerkas(string $namaAsli, int $ukuran = 1024): void
     {
         $tmp = tempnam(sys_get_temp_dir(), 'rek');
-        file_put_contents($tmp, str_repeat('a', $ukuran));
+        file_put_contents($tmp, $this->wav($ukuran));
         $this->sampah[] = $tmp;
 
         // Lewat layanan superglobals, bukan menulis $_FILES langsung: CI4
@@ -161,6 +163,22 @@ final class RuangInterviewTest extends CIUnitTestCase
             'error'    => UPLOAD_ERR_OK,
             'size'     => $ukuran,
         ]]);
+    }
+
+    /**
+     * WAV senyap yang sah, seukuran yang diminta.
+     *
+     * Harus berkas audio SUNGGUHAN, bukan sekadar berakhiran .m4a: aturan
+     * ext_in CI4 mencocokkan ekstensi dengan tipe yang ditebak dari magic bytes,
+     * jadi berkas berisi teks akan tertolak sebagai text/plain. Itu memang yang
+     * diinginkan - berkas palsu bernama .m4a tidak boleh lolos.
+     */
+    private function wav(int $ukuran): string
+    {
+        $n = max(0, $ukuran - 44);   // 44 byte kepala RIFF
+
+        return 'RIFF' . pack('V', 36 + $n) . 'WAVEfmt ' . pack('VvvVVvv', 16, 1, 1, 8000, 8000, 1, 8)
+            . 'data' . pack('V', $n) . str_repeat("\x00", $n);
     }
 
     // --- halaman ---
@@ -308,7 +326,7 @@ final class RuangInterviewTest extends CIUnitTestCase
     public function testRekamanTerlaluBesarDitolak(): void
     {
         $aid = $this->fixture();
-        $this->siapkanBerkas('panjang.m4a', (Recruiter::REKAMAN_MAKS_KB + 1024) * 1024);
+        $this->siapkanBerkas('panjang.wav', (Recruiter::REKAMAN_MAKS_KB + 1024) * 1024);
 
         $this->withSession($this->sesiRec)->post('recruiter/ruang/' . $aid . '/rekaman');
 
@@ -326,6 +344,57 @@ final class RuangInterviewTest extends CIUnitTestCase
     }
 
     /**
+     * Tiga kompetensi mata manusia WAJIB, dan diperiksa sebelum berkas dipindah.
+     *
+     * Gate 2 menutup sendiri begitu penilaian AI mendarat. Kalau ketiganya
+     * boleh kosong, kandidat diputuskan dari lembar enam butir - dan enam butir
+     * bagus bisa menutupi penampilan yang tidak pernah dinilai siapa pun.
+     */
+    public function testTigaNilaiMataManusiaWajibDiisi(): void
+    {
+        $aid = $this->fixture();
+        $this->siapkanBerkas('wawancara.wav');
+
+        // Dua dari tiga: separuh terisi bukan penilaian.
+        $this->withSession($this->sesiRec)->post('recruiter/ruang/' . $aid . '/rekaman', [
+            'nilai' => [0 => 4, 1 => 3],
+        ]);
+
+        $this->assertNull((new InterviewTranskripModel())->terakhirUntuk($aid));
+        $this->assertSame([], (new InterviewPenilaianModel())->untukLamaran($aid));
+        $this->assertStringContainsString('Personal Grooming', session('error'));
+    }
+
+    public function testNilaiDiLuarSkalaDitolak(): void
+    {
+        $aid = $this->fixture();
+        $this->siapkanBerkas('wawancara.wav');
+
+        $this->withSession($this->sesiRec)->post('recruiter/ruang/' . $aid . '/rekaman', [
+            'nilai' => [0 => 4, 1 => 3, 2 => 9],
+        ]);
+
+        $this->assertNull((new InterviewTranskripModel())->terakhirUntuk($aid));
+    }
+
+    public function testFormUnggahMemuatTigaKompetensiMataManusia(): void
+    {
+        $aid = $this->fixture();
+        $this->tigaPertanyaan();
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/ruang/' . $aid)->getBody();
+
+        foreach (L::MATA_MANUSIA as $kompetensi) {
+            $this->assertStringContainsString(esc($kompetensi), $html);
+        }
+        // Enam kompetensi lain TIDAK boleh ada di form: yang dinilai recruiter
+        // hanya yang tidak bisa dibaca dari transkrip.
+        $this->assertStringNotContainsString('Problem-Solving Ability', $html);
+        // 3 kompetensi x 5 skala
+        $this->assertSame(15, substr_count($html, 'type="radio" name="nilai['));
+    }
+
+    /**
      * Penjaga ini berjalan SEBELUM berkasnya diperiksa, jadi bisa diuji utuh.
      *
      * Form-nya memang disembunyikan setelah kandidat diputus, tapi
@@ -336,7 +405,7 @@ final class RuangInterviewTest extends CIUnitTestCase
     {
         $aid = $this->fixture();
         (new StageLogger())->log($aid, 'gate_2', 'passed', 'uji');
-        $this->siapkanBerkas('telat.m4a');
+        $this->siapkanBerkas('telat.wav');
 
         $this->withSession($this->sesiRec)->post('recruiter/ruang/' . $aid . '/rekaman');
 
@@ -386,6 +455,60 @@ final class RuangInterviewTest extends CIUnitTestCase
 
         $this->assertSame('gagal', $model->terakhirUntuk($aid)['status']);
         $this->assertSame('Halo, saya Reza.', $model->selesaiUntuk($aid)['teks']);
+    }
+
+    /**
+     * Transkrip dan alasan penilaian TAMPIL, bukan cuma tersimpan.
+     *
+     * Tanpa ini, aturan "setiap nilai wajib disertai kutipan" cuma berlaku di
+     * dalam basis data - dan alasan yang tidak pernah dibaca siapa pun sama
+     * saja dengan tidak beralasan.
+     */
+    public function testTranskripDanAlasanPenilaianTampilDiHalaman(): void
+    {
+        $aid = $this->fixture();
+        $this->tigaPertanyaan();
+        (new InterviewTranskripModel())->insert([
+            'application_id' => $aid, 'sumber' => 'unggahan', 'status' => 'selesai',
+            'berkas' => 'uploads/rekaman/x.wav',
+            'teks'   => "Pewawancara: Ceritakan pengalaman Anda.\nKandidat: Saya cek ulang surat jalan.",
+        ]);
+        (new InterviewPenilaianModel())->insert([
+            'application_id' => $aid, 'kompetensi' => 'Communication Skills',
+            'kategori' => L::KAT_HRD, 'sumber' => L::DARI_AI, 'bobot' => 1,
+            'tingkat' => '4', 'catatan' => 'Menjelaskan runtut, mengutip surat jalan.',
+        ]);
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/ruang/' . $aid)->getBody();
+
+        $this->assertStringContainsString('Saya cek ulang surat jalan', $html);
+        $this->assertStringContainsString('Menjelaskan runtut', $html);
+    }
+
+    /**
+     * Kompetensi yang tidak terjawab disebut TERANG-TERANGAN.
+     *
+     * Baris yang hilang diam-diam terbaca sebagai "tidak ada masalah", padahal
+     * artinya kebalikan: wawancaranya tidak memuat bahan untuk menilai itu.
+     */
+    public function testKompetensiYangTidakTerjawabDisebutkan(): void
+    {
+        $aid = $this->fixture();
+        $this->tigaPertanyaan();
+        (new InterviewTranskripModel())->insert([
+            'application_id' => $aid, 'sumber' => 'unggahan', 'status' => 'selesai',
+            'berkas' => 'uploads/rekaman/x.wav', 'teks' => 'Kandidat: Halo.',
+        ]);
+        (new InterviewPenilaianModel())->insert([
+            'application_id' => $aid, 'kompetensi' => 'Communication Skills',
+            'kategori' => L::KAT_HRD, 'sumber' => L::DARI_AI, 'bobot' => 1,
+            'tingkat' => '4', 'catatan' => 'x',
+        ]);
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/ruang/' . $aid)->getBody();
+
+        $this->assertStringContainsString('Tidak bisa dinilai dari transkrip ini', $html);
+        $this->assertStringContainsString('Adaptability', $html);
     }
 
     public function testStatusRekamanTampilDiHalaman(): void

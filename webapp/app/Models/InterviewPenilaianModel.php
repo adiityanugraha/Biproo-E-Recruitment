@@ -13,7 +13,10 @@ use CodeIgniter\Model;
 class InterviewPenilaianModel extends Model
 {
     protected $table         = 'interview_penilaian';
-    protected $allowedFields = ['application_id', 'kompetensi', 'kategori', 'bobot', 'tingkat', 'catatan'];
+    // sumber: 'ai' | 'recruiter' - siapa yang memberi nilai ini. Sejak penilaian
+    // dibaca dari transkrip, satu lembar diisi dua pihak, dan tanpa kolom ini
+    // keduanya tidak bisa dibedakan lagi setelah tersimpan.
+    protected $allowedFields = ['application_id', 'kompetensi', 'kategori', 'sumber', 'bobot', 'tingkat', 'catatan'];
 
     /** @return list<array<string, mixed>> */
     public function untukLamaran(int $appId): array

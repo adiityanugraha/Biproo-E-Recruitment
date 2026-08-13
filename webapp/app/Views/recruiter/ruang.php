@@ -1,6 +1,7 @@
 <?php
 
 use App\Controllers\Recruiter;
+use App\Libraries\LembarPenilaian as L;
 use App\Libraries\PertanyaanKandidat as PK;
 
 /**
@@ -72,6 +73,26 @@ $LENCANA = [
   .s-gagal { background: #FFE9E3; color: #a53a1c; }
   input[type=file] { font-family: inherit; font-size: 13px; }
   .kosong { color: #999; padding: 22px 0; text-align: center; }
+
+  details { margin-top: 10px; }
+  summary { cursor: pointer; font-size: 13px; font-weight: 600; color: #2F6FED; }
+  .transkrip { white-space: pre-wrap; word-break: break-word; margin: 8px 0 0;
+               padding: 12px 14px; background: #fafbfd; border: 1px solid #eef0f5;
+               border-radius: 8px; font-family: inherit; font-size: 13px; line-height: 1.65;
+               max-height: 320px; overflow-y: auto; }
+
+  /* nilai + alasannya, satu baris per kompetensi */
+  .alasan { border-collapse: collapse; width: 100%; }
+  .alasan th, .alasan td { border: 1px solid #eef0f5; padding: 7px 10px;
+                           font-size: 13px; text-align: left; vertical-align: top; }
+  .alasan th { background: #fafbfd; font-weight: 600; width: 30%; }
+  .alasan td.n { width: 15%; white-space: nowrap; font-weight: 600; }
+
+  /* matriks kompetensi x skala, sama dengan halaman penilaian */
+  .lembar { border-collapse: collapse; }
+  .lembar th, .lembar td { border: 1px solid #e2e6ee; padding: 7px 10px; text-align: center; font-size: 13px; }
+  .lembar th { background: #FFF6E6; color: #8a6d1e; font-size: 12px; font-weight: 600; }
+  .lembar th small { font-weight: 400; font-size: 10px; }
 </style>
 <?= $this->endSection() ?>
 
@@ -166,7 +187,50 @@ $LENCANA = [
     <?php if (! empty($transkrip['catatan'])): ?>
       <p class="ket" style="margin-top:0"><?= esc($transkrip['catatan']) ?></p>
     <?php endif ?>
+
+    <?php if (trim((string) ($transkrip['teks'] ?? '')) !== ''): ?>
+      <?php // Transkrip lengkap, bukan cuma keterangan bahwa ia ada. Inilah
+            // satu-satunya cara membuktikan skornya masuk akal; menyembunyikannya
+            // membuat penilaian otomatis jadi angka yang tidak bisa dibantah
+            // siapa pun, termasuk kandidat yang bertanya kenapa ia gugur. ?>
+      <details<?= $sudah ? ' open' : '' ?>>
+        <summary>Transkrip wawancara</summary>
+        <pre class="transkrip"><?= esc($transkrip['teks']) ?></pre>
+      </details>
+    <?php endif ?>
   <?php endif ?>
+
+<?php
+// Enam kompetensi dari transkrip, tiga dari recruiter. Dipisah supaya pembaca
+// tahu mana yang dibaca mesin dan mana yang dilihat manusia - keduanya masuk
+// tabel yang sama dan tanpa pemisahan ini tampak seolah satu orang menilai
+// sembilan-sembilanya.
+$dariAi = array_filter($penilaian, static fn ($p) => ($p['sumber'] ?? '') === L::DARI_AI);
+?>
+<?php if ($dariAi !== []): ?>
+  <p style="margin:18px 0 6px"><b>Penilaian dari transkrip</b></p>
+  <table class="alasan">
+    <?php foreach ($dariAi as $p): ?>
+      <tr>
+        <th><?= esc($p['kompetensi']) ?></th>
+        <td class="n"><?= esc($p['tingkat']) ?> - <?= esc(L::SKALA[(int) $p['tingkat']] ?? '?') ?></td>
+        <td><?= esc($p['catatan']) ?></td>
+      </tr>
+    <?php endforeach ?>
+  </table>
+  <?php
+    // Kompetensi yang TIDAK terjawab disebut terang-terangan. Baris yang hilang
+    // diam-diam terbaca sebagai "tidak ada masalah", padahal artinya kebalikan:
+    // wawancaranya tidak memuat bahan untuk menilai hal itu.
+    $tak = array_diff(L::dariTranskrip(), array_column($dariAi, 'kompetensi'));
+  ?>
+  <?php if ($tak !== []): ?>
+    <p class="ket">
+      Tidak bisa dinilai dari transkrip ini: <b><?= esc(implode(', ', $tak)) ?></b>.
+      Wawancaranya tidak memuat bahan untuk butir itu, dan butir kosong tidak ikut dihitung.
+    </p>
+  <?php endif ?>
+<?php endif ?>
 
   <?php if ($sudah): ?>
     <p class="ket" style="margin-bottom:0">Kandidat ini sudah diputuskan.</p>
@@ -182,8 +246,38 @@ $LENCANA = [
       <input type="hidden" name="bingkai" value="<?= $bingkai ? '1' : '0' ?>">
       <input type="file" name="rekaman" required
              accept=".<?= str_replace(',', ',.', Recruiter::REKAMAN_EKSTENSI) ?>">
-      <button type="submit" class="btn-unggah" style="margin-left:8px">
-        <?= $transkrip === null ? 'Unggah Rekaman' : 'Unggah Ulang' ?>
+
+      <?php // Tiga kompetensi ini dinilai DI SINI, bukan di halaman terpisah,
+            // dan bukan demi kerapian: Gate 2 menutup sendiri begitu penilaian
+            // AI mendarat. Kalau ketiganya dikirim terpisah, callback bisa tiba
+            // lebih dulu dan kandidat diputuskan dari lembar yang belum lengkap.
+            // Satu form membuat urutannya tidak mungkin terbalik. ?>
+      <p style="margin:18px 0 6px"><b>Penilaian Anda</b></p>
+      <p class="ket" style="margin-top:0">
+        Ketiganya tidak bisa dibaca dari transkrip - yang tersimpan di sana cuma kata-kata
+        yang terucap. Enam kompetensi lain dinilai otomatis dari transkrip beserta
+        kutipan yang mendasarinya.
+      </p>
+      <table class="lembar">
+        <tr>
+          <th style="text-align:left">Kompetensi</th>
+          <?php foreach (L::SKALA as $n => $label): ?>
+            <th><?= $n ?><br><small><?= esc($label) ?></small></th>
+          <?php endforeach ?>
+        </tr>
+        <?php foreach (L::MATA_MANUSIA as $i => $kompetensi): ?>
+          <tr>
+            <td style="text-align:left"><?= esc($kompetensi) ?></td>
+            <?php foreach (array_keys(L::SKALA) as $n): ?>
+              <td><input type="radio" name="nilai[<?= $i ?>]" value="<?= $n ?>" required style="width:auto"></td>
+            <?php endforeach ?>
+          </tr>
+        <?php endforeach ?>
+      </table>
+
+      <button type="submit" class="btn-unggah" style="margin-top:14px"
+              onclick="return confirm('Kirim rekaman dan penilaian? Keputusan akhir kandidat dihitung otomatis setelah transkripsi selesai, dan kandidat dikabari lewat email.')">
+        <?= $transkrip === null ? 'Unggah &amp; Nilai' : 'Unggah Ulang &amp; Nilai' ?>
       </button>
     </form>
     <?php if ($transkrip !== null): ?>

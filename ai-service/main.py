@@ -8,9 +8,11 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, HttpUrl
 
+import transkrip as trx
 from chat import MAKS_TOKEN_CV, get_chat_provider, tanpa_kunci
 from embeddings import get_provider
 from extract import ekstrak_bytes
+from nilai import nilai_dari_transkrip
 from ocr import ocr_lengkapi
 from sanitize import bersihkan
 from scoring import BIDANG, Skor, hitung
@@ -31,11 +33,16 @@ retry_extraction: list[str] = []
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global job_queue
+    global job_queue, TRANSKRIP_QUEUE
     job_queue = asyncio.Queue()
-    worker = asyncio.create_task(process_jobs())
+    TRANSKRIP_QUEUE = asyncio.Queue()
+    # Antrian terpisah, bukan satu antrian bersama: transkripsi rekaman 30 menit
+    # jauh lebih lama daripada screening CV, dan menaruh keduanya di satu antrian
+    # membuat CV yang baru diunggah menunggu di belakang rekaman.
+    pekerja = [asyncio.create_task(process_jobs()), asyncio.create_task(proses_interview_jobs())]
     yield
-    worker.cancel()
+    for p in pekerja:
+        p.cancel()
 
 
 app = FastAPI(title="E-REQ AI Microservice", version="0.2.0", lifespan=lifespan)
@@ -206,7 +213,127 @@ async def process_jobs():
         await _callback(job_id)
 
 
+# --- Transkripsi + penilaian wawancara (revisi 12 Agustus 2026) ---
+#
+# Async 202 + callback, sama seperti /screening, dan karena alasan yang sama:
+# dua panggilan LLM berurutan atas berkas puluhan MB, jauh melewati batas sabar
+# siapa pun yang menunggu di depan layar.
+#
+# SATU pekerjaan, DUA langkah, hasil TERPISAH. Transkrip disimpan sebagai
+# transkrip dan penilaian sebagai penilaian. Menggabungkannya jadi satu
+# panggilan memang menghemat satu jatah kuota, tapi transkripnya lalu tidak bisa
+# diperiksa terpisah dari skornya - padahal justru itu satu-satunya cara
+# membuktikan skornya masuk akal.
+
+TRANSKRIP_QUEUE: asyncio.Queue | None = None
+
+
+class InterviewRequest(BaseModel):
+    application_id: int
+    # URL internal CI4 untuk mengunduh rekamannya, dijaga X-Token yang sama
+    audio_url: HttpUrl
+    mime: str = "audio/mp4"
+    # Kompetensi yang dinilai DITENTUKAN CI4. Sumber kebenarannya
+    # LembarPenilaian di sisi PHP, yang juga dipakai lembar profil dan Gate 2.
+    kompetensi: list[str] = []
+    callback_url: HttpUrl
+    callback_token: str | None = None
+
+
+class InterviewAccepted(BaseModel):
+    interview_job_id: str
+
+
+async def _proses_interview(job_id: str) -> None:
+    job = jobs[job_id]
+    job["status"] = "processing"
+
+    badan = {
+        "interview_job_id": job_id,
+        "application_id": job["application_id"],
+        "status": "gagal",
+        "teks": "",
+        "penilaian": [],
+        "catatan": "",
+    }
+
+    try:
+        data = await asyncio.to_thread(_unduh_cv, job["audio_url"], job.get("token"))
+    except Exception as e:
+        badan["catatan"] = f"Rekaman tidak bisa diunduh: {tanpa_kunci(e)}"[:400]
+        job["status"] = "gagal"
+        await _kirim_hasil_interview(job, badan)
+
+        return
+
+    # Langkah 1: rekaman jadi teks.
+    hasil = await asyncio.to_thread(trx.transkripsikan, data, job["mime"])
+    badan["teks"] = hasil.teks
+    if not hasil.berhasil:
+        badan["catatan"] = hasil.catatan
+        job["status"] = "gagal"
+        await _kirim_hasil_interview(job, badan)
+
+        return
+
+    # Langkah 2: teks jadi penilaian. Transkrip TETAP dikirim walau penilaian
+    # gagal - ia hasil yang sudah didapat, dan recruiter masih bisa membacanya
+    # lalu menilai sendiri.
+    llm = getattr(app.state, "chat_provider", None) or get_chat_provider(MAKS_TOKEN_CV)
+    n = await asyncio.to_thread(nilai_dari_transkrip, hasil.teks, job["kompetensi"], llm)
+
+    badan["penilaian"] = [
+        {"kompetensi": b.kompetensi, "nilai": b.nilai, "alasan": b.alasan} for b in n.butir
+    ]
+    badan["status"] = "selesai" if n.berhasil else "gagal"
+    badan["catatan"] = n.catatan
+    job["status"] = badan["status"]
+
+    await _kirim_hasil_interview(job, badan)
+
+
+async def _kirim_hasil_interview(job: dict, badan: dict) -> None:
+    try:
+        await asyncio.to_thread(_kirim_callback, job["callback_url"], job.get("token"), badan)
+        job["callback"] = "sent"
+    except Exception as e:
+        logging.getLogger("uvicorn.error").error("callback interview gagal: %s", tanpa_kunci(e))
+        job["callback"] = f"failed: {tanpa_kunci(e)}"
+
+
+async def proses_interview_jobs():
+    while True:
+        job_id = await TRANSKRIP_QUEUE.get()
+        try:
+            await _proses_interview(job_id)
+        except Exception as e:
+            # Antrian TIDAK boleh mati karena satu pekerjaan yang meledak: sekali
+            # worker-nya tumbang, semua rekaman berikutnya menggantung di 'antre'
+            # selamanya tanpa ada yang tahu.
+            logging.getLogger("uvicorn.error").error("job interview tumbang: %s", tanpa_kunci(e))
+            jobs[job_id]["status"] = "gagal"
+
+
 # --- Endpoint ---
+
+@app.post("/interview", status_code=202, response_model=InterviewAccepted)
+def create_interview(req: InterviewRequest) -> InterviewAccepted:
+    if not req.kompetensi:
+        raise HTTPException(400, "daftar kompetensi kosong")
+
+    job_id = uuid4().hex
+    jobs[job_id] = {
+        "status": "queued",
+        "application_id": req.application_id,
+        "audio_url": str(req.audio_url),
+        "mime": req.mime,
+        "kompetensi": list(req.kompetensi),
+        "callback_url": str(req.callback_url),
+        "token": req.callback_token,
+    }
+    TRANSKRIP_QUEUE.put_nowait(job_id)
+
+    return InterviewAccepted(interview_job_id=job_id)
 
 @app.post("/screening", status_code=202, response_model=ScreeningAccepted)
 def create_screening(req: ScreeningRequest) -> ScreeningAccepted:

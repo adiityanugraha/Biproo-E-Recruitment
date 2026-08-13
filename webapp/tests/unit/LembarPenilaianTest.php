@@ -130,6 +130,36 @@ final class LembarPenilaianTest extends CIUnitTestCase
         ));
     }
 
+    /**
+     * Pembagian AI dan manusia menutup sembilan kompetensi, tanpa tumpang tindih.
+     *
+     * Diturunkan, bukan didaftar dua kali: dua daftar yang harus dijaga tetap
+     * sama pada akhirnya selalu berbeda, dan yang bocor lewat celah itu adalah
+     * kompetensi yang tidak dinilai siapa pun.
+     */
+    public function testPembagianAiDanManusiaMenutupSeluruhKompetensi(): void
+    {
+        $transkrip = L::dariTranskrip();
+
+        $this->assertSame([], array_intersect($transkrip, L::MATA_MANUSIA));
+        $this->assertEqualsCanonicalizing(L::HRD, array_merge($transkrip, L::MATA_MANUSIA));
+        $this->assertCount(6, $transkrip);
+    }
+
+    /**
+     * Ketiganya HANYA bisa dinilai manusia yang melihat kandidat.
+     *
+     * Tidak ada cara jujur menilai penampilan dari transkrip: yang tersimpan
+     * di sana cuma kata-kata yang terucap.
+     */
+    public function testKompetensiVisualTidakPernahMasukDaftarTranskrip(): void
+    {
+        foreach (['Appearance', 'Personal Grooming', 'Self-Presentation Skills'] as $visual) {
+            $this->assertContains($visual, L::MATA_MANUSIA);
+            $this->assertNotContains($visual, L::dariTranskrip());
+        }
+    }
+
     /** Terlemah hanya yang di BAWAH Average. */
     public function testTerlemahHanyaYangDiBawahAverage(): void
     {
