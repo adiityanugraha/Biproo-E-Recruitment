@@ -6,12 +6,14 @@ use App\Libraries\AiServiceException;
 use App\Libraries\GateTwo;
 use App\Libraries\KategoriPosisi;
 use App\Libraries\LembarPenilaian;
+use App\Libraries\PertanyaanKandidat;
 use App\Libraries\StageLogger;
 use App\Libraries\ZoomException;
 use App\Models\ApplicationModel;
 use App\Models\EmailQueueModel;
 use App\Models\InterviewModel;
 use App\Models\InterviewPenilaianModel;
+use App\Models\InterviewTranskripModel;
 use App\Models\JobModel;
 use App\Models\ScreeningResultModel;
 use App\Models\StageHistoryModel;
@@ -677,6 +679,156 @@ class Recruiter extends BaseController
      * Keputusan akhir (Gate 2) di tab Completed: recruiter beri skor interview
      * (slider) + putuskan Lolos/Tidak. Selalu manual - sistem hanya merekomendasi.
      */
+    /**
+     * Berkas rekaman yang diterima. Zoom merekam lokal ke M4A (audio saja) atau
+     * MP4 (audio + video); MP3 dan WAV ikut diterima karena recruiter kadang
+     * mengonversinya dulu agar berkasnya lebih kecil.
+     */
+    public const REKAMAN_EKSTENSI = 'm4a,mp4,mp3,wav';
+
+    /**
+     * 35 MB. Rekaman audio Zoom 30 menit sekitar 15-30 MB; video jauh lebih
+     * besar dan memang sebaiknya tidak diunggah - yang dibutuhkan cuma suaranya.
+     *
+     * Angka ini HARUS di bawah upload_max_filesize dan post_max_size php.ini.
+     * Kalau melebihi, PHP membuang berkasnya sebelum CI4 sempat memeriksa, dan
+     * yang terlihat recruiter cuma form yang kembali kosong tanpa pesan apa pun.
+     */
+    public const REKAMAN_MAKS_KB = 35840;
+
+    /**
+     * Ruang interview recruiter (revisi 12 Agustus 2026).
+     *
+     * Satu halaman untuk satu kandidat, dibuka berdampingan dengan jendela Zoom:
+     * tautan ruangannya, tiga pertanyaan yang disusun dari CV kandidat itu, dan
+     * tempat mengunggah rekaman setelah wawancara selesai.
+     *
+     * Menggantikan tombol "Pertanyaan" yang dulu membuka daftar milik LOWONGAN
+     * dan sama untuk semua pelamarnya.
+     */
+    public function ruangInterview(int $appId)
+    {
+        $app = $this->lamaranDetail($appId);
+        if ($app === null) {
+            return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
+        }
+
+        // Pertanyaan dibuat saat halaman ini DIBUKA, bukan saat Gate 1 lolos.
+        // Kalau kuota habis di detik Gate 1, kandidat akan tersangkut tanpa
+        // pertanyaan dan tanpa jalan keluar; di sini kegagalan masih bisa
+        // jatuh ke bank soal lowongan, dan recruiter melihatnya seketika.
+        $pertanyaan = (new PertanyaanKandidat())->untukLamaran($appId);
+
+        return view('recruiter/ruang', [
+            'judul'      => 'Ruang Interview',
+            'app'        => $app,
+            'iv'         => (new InterviewModel())
+                ->where('application_id', $appId)->orderBy('id', 'DESC')->first(),
+            'pertanyaan' => $pertanyaan,
+            'transkrip'  => (new InterviewTranskripModel())->terakhirUntuk($appId),
+            'sudah'      => (new StageHistoryModel())->latestStatus($appId, 'gate_2') !== null,
+            'bingkai'    => $this->request->getGet('bingkai') === '1',
+        ]);
+    }
+
+    /**
+     * Sunting atau susun ulang tiga pertanyaan kandidat.
+     *
+     * Dua tindakan dalam satu endpoint karena keduanya menulis ke tempat yang
+     * sama dan berangkat dari form yang sama. Yang membedakan tombol mana yang
+     * ditekan, bukan alur yang berbeda.
+     */
+    public function simpanPertanyaan(int $appId)
+    {
+        if ($this->lamaranDetail($appId) === null) {
+            return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
+        }
+        $bingkai = $this->request->getPost('bingkai') === '1';
+        $tujuan  = 'recruiter/ruang/' . $appId . ($bingkai ? '?bingkai=1' : '');
+
+        // Setelah kandidat diputus, pertanyaannya jadi catatan: ia dasar
+        // penilaian yang sudah terlanjur dipakai. Mengubahnya di belakang
+        // membuat lembar profil bercerita tentang wawancara yang tidak terjadi.
+        if ((new StageHistoryModel())->latestStatus($appId, 'gate_2') !== null) {
+            return redirect()->to($tujuan)->with('error',
+                'Kandidat ini sudah diputuskan, pertanyaannya tidak bisa diubah lagi.');
+        }
+
+        $lib = new PertanyaanKandidat();
+        if ($this->request->getPost('aksi') === 'buat') {
+            $hasil = $lib->buatUlang($appId);
+
+            return redirect()->to($tujuan)->with(
+                $hasil === [] ? 'error' : 'sukses',
+                $hasil === []
+                    ? 'Gagal menyusun pertanyaan. Layanan AI tidak menjawab atau kuota hariannya habis, '
+                      . 'dan lowongan ini belum punya bank soal sebagai cadangan.'
+                    : 'Pertanyaan disusun ulang.'
+            );
+        }
+
+        $lib->simpanTeks($appId, array_map('strval', (array) ($this->request->getPost('pertanyaan') ?? [])));
+
+        return redirect()->to($tujuan)->with('sukses', 'Pertanyaan tersimpan.');
+    }
+
+    /**
+     * Unggah rekaman wawancara.
+     *
+     * Berkasnya disimpan dan barisnya dicatat berstatus 'antre'. Transkripsi dan
+     * penilaiannya menyusul di tahap berikutnya; yang penting sekarang rekaman
+     * tidak hilang, karena ia satu-satunya jejak wawancara yang sudah terjadi.
+     */
+    public function unggahRekaman(int $appId)
+    {
+        if ($this->lamaranDetail($appId) === null) {
+            return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
+        }
+        $bingkai = $this->request->getPost('bingkai') === '1';
+        $tujuan  = 'recruiter/ruang/' . $appId . ($bingkai ? '?bingkai=1' : '');
+
+        // Form-nya memang disembunyikan setelah kandidat diputus, tapi
+        // menyembunyikan form bukan penjagaan: kiriman ulang dari riwayat
+        // browser tetap sampai ke sini. Rekaman yang mendarat sesudah keputusan
+        // akan tampak sebagai dasar penilaian padahal tidak pernah dibaca.
+        if ((new StageHistoryModel())->latestStatus($appId, 'gate_2') !== null) {
+            return redirect()->to($tujuan)->with('error',
+                'Kandidat ini sudah diputuskan, rekamannya tidak bisa ditambah lagi.');
+        }
+
+        $aturan = ['rekaman' => [
+            'rules'  => 'uploaded[rekaman]|max_size[rekaman,' . self::REKAMAN_MAKS_KB . ']'
+                        . '|ext_in[rekaman,' . self::REKAMAN_EKSTENSI . ']',
+            'errors' => [
+                'uploaded' => 'Belum ada berkas rekaman yang dipilih.',
+                'max_size' => 'Ukuran rekaman maksimal ' . round(self::REKAMAN_MAKS_KB / 1024) . ' MB. '
+                              . 'Rekam audio saja (bukan video) supaya berkasnya jauh lebih kecil.',
+                'ext_in'   => 'Berkas harus rekaman audio atau video (' . self::REKAMAN_EKSTENSI . ').',
+            ],
+        ]];
+        if (! $this->validate($aturan)) {
+            return redirect()->to($tujuan)->with('error', implode(' ', $this->validator->getErrors()));
+        }
+
+        // Nama acak, sama seperti CV: nama asli dari Zoom memuat nama peserta
+        // dan tanggalnya, dan berkas rekaman wawancara jauh lebih peka daripada
+        // CV - isinya seluruh pembicaraan, bukan ringkasan yang dipilih sendiri
+        // oleh kandidat.
+        $berkas = $this->request->getFile('rekaman');
+        $nama   = $berkas->getRandomName();
+        $berkas->move(WRITEPATH . 'uploads/rekaman', $nama);
+
+        (new InterviewTranskripModel())->insert([
+            'application_id' => $appId,
+            'sumber'         => 'unggahan',
+            'status'         => 'antre',
+            'berkas'         => 'uploads/rekaman/' . $nama,
+        ]);
+
+        return redirect()->to($tujuan)->with('sukses',
+            'Rekaman tersimpan dan menunggu ditranskripsi.');
+    }
+
     /**
      * Form penilaian interview per kompetensi.
      *

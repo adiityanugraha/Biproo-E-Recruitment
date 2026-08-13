@@ -123,18 +123,14 @@ foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
                   // pindah ke kolom Summary, mengikuti tabel BIPROO yang asli. ?>
             <div class="aksi">
               <?php if ($stage === 'interview_online' && $status === 'progress'): ?>
-                <?php // Pertanyaan melekat pada LOWONGAN, bukan kandidat - satu set
-                      // dipakai semua pelamar posisi yang sama (lihat migrasi
-                      // PertanyaanInterviewPerLowongan). ?>
+                <?php // Satu tombol, bukan tiga. Ruang interview sudah memuat tautan
+                      // Zoom, tiga pertanyaan milik kandidat INI (bukan milik
+                      // lowongan seperti dulu), dan tempat mengunggah rekamannya. ?>
                 <?php // ?bingkai=1 membuat halamannya dirender tanpa topbar dan sidebar
                       // (layout_bingkai), karena keduanya sudah ada di halaman ini. ?>
-                <a href="<?= site_url('recruiter/pertanyaan/' . $a['job_id']) ?>?bingkai=1"
-                   onclick="return bukaJendela(this.href, <?= esc(json_encode('Pertanyaan - ' . $a['judul']), 'attr') ?>)">
-                  <button class="b-tanya">Pertanyaan</button></a>
-                <?php if (! empty($a['join_url'])): ?>
-                  <a href="<?= esc($a['join_url'], 'attr') ?>" target="_blank" rel="noopener">
-                    <button class="b-aksi">Link Zoom</button></a>
-                <?php endif ?>
+                <a href="<?= site_url('recruiter/ruang/' . $a['id']) ?>?bingkai=1"
+                   onclick="return bukaJendela(this.href, <?= esc(json_encode('Ruang Interview - ' . $a['nama']), 'attr') ?>)">
+                  <button class="b-tanya">Ruang Interview</button></a>
                 <?php // Melepas jadwal: slot kembali ke daftar, kandidat memilih ulang.
                       // Bukan menggugurkan kandidat, jadi warnanya netral bukan merah.
                       // Alasannya ditanyakan lewat prompt (lihat alasanReschedule). ?>
@@ -146,6 +142,12 @@ foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
               <?php elseif ($stage === 'interview_online' && $status === 'rescheduled'): ?>
                 <span style="font-size:11px;color:#a5771a">menunggu kandidat memilih slot baru</span>
               <?php elseif ($stage === 'interview_online' && $status === 'completed'): ?>
+                <?php // Ruang interview ikut di sini, bukan cuma di On Progress:
+                      // rekaman diunggah SESUDAH wawancara, dan saat itu kandidat
+                      // sudah berpindah ke tab ini. ?>
+                <a href="<?= site_url('recruiter/ruang/' . $a['id']) ?>?bingkai=1"
+                   onclick="return bukaJendela(this.href, <?= esc(json_encode('Ruang Interview - ' . $a['nama']), 'attr') ?>)">
+                  <button class="b-tanya">Ruang Interview</button></a>
                 <?php if ($a['gate2'] === 'passed'): ?>
                   <span style="color:#1d6b3d;font-weight:700">✅ Lolos</span>
                 <?php elseif ($a['gate2'] === 'failed'): ?>

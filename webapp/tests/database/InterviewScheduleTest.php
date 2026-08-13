@@ -281,7 +281,10 @@ final class InterviewScheduleTest extends CIUnitTestCase
         $res = $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online');
 
         $res->assertSee('Sinta');
-        $res->assertSee('Link Zoom');
+        // Tautan Zoom pindah ke dalam Ruang Interview (revisi 12 Agustus 2026):
+        // satu halaman memuat tautannya, tiga pertanyaan kandidat, dan tempat
+        // mengunggah rekaman, jadi kolom Action tidak lagi berisi tiga tombol.
+        $res->assertSee('Ruang Interview');
         $res->assertSee('Reschedule');   // tombol pelepas jadwal ikut di sini
     }
 

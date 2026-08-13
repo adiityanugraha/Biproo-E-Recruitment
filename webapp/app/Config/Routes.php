@@ -34,6 +34,10 @@ $routes->group('recruiter', ['filter' => 'recruiterauth'], static function ($rou
     $routes->get('kandidat', 'Recruiter::kandidat');
     $routes->get('cv/(:num)', 'Recruiter::cvKandidat/$1');
     $routes->post('interview/reschedule/(:num)', 'Recruiter::rescheduleInterview/$1');
+    // ruang interview per kandidat: tautan Zoom, tiga pertanyaan, unggah rekaman
+    $routes->get('ruang/(:num)', 'Recruiter::ruangInterview/$1');
+    $routes->post('ruang/(:num)/pertanyaan', 'Recruiter::simpanPertanyaan/$1');
+    $routes->post('ruang/(:num)/rekaman', 'Recruiter::unggahRekaman/$1');
     $routes->get('nilai/(:num)', 'Recruiter::formNilai/$1');
     // lembar profil kandidat 3 halaman, dibuka di tab baru untuk dicetak
     $routes->get('profil/(:num)', 'Recruiter::profil/$1');

@@ -1,0 +1,197 @@
+<?php
+
+use App\Controllers\Recruiter;
+use App\Libraries\PertanyaanKandidat as PK;
+
+/**
+ * Ruang interview satu kandidat (revisi 12 Agustus 2026).
+ *
+ * Dibuka berdampingan dengan jendela Zoom, jadi urutannya mengikuti urutan
+ * kerja recruiter: masuk ruangan, tanya tiga hal, unggah rekamannya.
+ *
+ * Sama seperti halaman pertanyaan, bisa dibuka utuh atau di dalam jendela
+ * pratinjau di atas tabel Interview HRD. Penanda bingkai ikut terbawa saat form
+ * dikirim, kalau tidak halaman di dalam kotak berubah jadi versi utuh lengkap
+ * dengan topbar dan sidebar yang terjepit.
+ */
+$bingkai = $bingkai ?? false;
+
+// Dari mana pertanyaannya disusun. Recruiter perlu tahu ini: 'posisi' dan
+// 'bank' sama-sama berisi pertanyaan umum, tapi yang satu memang seharusnya
+// begitu (kandidat belum pernah bekerja) dan yang satu lagi tanda kuota LLM
+// habis. Kalau keduanya terlihat sama, kegagalan tidak akan pernah ketahuan.
+$sumber = $pertanyaan[0]['sumber'] ?? '';
+$LENCANA = [
+    PK::SUMBER_PENGALAMAN => ['l-baik', 'dari pengalaman kerja kandidat',
+        'Disusun dari riwayat kerja di CV kandidat ini.'],
+    PK::SUMBER_POSISI => ['l-netral', 'dari uraian lowongan',
+        'CV kandidat tidak mencantumkan riwayat kerja, jadi pertanyaannya disusun dari lowongan.'],
+    PK::SUMBER_BANK => ['l-awas', 'cadangan: bank soal lowongan',
+        'Layanan AI tidak menjawab atau kuota hariannya habis. Pertanyaan ini dipinjam dari bank '
+        . 'soal lowongan dan TIDAK disesuaikan dengan kandidat ini.'],
+];
+?>
+<?= $this->extend($bingkai ? 'layout_bingkai' : 'layout_recruiter') ?>
+
+<?= $this->section('gaya') ?>
+<style>
+  button { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer;
+           font-family: inherit; font-weight: 600; font-size: 13px; }
+  .btn-zoom { background: #2D8CFF; color: #fff; }
+  .btn-simpan { background: #20A277; color: #fff; }
+  .btn-ulang { background: #f0f2f7; color: #555; }
+  .btn-unggah { background: #2F6FED; color: #fff; }
+  .kartu { background: #fff; border: 1px solid #eef0f5; border-radius: 12px;
+           padding: 20px 22px; margin-bottom: 14px; }
+  .kartu h3 { font-size: 14px; margin: 0 0 12px; }
+  .kepala { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .kepala .sub { color: #888; font-size: 13px; }
+
+  .lencana { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
+  .l-baik { background: #E8F7EE; color: #1d6b3d; }
+  .l-netral { background: #f0f2f7; color: #555; }
+  .l-awas { background: #FFE9E3; color: #a53a1c; }
+  .ket { font-size: 12px; color: #666; line-height: 1.55; margin: 8px 0 14px; }
+
+  .baris { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+  .baris .no { width: 26px; height: 26px; flex-shrink: 0; border-radius: 50%; background: #FFF6E6;
+               color: #8a6d1e; display: flex; align-items: center; justify-content: center;
+               font-size: 12px; font-weight: 700; margin-top: 7px; }
+  .baris textarea { display: block; width: 100%; box-sizing: border-box;
+                    padding: 10px 13px; border: 1px solid #e2e6ee; border-radius: 8px;
+                    font-family: inherit; font-size: 14px; line-height: 1.6;
+                    resize: vertical; min-height: 74px; }
+  .baris textarea:focus { outline: none; border-color: #2F6FED; box-shadow: 0 0 0 3px rgba(47,111,237,.12); }
+  .baris .isi { flex: 1; min-width: 0; }
+  .baris .teks { padding: 9px 0; font-size: 14px; line-height: 1.6; }
+
+  .status { display: inline-block; font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
+  .s-antre { background: #FFF6E6; color: #8a6d1e; }
+  .s-proses { background: #DCE9FF; color: #2b4d8a; }
+  .s-selesai { background: #E8F7EE; color: #1d6b3d; }
+  .s-gagal { background: #FFE9E3; color: #a53a1c; }
+  input[type=file] { font-family: inherit; font-size: 13px; }
+  .kosong { color: #999; padding: 22px 0; text-align: center; }
+</style>
+<?= $this->endSection() ?>
+
+<?= $this->section('sidebar') ?>
+<a href="<?= site_url('recruiter/tahap/interview_online') ?>"><span class="l"><span>👔</span><span>Interview HRD</span></span></a>
+<a href="<?= site_url('recruiter/profil/' . $app['id']) ?>" target="_blank" rel="noopener"><span class="l"><span>📋</span><span>Lembar Profil</span></span></a>
+<?= $this->endSection() ?>
+
+<?= $this->section('isi') ?>
+
+<div class="kartu">
+  <div class="kepala">
+    <h2 style="margin:0"><?= esc($app['nama']) ?></h2>
+    <span class="sub"><?= esc($app['judul']) ?> &middot; <?= esc($app['email']) ?></span>
+  </div>
+  <?php if (! empty($iv['scheduled_at'])): ?>
+    <p class="ket" style="margin:8px 0 0">📅 <?= esc(date('d M Y, H:i', strtotime($iv['scheduled_at']))) ?> WIB</p>
+  <?php endif ?>
+  <?php if (! empty($iv['join_url'])): ?>
+    <p style="margin:12px 0 0">
+      <a href="<?= esc($iv['join_url'], 'attr') ?>" target="_blank" rel="noopener">
+        <button class="btn-zoom">Masuk Ruang Zoom</button></a>
+    </p>
+  <?php endif ?>
+</div>
+
+<div class="kartu">
+  <div class="kepala">
+    <h3 style="margin:0">Tiga Pertanyaan</h3>
+    <?php if ($sumber !== '' && isset($LENCANA[$sumber])): ?>
+      <span class="lencana <?= $LENCANA[$sumber][0] ?>"><?= esc($LENCANA[$sumber][1]) ?></span>
+    <?php endif ?>
+  </div>
+  <?php if ($sumber !== '' && isset($LENCANA[$sumber])): ?>
+    <p class="ket"><?= esc($LENCANA[$sumber][2]) ?></p>
+  <?php endif ?>
+
+  <?php if ($pertanyaan === []): ?>
+    <p class="kosong">Pertanyaan belum berhasil disusun.</p>
+  <?php endif ?>
+
+  <?php if ($sudah): ?>
+    <?php // Sesudah kandidat diputus, pertanyaannya jadi catatan: ia dasar
+          // penilaian yang sudah terlanjur dipakai. Ditampilkan sebagai teks,
+          // tanpa kotak isian yang mengundang orang mengubahnya. ?>
+    <?php foreach ($pertanyaan as $i => $p): ?>
+      <div class="baris">
+        <span class="no"><?= $i + 1 ?></span>
+        <div class="isi"><div class="teks"><?= esc($p['pertanyaan']) ?></div></div>
+      </div>
+    <?php endforeach ?>
+    <p class="ket" style="margin-bottom:0">Kandidat ini sudah diputuskan, pertanyaannya tidak bisa diubah lagi.</p>
+  <?php else: ?>
+    <form method="post" action="<?= site_url('recruiter/ruang/' . $app['id'] . '/pertanyaan') ?>">
+      <?= csrf_field() ?>
+      <input type="hidden" name="bingkai" value="<?= $bingkai ? '1' : '0' ?>">
+      <?php foreach ($pertanyaan as $i => $p): ?>
+        <div class="baris">
+          <span class="no"><?= $i + 1 ?></span>
+          <div class="isi">
+            <textarea name="pertanyaan[]" rows="2"
+                      maxlength="<?= PK::MAKS_PANJANG ?>"><?= esc($p['pertanyaan']) ?></textarea>
+          </div>
+        </div>
+      <?php endforeach ?>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <?php if ($pertanyaan !== []): ?>
+          <button type="submit" class="btn-simpan">Simpan Pertanyaan</button>
+        <?php endif ?>
+        <button type="submit" name="aksi" value="buat" class="btn-ulang"
+                onclick="return confirm('Susun ulang tiga pertanyaan dari CV kandidat? Pertanyaan yang sekarang akan diganti.')">
+          <?= $pertanyaan === [] ? 'Coba Susun Lagi' : 'Susun Ulang' ?>
+        </button>
+      </div>
+    </form>
+  <?php endif ?>
+</div>
+
+<div class="kartu">
+  <h3>Rekaman Wawancara</h3>
+  <?php if ($transkrip !== null): ?>
+    <?php $s = $transkrip['status']; ?>
+    <p style="margin:0 0 10px">
+      <span class="status s-<?= esc($s) ?>"><?= esc([
+          'antre'   => 'menunggu ditranskripsi',
+          'proses'  => 'sedang ditranskripsi',
+          'selesai' => 'transkrip siap',
+          'gagal'   => 'transkripsi gagal',
+      ][$s] ?? $s) ?></span>
+      <small style="color:#999;margin-left:8px">diunggah <?= esc(date('d M Y H:i', strtotime($transkrip['created_at']))) ?></small>
+    </p>
+    <?php if (! empty($transkrip['catatan'])): ?>
+      <p class="ket" style="margin-top:0"><?= esc($transkrip['catatan']) ?></p>
+    <?php endif ?>
+  <?php endif ?>
+
+  <?php if ($sudah): ?>
+    <p class="ket" style="margin-bottom:0">Kandidat ini sudah diputuskan.</p>
+  <?php else: ?>
+    <p class="ket">
+      Rekam wawancara lewat Zoom (Record on this Computer), lalu unggah berkasnya di sini.
+      Pilih rekaman <b>audio saja</b> bila tersedia - berkasnya jauh lebih kecil dan yang
+      dibutuhkan memang cuma suaranya. Maksimal <?= round(Recruiter::REKAMAN_MAKS_KB / 1024) ?> MB.
+    </p>
+    <form method="post" action="<?= site_url('recruiter/ruang/' . $app['id'] . '/rekaman') ?>"
+          enctype="multipart/form-data">
+      <?= csrf_field() ?>
+      <input type="hidden" name="bingkai" value="<?= $bingkai ? '1' : '0' ?>">
+      <input type="file" name="rekaman" required
+             accept=".<?= str_replace(',', ',.', Recruiter::REKAMAN_EKSTENSI) ?>">
+      <button type="submit" class="btn-unggah" style="margin-left:8px">
+        <?= $transkrip === null ? 'Unggah Rekaman' : 'Unggah Ulang' ?>
+      </button>
+    </form>
+    <?php if ($transkrip !== null): ?>
+      <p class="ket" style="margin-bottom:0">
+        Mengunggah ulang tidak menghapus rekaman sebelumnya - yang dipakai menilai selalu yang terbaru.
+      </p>
+    <?php endif ?>
+  <?php endif ?>
+</div>
+
+<?= $this->endSection() ?>
