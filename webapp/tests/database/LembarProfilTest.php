@@ -64,7 +64,7 @@ final class LembarProfilTest extends CIUnitTestCase
      * menutup Gate 2, jadi memanggilnya di sini sekaligus menyiapkan keadaan
      * yang dibaca baris Interview Result di lembar profil.
      */
-    private function nilai(int $aid, int $n = 4): void
+    private function nilai(int $aid, int $n = 4, ?string $rekomendasi = 'recommended'): void
     {
         (new InterviewModel())->insert([
             'application_id' => $aid, 'status' => 'approved',
@@ -98,6 +98,11 @@ final class LembarProfilTest extends CIUnitTestCase
                     static fn (string $k): array => ['kompetensi' => $k, 'nilai' => $n, 'alasan' => 'Mengutip transkrip.'],
                     L::dariTranskrip()
                 ),
+                // Sejak 14 Agustus 2026 INILAH yang menutup Gate 2, bukan
+                // rumus 0,4 x CV + 0,6 x interview. Callback tanpa baris ini
+                // berakhir 'flagged', dan itu memang disengaja.
+                'rekomendasi'        => $rekomendasi,
+                'alasan_rekomendasi' => 'Menimbang jawaban di transkrip dan kecocokan riwayat kerjanya.',
             ]);
     }
 
@@ -292,7 +297,9 @@ final class LembarProfilTest extends CIUnitTestCase
     public function testHasilMengikutiKeputusanGateDua(): void
     {
         $aid = $this->fixture(['pengalaman' => 'Sales 2 tahun']);
-        $this->nilai($aid, 1);   // semua Poor: skor interview 0
+        // Yang menentukan Not Recommended sekarang rekomendasi AI, bukan skor
+        // interviewnya. Nilai 1 tetap dikirim supaya lembarnya masuk akal.
+        $this->nilai($aid, 1, 'not_recommended');
 
         $html = (string) $this->withSession($this->sesiRec)->get("recruiter/profil/{$aid}")->getBody();
 
@@ -309,6 +316,88 @@ final class LembarProfilTest extends CIUnitTestCase
 
         $this->assertStringContainsString('Above Average', $html, 'penilaiannya tetap tampil');
         $this->assertStringNotContainsString('Recommended', $html);
+    }
+
+    // --- jalan keluar manusia saat sistem tidak memutus ---
+
+    /**
+     * Tombol keputusan manual ada DI LEMBAR PROFIL, bukan cuma di tabel.
+     *
+     * Di tabel recruiter belum membaca apa-apa. Di sinilah transkrip, alasan
+     * tiap nilai, dan kekuatan/kelemahan kandidat terpampang - tempat
+     * keputusan itu sebenarnya terbentuk. Menyuruhnya kembali ke tabel berarti
+     * ia memutuskan dari ingatan atas apa yang baru dibacanya di tab lain.
+     */
+    public function testGate2FlaggedMenampilkanTombolKeputusanManual(): void
+    {
+        $aid = $this->fixture(['pengalaman' => 'Sales 2 tahun']);
+        $this->nilai($aid, 4, null);   // AI tidak memberi rekomendasi -> flagged
+
+        $html = (string) $this->withSession($this->sesiRec)->get("recruiter/profil/{$aid}")->getBody();
+
+        $this->assertStringContainsString('recruiter/gate2/' . $aid, $html);
+        $this->assertStringContainsString('Loloskan', $html);
+        $this->assertStringContainsString('Tidak Lolos', $html);
+        $this->assertStringContainsString('Sistem tidak memutuskan', $html);
+    }
+
+    /** Sebab sistem tidak memutus ikut tercetak - bukan cuma "datanya kurang". */
+    public function testSebabSistemTidakMemutusIkutDitampilkan(): void
+    {
+        $aid = $this->fixture(['pengalaman' => 'Sales 2 tahun']);
+        $this->nilai($aid, 4, null);
+
+        $html = (string) $this->withSession($this->sesiRec)->get("recruiter/profil/{$aid}")->getBody();
+
+        $this->assertStringContainsString('AI tidak memberi rekomendasi', $html);
+    }
+
+    /** Rekaman belum pernah diunggah: tombolnya tetap ada, sebabnya diterangkan. */
+    public function testTanpaRekamanPunTetapBisaDiputusManual(): void
+    {
+        $aid = $this->fixture(['pengalaman' => 'Sales 2 tahun']);
+        (new InterviewPenilaianModel())->insert([
+            'application_id' => $aid, 'kompetensi' => 'Appearance', 'kategori' => L::KAT_HRD,
+            'sumber' => L::DARI_RECRUITER, 'bobot' => 1, 'tingkat' => '4', 'catatan' => '',
+        ]);
+
+        $html = (string) $this->withSession($this->sesiRec)->get("recruiter/profil/{$aid}")->getBody();
+
+        $this->assertStringContainsString('recruiter/gate2/' . $aid, $html);
+        $this->assertStringContainsString('belum pernah diunggah', $html);
+    }
+
+    /**
+     * Yang SUDAH diputus tidak menampilkan tombolnya.
+     *
+     * Keputusan yang sudah dikirim lewat email tidak punya jalur pembatalan,
+     * dan tombol yang tetap terlihat mengundang orang menekannya lalu
+     * menghadapi penolakan yang tidak diterangkan.
+     */
+    public function testSudahDiputusTidakMenampilkanTombol(): void
+    {
+        $aid = $this->fixture(['pengalaman' => 'Sales 2 tahun']);
+        $this->nilai($aid, 4, 'recommended');   // -> passed
+
+        $html = (string) $this->withSession($this->sesiRec)->get("recruiter/profil/{$aid}")->getBody();
+
+        $this->assertStringNotContainsString('recruiter/gate2/' . $aid, $html);
+        $this->assertStringContainsString('Recommended', $html, 'hasilnya tetap tercetak');
+    }
+
+    /** Lembar ini dicetak dan diarsipkan - tombolnya tidak boleh ikut tercetak. */
+    public function testTombolTidakIkutTercetak(): void
+    {
+        $aid = $this->fixture(['pengalaman' => 'Sales 2 tahun']);
+        $this->nilai($aid, 4, null);
+
+        $html = (string) $this->withSession($this->sesiRec)->get("recruiter/profil/{$aid}")->getBody();
+
+        $cetak    = strpos($html, '@media print');
+        $sembunyi = strpos($html, '.putusan { display: none; }');
+
+        $this->assertNotFalse($sembunyi, 'aturan sembunyi saat cetak tidak ada');
+        $this->assertGreaterThan($cetak, $sembunyi, 'aturannya harus di dalam blok @media print');
     }
 
     /**

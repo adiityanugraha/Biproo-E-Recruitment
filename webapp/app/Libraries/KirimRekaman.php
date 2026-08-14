@@ -50,6 +50,11 @@ class KirimRekaman
                 // 30 menit. Biodata TIDAK ikut.
                 'riwayat'        => $this->riwayat((int) $baris['application_id']),
                 'posisi'         => $this->posisi((int) $baris['application_id']),
+                // Ikut sejak rekomendasinya diputuskan di sisi AI (permintaan
+                // atasan, 14 Agustus 2026). Tanpa angka ini kecocokan CV hilang
+                // sama sekali dari keputusan - padahal di rumus lama ia 40%
+                // bobotnya - dan kandidat dinilai semata dari 30 menit bicara.
+                'skor_cv'        => $this->skorCv((int) $baris['application_id']),
                 'callback_url'   => site_url('interview/callback'),
                 'callback_token' => $token,
             ]);
@@ -98,6 +103,14 @@ class KirimRekaman
         }
 
         return $out;
+    }
+
+    /** Skor kecocokan CV, atau null bila screening belum menghasilkan angka. */
+    private function skorCv(int $appId): ?float
+    {
+        $sr = (new ScreeningResultModel())->latestFor($appId);
+
+        return $sr === null || $sr['score_overall'] === null ? null : (float) $sr['score_overall'];
     }
 
     private function posisi(int $appId): string

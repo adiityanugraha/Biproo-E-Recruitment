@@ -263,6 +263,12 @@ class InterviewRequest(BaseModel):
     # alasan keluar juga tidak akan pernah terkirim.
     riwayat: list[RiwayatKerja] = []
     posisi: str = ""
+    # Skor kecocokan CV terhadap lowongan, 0.0-1.0. Ikut sejak rekomendasinya
+    # diputuskan di sini (permintaan atasan, 14 Agustus 2026): tanpa angka ini
+    # kecocokan CV hilang sama sekali dari keputusan - padahal di rumus lama ia
+    # 40% bobotnya - dan kandidat dinilai semata dari 30 menit bicara.
+    # None = screening belum menghasilkan skor.
+    skor_cv: float | None = None
     callback_url: HttpUrl
     callback_token: str | None = None
 
@@ -286,6 +292,9 @@ async def _proses_interview(job_id: str) -> None:
         "kelemahan": "",
         "catatan": "",
         "mesin": "",
+        # null = model tidak memutuskan; CI4 menyerahkannya ke perekrut.
+        "rekomendasi": None,
+        "alasan_rekomendasi": "",
     }
 
     try:
@@ -314,7 +323,7 @@ async def _proses_interview(job_id: str) -> None:
     llm = getattr(app.state, "chat_provider", None) or get_chat_provider(MAKS_TOKEN_CV)
     n = await asyncio.to_thread(
         nilai_dari_transkrip, hasil.teks, job["kompetensi"], llm,
-        job.get("riwayat", []), job.get("posisi", ""),
+        job.get("riwayat", []), job.get("posisi", ""), job.get("skor_cv"),
     )
 
     badan["penilaian"] = [
@@ -322,6 +331,8 @@ async def _proses_interview(job_id: str) -> None:
     ]
     badan["kekuatan"] = n.kekuatan
     badan["kelemahan"] = n.kelemahan
+    badan["rekomendasi"] = n.rekomendasi
+    badan["alasan_rekomendasi"] = n.alasan_rekomendasi
     badan["status"] = "selesai" if n.berhasil else "gagal"
     badan["catatan"] = n.catatan
     job["status"] = badan["status"]
@@ -368,6 +379,7 @@ def create_interview(req: InterviewRequest) -> InterviewAccepted:
         "kompetensi": list(req.kompetensi),
         "riwayat": [r.model_dump() for r in req.riwayat],
         "posisi": req.posisi,
+        "skor_cv": req.skor_cv,
         "callback_url": str(req.callback_url),
         "token": req.callback_token,
     }

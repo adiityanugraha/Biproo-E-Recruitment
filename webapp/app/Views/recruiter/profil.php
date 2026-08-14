@@ -167,10 +167,24 @@ $titik = static function (array $nilai, float $skala) use ($hrd): string {
     .kerja .kanan { padding-left: 0; }
     .kerja .rinci td.l { width: auto; padding-right: 8px; }
   }
+  /* Kotak keputusan manual - muncul hanya saat sistem tidak memutus. */
+  .putusan { margin-top: 14px; padding: 12px 14px; border: 1px solid #FFD9A0;
+             border-radius: 8px; background: #FFF9EF; font-size: 12px; line-height: 1.6; }
+  .putusan p { margin: 5px 0 0; }
+  .putusan .ingat { color: #a53a1c; }
+  .putusan form { margin-top: 10px; display: flex; gap: 8px; }
+  .putusan button { padding: 7px 15px; border: none; border-radius: 7px; cursor: pointer;
+                    font-family: inherit; font-weight: 600; font-size: 12px; color: #fff; }
+  .putusan .b-lolos { background: #20A277; }
+  .putusan .b-gagal { background: #C0392B; }
+
   @media print {
     body { background: #fff; padding: 0; }
     .lembar { width: auto; min-height: 0; margin: 0; box-shadow: none; page-break-after: always; }
     .lembar:last-of-type { page-break-after: auto; }
+    /* Lembar ini dicetak dan diarsipkan. Tombol yang ikut tercetak jadi kotak
+       abu-abu tanpa arti di dokumen yang dibaca orang setahun lagi. */
+    .putusan { display: none; }
   }
 </style>
 </head>
@@ -410,6 +424,37 @@ $titik = static function (array $nilai, float $skala) use ($hrd): string {
           <td class="v"><b><?= $hasilAkhir !== '' ? esc($hasilAkhir) : $kosong ?></b></td>
         </tr>
       </table>
+
+      <?php // JALAN KELUAR MANUSIA saat sistem tidak memutus.
+            //
+            // Ada juga di tabel Interview HRD, tapi di sana recruiter belum
+            // membaca apa-apa. DI SINI-lah transkrip, alasan tiap nilai, dan
+            // kekuatan/kelemahan kandidat terpampang - tempat keputusan itu
+            // sebenarnya terbentuk. Menyuruhnya kembali ke tabel untuk menekan
+            // tombol berarti ia memutuskan dari ingatan atas apa yang baru saja
+            // dibacanya di tab lain.
+            //
+            // Syaratnya sama persis dengan penjaga di Recruiter::putusGate2 -
+            // null (rekaman belum diunggah) atau 'flagged' (transkripsi gagal,
+            // AI tidak memberi rekomendasi, atau skor CV tidak ada). Yang sudah
+            // diputus tidak menampilkan apa pun, dan itu disengaja: keputusan
+            // yang sudah dikirim lewat email tidak punya jalur pembatalan. ?>
+      <?php if ($gate2 === null || $gate2 === 'flagged'): ?>
+        <div class="putusan">
+          <b>Sistem tidak memutuskan kandidat ini.</b>
+          <p><?= $sebabGate2 !== ''
+              ? esc($sebabGate2)
+              : 'Rekaman wawancaranya belum pernah diunggah, jadi belum ada yang bisa dinilai otomatis.' ?></p>
+          <p class="ingat">Keputusan di bawah ini langsung dikirim ke kandidat lewat email dan tidak bisa dibatalkan.</p>
+          <form method="post" action="<?= site_url('recruiter/gate2/' . $app['id']) ?>">
+            <?= csrf_field() ?>
+            <button name="keputusan" value="lolos" class="b-lolos"
+                    onclick="return confirm('Loloskan kandidat ini? Kandidat akan dikabari via email.')">Loloskan</button>
+            <button name="keputusan" value="gagal" class="b-gagal"
+                    onclick="return confirm('Tidak meloloskan kandidat ini? Kandidat akan dikabari via email.')">Tidak Lolos</button>
+          </form>
+        </div>
+      <?php endif ?>
     <?php endif ?>
 
     <?php if ($user !== []): ?>

@@ -75,10 +75,35 @@ SYSTEM_NILAI = (
     "keterangan yang berguna untuk pewawancara berikutnya. Kosongkan hanya bila "
     "transkripnya benar-benar tidak memberi bahan apa pun.\n"
     "9. Maksimal dua kalimat masing-masing. JANGAN menyinggung usia, agama, "
-    "suku, jenis kelamin, status pernikahan, atau kondisi kesehatan.\n"
-    '10. Jawab HANYA JSON: {"penilaian": [{"kompetensi": "...", "nilai": 1-5 '
-    'atau null, "alasan": "..."}], "kekuatan": "...", "kelemahan": "..."}'
+    "suku, jenis kelamin, status pernikahan, atau kondisi kesehatan.\n\n"
+    "Terakhir, putuskan REKOMENDASI.\n"
+    "10. Isi 'rekomendasi' dengan 'recommended' atau 'not_recommended'. Ini "
+    "keputusan sungguhan: kandidat yang not_recommended akan menerima surat "
+    "penolakan, dan tidak ada orang yang memeriksa ulang sebelum surat itu "
+    "terkirim.\n"
+    "11. Timbang TIGA hal: jawaban di transkrip, kecocokan riwayat kerja dengan "
+    "posisi yang dilamar, dan skor kecocokan CV bila diberikan. Kekurangan yang "
+    "bisa dipelajari dalam beberapa minggu bukan alasan menolak; kekurangan pada "
+    "hal inti pekerjaan adalah alasan yang sah.\n"
+    "12. 'alasan_rekomendasi' WAJIB, paling banyak tiga kalimat, dan menyebut "
+    "hal yang konkret dari transkrip atau riwayat kerja. Kalimat ini yang "
+    "dibaca perekrut saat kandidat bertanya kenapa ia gugur, jadi 'kurang "
+    "sesuai' saja tidak sah.\n"
+    "13. Bila transkripnya terlalu tipis untuk memutuskan dengan yakin, isi "
+    "'rekomendasi' dengan null. Itu bukan kegagalan - keputusannya lalu "
+    "diserahkan ke perekrut, dan itu jauh lebih baik daripada menolak orang "
+    "dari bahan yang tidak cukup.\n"
+    "14. JANGAN memutuskan berdasarkan usia, agama, suku, jenis kelamin, status "
+    "pernikahan, atau kondisi kesehatan. Ini larangan keras.\n\n"
+    '15. Jawab HANYA JSON: {"penilaian": [{"kompetensi": "...", "nilai": 1-5 '
+    'atau null, "alasan": "..."}], "kekuatan": "...", "kelemahan": "...", '
+    '"rekomendasi": "recommended" | "not_recommended" | null, '
+    '"alasan_rekomendasi": "..."}'
 )
+
+# Nilai 'rekomendasi' yang diakui. Selain ini - termasuk variasi ejaan yang
+# dikarang model - dianggap tidak menjawab, dan keputusannya jatuh ke perekrut.
+REKOMENDASI = ("recommended", "not_recommended")
 
 
 class Butir(NamedTuple):
@@ -95,6 +120,10 @@ class Hasil(NamedTuple):
     # '' = tidak cukup bahan, dan itu jawaban yang sah.
     kekuatan: str = ""
     kelemahan: str = ""
+    # Keputusan rekomendasi (permintaan atasan, 14 Agustus 2026).
+    # None = model tidak memutuskan; CI4 lalu menyerahkannya ke perekrut.
+    rekomendasi: str | None = None
+    alasan_rekomendasi: str = ""
 
     @property
     def berhasil(self) -> bool:
@@ -136,6 +165,7 @@ def nilai_dari_transkrip(
     provider: ChatProvider,
     riwayat: list[dict] | None = None,
     posisi: str = "",
+    skor_cv: float | None = None,
 ) -> Hasil:
     """
     Nilai tiap kompetensi yang diminta CI4, plus rangkum kekuatan dan kelemahan.
@@ -158,6 +188,11 @@ def nilai_dari_transkrip(
     pesan  = (
         (f"POSISI YANG DILAMAR: {posisi}\n\n" if posisi.strip() else "")
         + (f"RIWAYAT KERJA KANDIDAT (dari CV):\n{blok}\n\n" if blok else "")
+        # Ikut dikirim sejak rekomendasinya diputuskan di sini. Tanpa angka ini
+        # kecocokan CV hilang sama sekali dari keputusan - padahal dulu ia 40%
+        # bobotnya - dan kandidat dinilai semata dari 30 menit bicara.
+        + (f"SKOR KECOCOKAN CV TERHADAP LOWONGAN: {skor_cv:.2f} dari 1,00\n\n"
+           if skor_cv is not None else "")
         + f"KOMPETENSI YANG DINILAI:\n{daftar}\n\n"
         + f"=== TRANSKRIP WAWANCARA ===\n{teks[:MAKS_TRANSKRIP]}\n=== AKHIR TRANSKRIP ==="
     )
@@ -202,12 +237,19 @@ def nilai_dari_transkrip(
         return str(d.get(kunci, "")).strip()[:MAKS_NARASI]
 
     if all(b.nilai is None for b in hasil):
-        # Kekuatan/kelemahan tidak ikut dikembalikan di sini. Kalau tak satu pun
-        # kompetensi bisa dinilai, bahannya memang tidak ada - dan rangkuman
-        # yang tetap terisi dari bahan yang sama akan terbaca sebagai penilaian
-        # yang sah, padahal ia satu-satunya yang lolos justru karena tidak
-        # dituntut angka.
+        # Kekuatan/kelemahan DAN rekomendasi tidak ikut dikembalikan di sini.
+        # Kalau tak satu pun kompetensi bisa dinilai, bahannya memang tidak ada
+        # - dan keputusan yang tetap terisi dari bahan yang sama akan terbaca
+        # sebagai penilaian yang sah, padahal ia satu-satunya yang lolos justru
+        # karena tidak dituntut angka.
         return Hasil(hasil, "gagal",
                      "Tak satu pun kompetensi bisa dinilai dari transkrip ini.")
 
-    return Hasil(hasil, "selesai", "", narasi("kekuatan"), narasi("kelemahan"))
+    # Nilai di luar dua yang diakui - termasuk ejaan karangan seperti "Hire"
+    # atau "recommend" - jadi None, bukan ditebak paling dekat. Menebak di sini
+    # berarti menolak orang dari jawaban yang tidak dipahami.
+    rek = d.get("rekomendasi")
+    rek = rek if rek in REKOMENDASI else None
+
+    return Hasil(hasil, "selesai", "", narasi("kekuatan"), narasi("kelemahan"),
+                 rek, narasi("alasan_rekomendasi"))

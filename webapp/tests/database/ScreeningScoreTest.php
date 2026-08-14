@@ -48,7 +48,7 @@ final class ScreeningScoreTest extends CIUnitTestCase
      * Skornya sama persis dengan yang lama pada nilai seragam, jadi ambang yang
      * diuji berkas ini tidak bergeser: 1 -> 0, 3 -> 50, 4 -> 75, 5 -> 100.
      */
-    private function nilaiLewatTranskrip(int $aid, int $n): void
+    private function nilaiLewatTranskrip(int $aid, int $n, ?string $rekomendasi = 'recommended'): void
     {
         $model = new InterviewPenilaianModel();
         foreach (L::MATA_MANUSIA as $kompetensi) {
@@ -72,6 +72,11 @@ final class ScreeningScoreTest extends CIUnitTestCase
                     static fn (string $k): array => ['kompetensi' => $k, 'nilai' => $n, 'alasan' => 'Mengutip transkrip.'],
                     L::dariTranskrip()
                 ),
+                // Sejak 14 Agustus 2026 INILAH yang menutup Gate 2, bukan
+                // rumus 0,4 x CV + 0,6 x interview. Callback tanpa baris ini
+                // berakhir 'flagged', dan itu memang disengaja.
+                'rekomendasi'        => $rekomendasi,
+                'alasan_rekomendasi' => 'Menimbang jawaban di transkrip dan kecocokan riwayat kerjanya.',
             ]);
     }
 
@@ -171,32 +176,87 @@ final class ScreeningScoreTest extends CIUnitTestCase
         $this->assertSame(0.85, round((float) (new ScreeningResultModel())->latestFor($aid)['score_overall'], 2));
     }
 
-    public function testGate2SkorCvTinggiMenghasilkanLolos(): void
+    /**
+     * REKOMENDASI AI yang menutup Gate 2, bukan lagi rumusnya (14 Agustus 2026).
+     *
+     * Dulu berkas ini menguji hal lain: skor CV 0,90 lawan 0,30 pada skor
+     * interview yang identik menghasilkan lolos lawan gugur, karena rumusnya
+     * memberi CV bobot 40%. Sifat itu SUDAH TIDAK ADA - skor CV sekarang cuma
+     * salah satu bahan yang dikirim ke model, dan tidak ada yang menjamin ia
+     * ditimbang 40%. Yang tersisa untuk diuji: jawaban AI yang dipakai, dan
+     * angka rumusnya tetap tercatat sebagai pembanding.
+     */
+    public function testGate2MengikutiRekomendasiAi(): void
     {
         [, $aid] = $this->fixture();
         $this->screening($aid, 0.90);
         $this->siapDiputus($aid, 'passed');
 
-        // gate2 = 0.4*0.90 (CV) + 0.6*0.75 (interview, semua Above Average) = 0.81 -> LOLOS
-        $this->nilaiLewatTranskrip($aid, 4);
+        $this->nilaiLewatTranskrip($aid, 4, 'recommended');
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'passed']);
-        $this->assertStringContainsString('Skor akhir 81/100', $this->skorAkhir($aid));
-        $this->assertStringContainsString('kemiripan CV tinggi (0,90)', $this->skorAkhir($aid));
+        $catatan = $this->skorAkhir($aid);
+        $this->assertStringContainsString('Rekomendasi AI: Recommended', $catatan);
+        // Rumusnya tidak lagi memutuskan, tapi angkanya tetap dicatat: ia
+        // satu-satunya yang bisa diperiksa ulang orang lain, karena model
+        // bahasa tidak menjawab sama persis dua kali.
+        // 0,4 x 0,90 + 0,6 x 0,75 = 0,81
+        $this->assertStringContainsString('Skor akhir rumus 81,0/100', $catatan);
+        $this->assertStringContainsString('kemiripan CV tinggi (0,90)', $catatan);
+        $this->assertStringContainsString('(sepakat)', $catatan);
     }
 
-    public function testGate2SkorCvRendahMenggugurkanWalauInterviewSama(): void
+    /**
+     * AI menolak walau rumusnya meloloskan - dan yang menang AI.
+     *
+     * Ketidaksepakatannya WAJIB tercatat. Ia tidak mengubah keputusan, tapi ia
+     * satu-satunya penanda yang bisa dihitung kalau suatu hari ada yang
+     * bertanya seberapa sering keduanya berbeda.
+     */
+    public function testRekomendasiAiMenangAtasRumusDanBedanyaDicatat(): void
     {
         [, $aid] = $this->fixture();
-        $this->screening($aid, 0.30);
+        $this->screening($aid, 0.90);        // rumus: 0,81 -> lolos
         $this->siapDiputus($aid, 'passed');
 
-        // gate2 = 0.4*0.30 + 0.6*0.75 = 0.57 < 0.7 -> TIDAK LOLOS
-        // skor interview IDENTIK dengan test di atas; yang membedakan hanya skor CV
-        $this->nilaiLewatTranskrip($aid, 4);
+        $this->nilaiLewatTranskrip($aid, 4, 'not_recommended');
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'failed']);
-        $this->assertStringContainsString('Skor akhir 57/100', $this->skorAkhir($aid));
+        $catatan = $this->skorAkhir($aid);
+        $this->assertStringContainsString('Rekomendasi AI: Not Recommended', $catatan);
+        $this->assertStringContainsString('Skor akhir rumus 81,0/100', $catatan);
+        $this->assertStringContainsString('BERBEDA dari rekomendasi AI', $catatan);
+    }
+
+    /**
+     * AI tidak memutuskan -> diserahkan ke recruiter, BUKAN jatuh ke rumus.
+     *
+     * Memutus lewat rumus hanya untuk kandidat yang bahannya paling sedikit
+     * berarti sebagian orang dinilai dengan aturan yang berbeda dari
+     * sebelahnya, tanpa ada yang tahu siapa.
+     */
+    public function testAiTidakMemutuskanDiserahkanKeRecruiter(): void
+    {
+        [, $aid] = $this->fixture();
+        $this->screening($aid, 0.90);        // rumus: 0,81 -> lolos
+        $this->siapDiputus($aid, 'passed');
+
+        $this->nilaiLewatTranskrip($aid, 4, null);
+
+        $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'flagged']);
+        $this->assertStringContainsString('AI tidak memberi rekomendasi', $this->skorAkhir($aid));
+    }
+
+    /** Nilai rekomendasi karangan diperlakukan sama dengan tidak menjawab. */
+    public function testRekomendasiTidakDikenalTidakDitebakPalingDekat(): void
+    {
+        [, $aid] = $this->fixture();
+        $this->screening($aid, 0.90);
+        $this->siapDiputus($aid, 'passed');
+
+        $this->nilaiLewatTranskrip($aid, 4, 'Hire');
+
+        $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'flagged']);
     }
 
     /**

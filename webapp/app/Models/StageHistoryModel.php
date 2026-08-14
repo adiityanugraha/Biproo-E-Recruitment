@@ -40,6 +40,15 @@ class StageHistoryModel extends Model
         return $row['status'] ?? null;
     }
 
+    /** Catatan pada baris terkini sebuah (application, stage). '' bila tidak ada. */
+    public function latestNote(int $applicationId, string $stage): string
+    {
+        $row = $this->where(['application_id' => $applicationId, 'stage' => $stage])
+            ->orderBy('id', 'DESC')->first();
+
+        return (string) ($row['note'] ?? '');
+    }
+
     /**
      * Peta stage => status terkini untuk satu lamaran.
      * Urut ASC lalu ditimpa -> baris terakhir per stage yang menang.

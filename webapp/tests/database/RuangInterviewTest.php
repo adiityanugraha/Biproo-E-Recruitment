@@ -4,6 +4,7 @@ use App\Controllers\Recruiter;
 use App\Libraries\AiService;
 use App\Libraries\AiServiceException;
 use App\Libraries\LembarPenilaian as L;
+use App\Libraries\PertanyaanKandidat;
 use App\Libraries\StageLogger;
 use App\Models\ApplicationModel;
 use App\Models\CandidateModel;
@@ -750,6 +751,135 @@ final class RuangInterviewTest extends CIUnitTestCase
 
         $this->assertStringContainsString('transkripsi gagal', $html);
         $this->assertStringContainsString('audio tidak terbaca', $html);
+    }
+
+    // --- sesudah rekamannya diunggah ---
+
+    /**
+     * Rekaman ada berarti wawancaranya sudah terjadi: pertanyaannya terkunci.
+     *
+     * Tidak menunggu keputusan Gate 2. Gate 2 bisa menggantung berhari-hari di
+     * 'flagged' - kuota LLM habis, skor CV belum ada - dan selama itu kotak
+     * suntingnya terbuka lebar. Pertanyaan yang diubah sesudah wawancara
+     * membuat lembar profil bercerita tentang wawancara yang tidak terjadi.
+     */
+    public function testPertanyaanTerkunciSetelahRekamanDiunggah(): void
+    {
+        $aid = $this->fixture();
+        $this->tigaPertanyaan();
+        (new InterviewTranskripModel())->insert([
+            'application_id' => $aid, 'sumber' => 'unggahan', 'status' => 'antre',
+            'berkas' => 'uploads/rekaman/x.m4a',
+        ]);
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/ruang/' . $aid)->getBody();
+
+        $this->assertStringNotContainsString('name="pertanyaan[]"', $html);
+        $this->assertStringContainsString('terkunci', $html);
+        // Formnya hilang, unggah ulangnya TIDAK - transkripsi bisa gagal dan
+        // mengunggah lagi satu-satunya jalan kembali ke penilaian otomatis.
+        $this->assertStringContainsString('name="rekaman"', $html);
+    }
+
+    /** Menyembunyikan form bukan penjagaan: kiriman dari riwayat browser tetap sampai. */
+    public function testSuntingPertanyaanDitolakSetelahRekamanDiunggah(): void
+    {
+        $aid = $this->fixture();
+        $this->tigaPertanyaan();
+        (new InterviewTranskripModel())->insert([
+            'application_id' => $aid, 'sumber' => 'unggahan', 'status' => 'antre',
+            'berkas' => 'uploads/rekaman/x.m4a',
+        ]);
+
+        $this->withSession($this->sesiRec)
+            ->post('recruiter/ruang/' . $aid . '/pertanyaan', ['pertanyaan' => ['diubah', 'diam', 'diam']]);
+
+        $tersimpan = array_column((new PertanyaanKandidat())->untukLamaran($aid), 'pertanyaan');
+        $this->assertNotContains('diubah', $tersimpan);
+        $this->assertStringContainsString('tidak bisa diubah', (string) session('error'));
+    }
+
+    /**
+     * Form penilaian terisi dari yang SUDAH tersimpan.
+     *
+     * Kotak kosong di atas nilai yang sudah ada adalah undangan mengisi
+     * berbeda, dan yang terbaca di layar lalu bukan yang dipakai menilai
+     * kandidat.
+     */
+    public function testFormPenilaianTerisiDariYangTersimpan(): void
+    {
+        $aid = $this->fixture();
+        $this->tigaPertanyaan();
+        (new InterviewPenilaianModel())->ganti($aid, L::DARI_RECRUITER, [
+            ['kompetensi' => 'Appearance', 'kategori' => L::KAT_HRD, 'bobot' => 1, 'tingkat' => '2', 'catatan' => ''],
+            ['kompetensi' => 'notes', 'kategori' => L::KAT_NARASI, 'bobot' => 0, 'tingkat' => '', 'catatan' => 'Datang tepat waktu.'],
+        ]);
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/ruang/' . $aid)->getBody();
+
+        $rapat = preg_replace('/\s+/', ' ', $html);
+        $this->assertStringContainsString('name="nilai[0]" value="2" required style="width:auto" checked', $rapat);
+        $this->assertStringNotContainsString('name="nilai[0]" value="3" required style="width:auto" checked', $rapat);
+        $this->assertStringContainsString('Datang tepat waktu.', $html);
+    }
+
+    /**
+     * Lembar recruiter DIGANTI, bukan ditumpuk.
+     *
+     * Unggah ulang adalah jalur yang memang disediakan - transkripsi gagal,
+     * recruiter mencoba lagi - dan tiap kiriman dulu menambah satu set baru di
+     * atas yang lama. LembarPenilaian::skor() merata-ratakan SEMUANYA, jadi
+     * skor kandidat jadi campuran seluruh percobaan. Terlihat pada lamaran #72:
+     * Appearance tercatat delapan kali bernilai 4,4,4,5,5,4,5,5.
+     *
+     * Diuji di tingkat model, bukan lewat form: unggahannya memanggil
+     * UploadedFile::move(), yang menurut definisinya gagal di luar POST HTTP
+     * sungguhan (lihat siapkanBerkas).
+     */
+    public function testLembarRecruiterDigantiBukanDitumpuk(): void
+    {
+        $aid   = $this->fixture();
+        $model = new InterviewPenilaianModel();
+        $lembar = static fn (string $n): array => array_map(
+            static fn (string $k): array => ['kompetensi' => $k, 'kategori' => L::KAT_HRD,
+                'bobot' => 1, 'tingkat' => $n, 'catatan' => ''],
+            L::MATA_MANUSIA
+        );
+
+        $model->ganti($aid, L::DARI_RECRUITER, $lembar('4'));
+        $model->ganti($aid, L::DARI_RECRUITER, $lembar('5'));
+
+        $baris = $model->where(['application_id' => $aid, 'sumber' => L::DARI_RECRUITER])->findAll();
+        $this->assertCount(count(L::MATA_MANUSIA), $baris);
+        $this->assertSame(['5', '5', '5'], array_column($baris, 'tingkat'));
+        $this->assertSame(100, L::skor($baris), 'rata-rata dari kiriman terakhir saja');
+    }
+
+    /**
+     * Transkrip yang JADI tidak boleh dilabeli "transkripsi gagal".
+     *
+     * Status barisnya menandai seluruh pekerjaan - transkripsi lalu penilaian -
+     * dan sejak transkripsinya jalan lokal (14 Agustus 2026) keduanya kerap
+     * berbeda nasib. Terlihat sungguhan pada lamaran #72: transkrip 2.164
+     * karakter terpampang di layar sementara labelnya berkata transkripsinya
+     * gagal, padahal yang habis kuotanya cuma penilaian.
+     */
+    public function testTranskripAdaTapiPenilaianGagalTidakDisebutTranskripsiGagal(): void
+    {
+        $aid = $this->fixture();
+        $this->tigaPertanyaan();
+        (new InterviewTranskripModel())->insert([
+            'application_id' => $aid, 'sumber' => 'unggahan', 'status' => 'gagal',
+            'berkas'  => 'uploads/rekaman/x.m4a',
+            'teks'    => 'Pewawancara: Ceritakan pengalaman Anda. Kandidat: Saya cek ulang surat jalan.',
+            'catatan' => "Client error '429 Too Many Requests'",
+        ]);
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/ruang/' . $aid)->getBody();
+
+        $this->assertStringNotContainsString('transkripsi gagal', $html);
+        $this->assertStringContainsString('penilaian gagal', $html);
+        $this->assertStringContainsString('surat jalan', $html, 'transkripnya tetap terbaca');
     }
 
     // --- pintu masuknya ---

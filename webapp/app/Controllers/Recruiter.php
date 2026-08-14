@@ -812,6 +812,16 @@ class Recruiter extends BaseController
                 'Kandidat ini sudah diputuskan, pertanyaannya tidak bisa diubah lagi.');
         }
 
+        // Begitu rekamannya ada, wawancaranya sudah terjadi - ketiga pertanyaan
+        // inilah yang ditanyakan. Tidak menunggu keputusan Gate 2, yang bisa
+        // menggantung berhari-hari di 'flagged'. Formnya memang disembunyikan,
+        // tapi menyembunyikan form bukan penjagaan: kiriman ulang dari riwayat
+        // browser tetap sampai kemari.
+        if ((new InterviewTranskripModel())->terakhirUntuk($appId) !== null) {
+            return redirect()->to($tujuan)->with('error',
+                'Rekaman wawancara sudah diunggah, pertanyaannya tidak bisa diubah lagi.');
+        }
+
         $lib = new PertanyaanKandidat();
         if ($this->request->getPost('aksi') === 'buat') {
             $hasil = $lib->buatUlang($appId);
@@ -1043,13 +1053,11 @@ class Recruiter extends BaseController
             ];
         }
 
-        $db = db_connect();
-        $db->transException(true)->transStart();
-        $model = new InterviewPenilaianModel();
-        foreach ($baris as $r) {
-            $model->insert($r + ['application_id' => $appId, 'sumber' => LembarPenilaian::DARI_RECRUITER]);
-        }
-        $db->transComplete();
+        // GANTI, bukan tambah. Unggah ulang adalah jalur yang memang disediakan
+        // - transkripsi gagal, recruiter mencoba lagi - dan menumpuk lembar
+        // baru di atas yang lama membuat skor kandidat jadi rata-rata dari
+        // semua percobaan. Lihat InterviewPenilaianModel::ganti().
+        (new InterviewPenilaianModel())->ganti($appId, LembarPenilaian::DARI_RECRUITER, $baris);
     }
 
 
@@ -1254,6 +1262,12 @@ class Recruiter extends BaseController
             'assessment' => $sh->latestStatus($appId, 'online_assessment'),
             'penilaian'  => (new InterviewPenilaianModel())->untukLamaran($appId),
             'gate2'      => $sh->latestStatus($appId, 'gate_2'),
+            // Sebab sistem tidak memutus, ditampilkan apa adanya di lembar.
+            // Di tabel tahap sebabnya cuma tooltip "datanya kurang" karena di
+            // sana tidak ada ruang; di sini recruiter sedang membaca transkrip
+            // dan alasan AI-nya, jadi keterangan yang sebenarnya lebih berguna
+            // daripada mengirimnya bolak-balik mencari sendiri.
+            'sebabGate2' => $sh->latestNote($appId, 'gate_2'),
         ]);
     }
 

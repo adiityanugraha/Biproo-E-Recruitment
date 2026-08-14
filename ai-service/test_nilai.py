@@ -301,3 +301,100 @@ def test_prompt_melarang_nilai_tengah_sebagai_pengisi():
     kandidat lolos atau tidak."""
     assert "jangan menebak" in nilai.SYSTEM_NILAI.lower()
     assert "nilai tengah" in nilai.SYSTEM_NILAI.lower()
+
+
+# --- rekomendasi diputuskan model (permintaan atasan, 14 Agustus 2026) ---
+
+
+def _jawaban_rekomendasi(rek, alasan="Riwayat kerjanya cocok dengan posisinya."):
+    return json.dumps({
+        "penilaian": [{"kompetensi": k, "nilai": 4, "alasan": "a"} for k in KOMPETENSI],
+        "kekuatan": "a", "kelemahan": "b",
+        "rekomendasi": rek, "alasan_rekomendasi": alasan,
+    }, ensure_ascii=False)
+
+
+def test_rekomendasi_dan_alasannya_terbaca():
+    h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, _LLM(_jawaban_rekomendasi("recommended")))
+
+    assert h.rekomendasi == "recommended"
+    assert "cocok dengan posisinya" in h.alasan_rekomendasi
+
+
+def test_penolakan_terbaca():
+    h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, _LLM(_jawaban_rekomendasi("not_recommended")))
+
+    assert h.rekomendasi == "not_recommended"
+
+
+def test_nilai_rekomendasi_asing_jadi_none_bukan_ditebak_paling_dekat():
+    """
+    Menebak "Hire" jadi "recommended" berarti meloloskan - atau menolak -
+    seseorang dari jawaban yang tidak dipahami modelnya. CI4 memperlakukan None
+    sebagai "diserahkan ke perekrut", dan itu jawaban yang jauh lebih aman.
+    """
+    for asing in ("Hire", "RECOMMENDED", "ya", "", 1, True, None):
+        h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, _LLM(_jawaban_rekomendasi(asing)))
+
+        assert h.rekomendasi is None, asing
+
+
+def test_rekomendasi_tidak_ikut_saat_tak_satu_pun_kompetensi_dinilai():
+    """Keputusan yang tetap terisi dari bahan yang tidak ada akan terbaca
+    sebagai keputusan yang sah."""
+    llm = _LLM(json.dumps({
+        "penilaian": [{"kompetensi": k, "nilai": None, "alasan": "x"} for k in KOMPETENSI],
+        "rekomendasi": "not_recommended", "alasan_rekomendasi": "Tidak meyakinkan.",
+    }, ensure_ascii=False))
+
+    h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, llm)
+
+    assert not h.berhasil
+    assert h.rekomendasi is None
+
+
+def test_skor_cv_ikut_jadi_bahan_keputusan():
+    """
+    Tanpa angka ini kecocokan CV hilang sama sekali dari keputusan - padahal di
+    rumus lama ia 40% bobotnya - dan kandidat dinilai semata dari 30 menit
+    bicara.
+    """
+    llm = _LLM(_jawaban_rekomendasi("recommended"))
+
+    nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, llm, RIWAYAT, "Admin Gudang", 0.74)
+
+    assert "0.74" in llm.terakhir["question"]
+
+
+def test_tanpa_skor_cv_tidak_ada_baris_karangan():
+    """Screening bisa saja belum menghasilkan angka. Menuliskan 0,00 di situ
+    membuat model mengira CV-nya sangat tidak cocok."""
+    llm = _LLM(_jawaban_rekomendasi("recommended"))
+
+    nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, llm)
+
+    assert "SKOR KECOCOKAN CV" not in llm.terakhir["question"]
+
+
+def test_prompt_membolehkan_model_tidak_memutuskan():
+    """
+    Menolak orang dari bahan yang tidak cukup jauh lebih buruk daripada
+    mengangkat tangan. Aturan ini yang membuat 'flagged' mungkin terjadi.
+    """
+    s = nilai.SYSTEM_NILAI.lower()
+    assert "terlalu tipis" in s
+    assert "diserahkan ke perekrut" in s
+
+
+def test_prompt_menyebutkan_akibat_penolakan():
+    """Model harus tahu keputusannya berakhir sebagai surat penolakan yang
+    terkirim tanpa ada orang yang memeriksanya lebih dulu."""
+    assert "surat penolakan" in nilai.SYSTEM_NILAI.lower()
+
+
+def test_prompt_melarang_atribut_pribadi_menyentuh_keputusan():
+    """Larangan yang sama dengan penilaian per kompetensi harus DIULANG untuk
+    keputusannya - aturan yang jauh di atas mudah tidak terbawa."""
+    aturan = nilai.SYSTEM_NILAI.lower().split("terakhir, putuskan rekomendasi")[1]
+    for dilarang in ("usia", "agama", "suku", "jenis kelamin", "status pernikahan"):
+        assert dilarang in aturan

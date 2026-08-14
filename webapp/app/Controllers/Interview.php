@@ -100,22 +100,37 @@ class Interview extends BaseController
             'updated_at'    => date('Y-m-d H:i:s'),
         ]);
 
-        // Callback yang datang dua kali tidak boleh menilai dua kali. Tabel
-        // penilaian bersifat tambah-saja dan tidak punya jalur perbaikan, jadi
-        // yang menjaga di sini keputusan Gate 2: sekali ada, berhenti.
-        if ((new StageHistoryModel())->latestStatus($appId, 'gate_2') !== null) {
+        // Yang menahan di sini KEPUTUSAN, bukan sekadar adanya baris gate_2.
+        //
+        // 'flagged' bukan keputusan - ia justru penanda bahwa datanya kurang
+        // dan pekerjaannya perlu diulang. Penjaga lamanya menahan apa pun yang
+        // bukan null, sehingga `transkrip:resend` atas lamaran yang tersangkut
+        // - satu-satunya jalan kembali ke penilaian otomatis - dijawab "sudah
+        // diputuskan sebelumnya" dan hasilnya dibuang diam-diam. Kesalahan yang
+        // sama dengan tiga penjaga di Recruiter, dan yang ini terlewat.
+        //
+        // Kiriman kedua sekarang aman: InterviewPenilaianModel::ganti()
+        // mengganti lembarnya, bukan menumpuk set nilai baru di atas yang lama.
+        if (in_array((new StageHistoryModel())->latestStatus($appId, 'gate_2'), ['passed', 'failed'], true)) {
             return $this->response->setJSON(['ok' => true, 'catatan' => 'sudah diputuskan sebelumnya']);
         }
 
         if (! $gagal) {
-            $this->simpanPenilaian($appId, (array) ($b['penilaian'] ?? []));
-            $this->simpanNarasi($appId, [
-                'strengths'  => (string) ($b['kekuatan'] ?? ''),
-                'weaknesses' => (string) ($b['kelemahan'] ?? ''),
-            ]);
+            // Satu panggilan untuk nilai DAN narasi. Keduanya bersumber 'ai',
+            // dan dua panggilan berturut membuat yang kedua menghapus hasil
+            // yang pertama.
+            (new InterviewPenilaianModel())->ganti($appId, LembarPenilaian::DARI_AI, array_merge(
+                $this->barisPenilaian((array) ($b['penilaian'] ?? [])),
+                $this->barisNarasi([
+                    'strengths'  => (string) ($b['kekuatan'] ?? ''),
+                    'weaknesses' => (string) ($b['kelemahan'] ?? ''),
+                ]),
+            ));
         }
 
-        $this->putuskan($appId, $app, $gagal, (string) ($b['catatan'] ?? ''));
+        $this->putuskan($appId, $app, $gagal, (string) ($b['catatan'] ?? ''),
+            trim((string) ($b['teks'] ?? '')) !== '',
+            $this->rekomendasiAi($b));
 
         return $this->response->setJSON(['ok' => true]);
     }
@@ -128,9 +143,10 @@ class Interview extends BaseController
      * LembarPenilaian::skor(), sedangkan nol akan menyeret rata-ratanya turun
      * dan menggugurkan kandidat karena bahannya kurang, bukan karena jawabannya.
      *
-     * @param list<array<string, mixed>> $penilaian
+     * @param  list<array<string, mixed>>  $penilaian
+     * @return list<array<string, mixed>>
      */
-    private function simpanPenilaian(int $appId, array $penilaian): void
+    private function barisPenilaian(array $penilaian): array
     {
         $sah   = LembarPenilaian::dariTranskrip();
         $baris = [];
@@ -145,38 +161,23 @@ class Interview extends BaseController
                 continue;
             }
             $baris[] = [
-                'application_id' => $appId,
-                'kompetensi'     => $nama,
-                'kategori'       => LembarPenilaian::KAT_HRD,
-                'sumber'         => LembarPenilaian::DARI_AI,
-                'bobot'          => 1,
-                'tingkat'        => (string) $n,
+                'kompetensi' => $nama,
+                'kategori'   => LembarPenilaian::KAT_HRD,
+                'bobot'      => 1,
+                'tingkat'    => (string) $n,
                 // Alasan ikut disimpan, dan itu bukan hiasan: tanpa kutipan dari
                 // transkrip, penilaian otomatis cuma angka yang tidak bisa
                 // dibantah siapa pun, termasuk kandidat yang bertanya kenapa
                 // ia gugur.
-                'catatan'        => mb_substr((string) ($p['alasan'] ?? ''), 0, LembarPenilaian::MAKS_CATATAN),
+                'catatan'    => mb_substr((string) ($p['alasan'] ?? ''), 0, LembarPenilaian::MAKS_CATATAN),
             ];
         }
 
-        if ($baris === []) {
-            return;
-        }
-
-        // Satu transaksi untuk seluruh lembar. Tanpa ini, kegagalan di tengah
-        // meninggalkan penilaian separuh yang tidak akan pernah dibersihkan -
-        // tabel ini tambah-saja. Sudah pernah terjadi 12 Agustus 2026.
-        $db = db_connect();
-        $db->transException(true)->transStart();
-        $model = new InterviewPenilaianModel();
-        foreach ($baris as $r) {
-            $model->insert($r);
-        }
-        $db->transComplete();
+        return $baris;
     }
 
     /**
-     * Simpan Candidate's Strengths dan Weaknesses hasil rangkuman AI.
+     * Candidate's Strengths dan Weaknesses hasil rangkuman AI.
      *
      * Bobot 0: narasi tidak pernah ikut dihitung jadi skor. Yang kosong tidak
      * disimpan - "tidak cukup bahan" adalah jawaban yang sah, dan baris kosong
@@ -186,40 +187,77 @@ class Interview extends BaseController
      * tetap punya recruiter, dan endpoint ini terbuka bagi siapa pun yang
      * memegang token bersama.
      *
-     * @param array<string, string> $narasi
+     * @param  array<string, string>       $narasi
+     * @return list<array<string, mixed>>
      */
-    private function simpanNarasi(int $appId, array $narasi): void
+    private function barisNarasi(array $narasi): array
     {
-        $model = new InterviewPenilaianModel();
+        $baris = [];
         foreach (LembarPenilaian::NARASI_AI as $kunci) {
             $teks = trim(preg_replace('/\s+/u', ' ', $narasi[$kunci] ?? ''));
             if ($teks === '') {
                 continue;
             }
-            $model->insert([
-                'application_id' => $appId,
-                'kompetensi'     => $kunci,
-                'kategori'       => LembarPenilaian::KAT_NARASI,
-                'sumber'         => LembarPenilaian::DARI_AI,
-                'bobot'          => 0,
-                'tingkat'        => '',
-                'catatan'        => mb_substr($teks, 0, LembarPenilaian::MAKS_CATATAN),
-            ]);
+            $baris[] = [
+                'kompetensi' => $kunci,
+                'kategori'   => LembarPenilaian::KAT_NARASI,
+                'bobot'      => 0,
+                'tingkat'    => '',
+                'catatan'    => mb_substr($teks, 0, LembarPenilaian::MAKS_CATATAN),
+            ];
         }
+
+        return $baris;
+    }
+
+    /**
+     * Rekomendasi dari AI, atau null bila ia tidak menjawab dengan salah satu
+     * dari dua nilai yang diakui.
+     *
+     * @param  array<string, mixed> $b badan callback
+     * @return array{0: ?bool, 1: string} [lolos, alasan]
+     */
+    private function rekomendasiAi(array $b): array
+    {
+        $lolos = match ((string) ($b['rekomendasi'] ?? '')) {
+            'recommended'     => true,
+            'not_recommended' => false,
+            default           => null,
+        };
+
+        // Titik penutup dibuang: kalimatnya disambung dengan '. [pembanding]',
+        // dan model hampir selalu mengakhirinya dengan titik sendiri.
+        $alasan = rtrim(trim((string) ($b['alasan_rekomendasi'] ?? '')), '.');
+
+        return [$lolos, mb_substr($alasan, 0, 400)];
     }
 
     /**
      * Tutup Gate 2 dari lembar yang sudah lengkap.
      *
-     * Otomatis, tanpa recruiter menekan apa pun - itu yang diminta revisi 12
-     * Agustus. Dua keadaan TIDAK diputus di sini dan diserahkan ke manusia:
-     * transkripsi yang gagal, dan skor CV yang tidak tersedia. Keduanya berarti
-     * datanya kurang, dan memutus dengan data yang kurang bukan otomatisasi
-     * melainkan tebakan yang dikirim lewat email.
+     * YANG MEMUTUSKAN SEKARANG AI, BUKAN RUMUS (permintaan atasan, 14 Agustus
+     * 2026). Sebelumnya keputusannya aritmetika murni: 0,4 x skor CV + 0,6 x
+     * skor interview dibandingkan dengan ambang 0,7. Sekarang model yang menilai
+     * transkrip juga yang menyatakan recommended atau tidak, dengan skor CV ikut
+     * dikirim kepadanya sebagai bahan.
      *
-     * @param array<string, mixed> $app
+     * RUMUSNYA TETAP DIHITUNG DAN DICATAT. Ia tidak lagi memutuskan apa pun,
+     * tapi angkanya satu-satunya yang bisa diperiksa ulang orang lain: model
+     * bahasa tidak menjawab sama persis dua kali pada transkrip yang sama,
+     * sedangkan aritmetika iya. Tanpa baris pembanding ini, satu-satunya
+     * keterangan yang tersisa saat kandidat bertanya kenapa ia gugur adalah
+     * kalimat yang ditulis model itu sendiri.
+     *
+     * TIGA keadaan TIDAK diputus di sini dan diserahkan ke manusia: transkripsi
+     * yang gagal, skor CV yang tidak tersedia, dan AI yang tidak memutuskan.
+     * Ketiganya berarti bahannya kurang, dan memutus dengan bahan yang kurang
+     * bukan otomatisasi melainkan tebakan yang dikirim lewat email.
+     *
+     * @param array<string, mixed>   $app
+     * @param array{0: ?bool, 1: string} $rekomendasi [lolos, alasan] dari AI
      */
-    private function putuskan(int $appId, array $app, bool $gagal, string $catatan): void
+    private function putuskan(int $appId, array $app, bool $gagal, string $catatan,
+        bool $adaTranskrip = false, array $rekomendasi = [null, '']): void
     {
         $logger = new StageLogger();
         $actor  = 'system:transkrip';
@@ -230,8 +268,16 @@ class Interview extends BaseController
         $skorCv        = $this->skorCv($appId);
 
         if ($gagal || $skorInterview === null) {
+            // Transkripsi dan penilaian dua langkah terpisah, dan sejak
+            // transkripsinya jalan lokal (14 Agustus 2026) keduanya kerap
+            // berbeda nasib - transkrip jadi, penilaiannya kena kuota. Sebab
+            // yang dicatat di sini yang dibaca recruiter besok, jadi menyebut
+            // "transkripsi gagal" untuk transkrip yang lengkap membuatnya
+            // mencari-cari masalah yang tidak ada.
             $logger->log($appId, 'gate_2', 'flagged', $actor,
-                'Transkripsi tidak menghasilkan penilaian'
+                ($adaTranskrip
+                    ? 'Transkrip berhasil dibuat, penilaiannya yang gagal'
+                    : 'Transkripsi tidak menghasilkan penilaian')
                 . ($catatan === '' ? '' : ': ' . mb_substr($catatan, 0, 200))
                 . '. Keputusan diserahkan ke recruiter.');
 
@@ -255,15 +301,47 @@ class Interview extends BaseController
 
         $config = GateTwo::configFromJob($app['bobot_json'] ?? null, $app['threshold_json'] ?? null);
         $rec    = GateTwo::recommend($skorCv, $skorInterview / 100, $config);
-        $lolos  = $rec['recommendation'] === 'hire';
 
         $lemah   = LembarPenilaian::terlemah($penilaian);
         $rincian = 'Skor interview ' . $skorInterview . '/100 (dari transkrip)'
             . ($lemah === [] ? '' : ', terlemah: ' . implode(', ', $lemah))
             . ', kemiripan CV ' . kemiripan_teks($skorCv)
-            . '. Skor akhir ' . skor_100($rec['score']) . '/100';
+            // Satu angka di belakang koma, dan itu bukan kerapian. Ambangnya
+            // 70/100, dan pembulatan ke bilangan bulat membuat skor 0,6988
+            // tercatat "70/100" pada kandidat yang justru DITOLAK karenanya -
+            // baris yang tidak bisa dijelaskan kepada siapa pun, termasuk
+            // kandidat yang bertanya kenapa ia gugur di angka yang sama dengan
+            // ambangnya. Terlihat pada uji e2e 14 Agustus 2026.
+            . '. Skor akhir rumus ' . skor_100($rec['score'], 1) . '/100';
 
-        $logger->log($appId, 'gate_2', $lolos ? 'passed' : 'failed', $actor, $rincian, $email);
+        [$lolos, $alasanAi] = $rekomendasi;
+
+        if ($lolos === null) {
+            // AI tidak memutuskan - aturan 13 di SYSTEM_NILAI memang membolehkan
+            // itu saat transkripnya terlalu tipis. Rumusnya TIDAK dipakai
+            // menggantikan: sejak keputusannya dipindahkan ke AI, memutus lewat
+            // rumus hanya untuk kandidat yang bahannya paling sedikit berarti
+            // sebagian orang dinilai dengan aturan yang berbeda dari sebelahnya,
+            // tanpa ada yang tahu siapa.
+            $logger->log($appId, 'gate_2', 'flagged', $actor,
+                $rincian . '. AI tidak memberi rekomendasi, keputusan diserahkan ke recruiter.');
+
+            return;
+        }
+
+        // Kalimat AI ditulis DULUAN: inilah sebab yang sebenarnya, dan angka
+        // rumus di belakangnya cuma pembanding. Menaruhnya terbalik membuat
+        // pembaca mengira angka itu yang menggugurkan.
+        $rumus = $rec['recommendation'] === 'hire';
+        $catat = 'Rekomendasi AI: ' . ($lolos ? 'Recommended' : 'Not Recommended')
+            . ($alasanAi === '' ? '' : ' - ' . $alasanAi)
+            . '. [pembanding] ' . $rincian
+            // Ketidaksepakatan disebut terang-terangan. Ia tidak mengubah
+            // keputusan, tapi ia satu-satunya penanda yang bisa dihitung kalau
+            // suatu hari ada yang bertanya seberapa sering keduanya berbeda.
+            . ($rumus === $lolos ? ' (sepakat)' : ' (BERBEDA dari rekomendasi AI)');
+
+        $logger->log($appId, 'gate_2', $lolos ? 'passed' : 'failed', $actor, $catat, $email);
         if ($lolos) {
             $logger->log($appId, 'berkas_kontrak', 'entered', $actor);
         }

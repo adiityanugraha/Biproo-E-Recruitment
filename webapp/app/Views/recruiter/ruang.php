@@ -22,6 +22,23 @@ $bingkai = $bingkai ?? false;
 // begitu (kandidat belum pernah bekerja) dan yang satu lagi tanda kuota LLM
 // habis. Kalau keduanya terlihat sama, kegagalan tidak akan pernah ketahuan.
 $sumber = $pertanyaan[0]['sumber'] ?? '';
+
+// Pertanyaan dikunci begitu rekamannya ada, tidak menunggu keputusan Gate 2.
+// Wawancaranya sudah terjadi dan ketiga pertanyaan inilah yang ditanyakan;
+// menyuntingnya sesudah itu membuat lembar profil bercerita tentang wawancara
+// yang tidak pernah berlangsung. Gate 2 bisa menggantung berhari-hari di
+// 'flagged', dan selama itu kotaknya terbuka lebar.
+$terkunci = $sudah || $transkrip !== null;
+
+// Nilai dan catatan yang SUDAH tersimpan, dipakai mengisi ulang formnya.
+// Kotak kosong di atas nilai yang sudah ada adalah undangan mengisi berbeda,
+// dan yang terbaca di layar lalu bukan yang dipakai menilai kandidat.
+$milikRec = [];
+foreach ($penilaian as $p) {
+    if (($p['sumber'] ?? '') === L::DARI_RECRUITER) {
+        $milikRec[$p['kompetensi']] = $p;
+    }
+}
 $LENCANA = [
     PK::SUMBER_PENGALAMAN => ['l-baik', 'dari pengalaman kerja kandidat',
         'Disusun dari riwayat kerja di CV kandidat ini.'],
@@ -143,8 +160,8 @@ $LENCANA = [
     <p class="kosong">Pertanyaan belum berhasil disusun.</p>
   <?php endif ?>
 
-  <?php if ($sudah): ?>
-    <?php // Sesudah kandidat diputus, pertanyaannya jadi catatan: ia dasar
+  <?php if ($terkunci): ?>
+    <?php // Sesudah wawancaranya direkam, pertanyaannya jadi catatan: ia dasar
           // penilaian yang sudah terlanjur dipakai. Ditampilkan sebagai teks,
           // tanpa kotak isian yang mengundang orang mengubahnya. ?>
     <?php foreach ($pertanyaan as $i => $p): ?>
@@ -153,7 +170,9 @@ $LENCANA = [
         <div class="isi"><div class="teks"><?= esc($p['pertanyaan']) ?></div></div>
       </div>
     <?php endforeach ?>
-    <p class="ket" style="margin-bottom:0">Kandidat ini sudah diputuskan, pertanyaannya tidak bisa diubah lagi.</p>
+    <p class="ket" style="margin-bottom:0"><?= $sudah
+        ? 'Kandidat ini sudah diputuskan, pertanyaannya tidak bisa diubah lagi.'
+        : 'Rekaman wawancara sudah diunggah, jadi pertanyaannya terkunci - ketiganya inilah yang ditanyakan.' ?></p>
   <?php else: ?>
     <form method="post" action="<?= site_url('recruiter/ruang/' . $app['id'] . '/pertanyaan') ?>">
       <?= csrf_field() ?>
@@ -184,12 +203,19 @@ $LENCANA = [
   <h3>Rekaman Wawancara</h3>
   <?php if ($transkrip !== null): ?>
     <?php $s = $transkrip['status']; ?>
+    <?php // Status barisnya menandai SELURUH pekerjaan - transkripsi lalu
+          // penilaian - jadi 'gagal' saja tidak cukup menerangkan yang mana.
+          // Sejak transkripsinya jalan lokal (14 Agustus 2026) keduanya kerap
+          // berbeda nasib: transkrip lengkap 2.000 karakter terpampang di bawah
+          // sementara labelnya berkata "transkripsi gagal", padahal yang habis
+          // kuotanya cuma penilaian. Adanya teks yang membedakan. ?>
+    <?php $adaTeks = trim((string) ($transkrip['teks'] ?? '')) !== ''; ?>
     <p style="margin:0 0 10px">
       <span class="status s-<?= esc($s) ?>"><?= esc([
           'antre'   => 'menunggu ditranskripsi',
           'proses'  => 'sedang ditranskripsi',
           'selesai' => 'transkrip siap',
-          'gagal'   => 'transkripsi gagal',
+          'gagal'   => $adaTeks ? 'penilaian gagal, transkrip tersedia' : 'transkripsi gagal',
       ][$s] ?? $s) ?></span>
       <small style="color:#999;margin-left:8px">diunggah <?= esc(date('d M Y H:i', strtotime($transkrip['created_at']))) ?></small>
     </p>
@@ -266,6 +292,10 @@ $dariAi = array_filter($penilaian, static fn ($p) => ($p['sumber'] ?? '') === L:
         Ketiganya tidak bisa dibaca dari transkrip - yang tersimpan di sana cuma kata-kata
         yang terucap. Enam kompetensi lain dinilai otomatis dari transkrip beserta
         kutipan yang mendasarinya.
+        <?php if ($milikRec !== []): ?>
+          <br><b>Terisi dari penilaian Anda yang tersimpan.</b> Mengirim ulang menggantinya,
+          bukan menambah - yang dipakai menilai selalu yang terakhir.
+        <?php endif ?>
       </p>
       <table class="lembar">
         <tr>
@@ -275,10 +305,12 @@ $dariAi = array_filter($penilaian, static fn ($p) => ($p['sumber'] ?? '') === L:
           <?php endforeach ?>
         </tr>
         <?php foreach (L::MATA_MANUSIA as $i => $kompetensi): ?>
+          <?php $tersimpan = (int) ($milikRec[$kompetensi]['tingkat'] ?? 0); ?>
           <tr>
             <td style="text-align:left"><?= esc($kompetensi) ?></td>
             <?php foreach (array_keys(L::SKALA) as $n): ?>
-              <td><input type="radio" name="nilai[<?= $i ?>]" value="<?= $n ?>" required style="width:auto"></td>
+              <td><input type="radio" name="nilai[<?= $i ?>]" value="<?= $n ?>" required style="width:auto"
+                         <?= $n === $tersimpan ? 'checked' : '' ?>></td>
             <?php endforeach ?>
           </tr>
         <?php endforeach ?>
@@ -294,7 +326,7 @@ $dariAi = array_filter($penilaian, static fn ($p) => ($p['sumber'] ?? '') === L:
       <?php foreach (L::NARASI_RECRUITER as $kunci): $label = L::NARASI[$kunci]; ?>
         <label style="margin-top:12px"><?= esc($label) ?></label>
         <textarea name="narasi[<?= $kunci ?>]" rows="2" maxlength="<?= L::MAKS_CATATAN ?>"
-                  style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid #e2e6ee;border-radius:8px;font-family:inherit;font-size:13px"></textarea>
+                  style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid #e2e6ee;border-radius:8px;font-family:inherit;font-size:13px"><?= esc($milikRec[$kunci]['catatan'] ?? '') ?></textarea>
       <?php endforeach ?>
 
       <button type="submit" class="btn-unggah" style="margin-top:14px"
@@ -304,7 +336,8 @@ $dariAi = array_filter($penilaian, static fn ($p) => ($p['sumber'] ?? '') === L:
     </form>
     <?php if ($transkrip !== null): ?>
       <p class="ket" style="margin-bottom:0">
-        Mengunggah ulang tidak menghapus rekaman sebelumnya - yang dipakai menilai selalu yang terbaru.
+        Mengunggah ulang tidak menghapus berkas rekaman sebelumnya, tapi penilaian di atas
+        <b>diganti</b>, bukan ditambah - yang dipakai menilai selalu kiriman terakhir.
       </p>
     <?php endif ?>
   <?php endif ?>

@@ -250,7 +250,7 @@ bukan keputusan Anda, jadi tanyakan ke atasan sedini mungkin.
 
 - [ ] **Model transkripsi terunduh di server.**
       `ai-service` mentranskripsi dengan faster-whisper di mesin sendiri, dan
-      unduhan pertamanya ~460 MB ke `~/.cache/huggingface` milik user yang
+      unduhan pertamanya ~1,5 GB ke `~/.cache/huggingface` milik user yang
       menjalankan layanannya. Panaskan sekali sesudah deploy, jangan biarkan
       recruiter pertama yang menunggunya. Kalau `pip install faster-whisper`
       dilewat, seluruh jalur otomatis kembali ke Gemini - jalan, tapi kembali

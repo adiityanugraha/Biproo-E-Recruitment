@@ -47,7 +47,7 @@ final class InterviewScheduleTest extends CIUnitTestCase
      * yang diisi recruiter dari ingatan dan sudah dihapus. Skor akhirnya sama
      * persis pada nilai seragam, jadi ambang yang diuji di sini tidak bergeser.
      */
-    private function nilaiLewatTranskrip(int $aid, int $n): void
+    private function nilaiLewatTranskrip(int $aid, int $n, ?string $rekomendasi = 'recommended'): void
     {
         $model = new InterviewPenilaianModel();
         foreach (L::MATA_MANUSIA as $kompetensi) {
@@ -71,6 +71,11 @@ final class InterviewScheduleTest extends CIUnitTestCase
                     static fn (string $k): array => ['kompetensi' => $k, 'nilai' => $n, 'alasan' => 'Mengutip transkrip.'],
                     L::dariTranskrip()
                 ),
+                // Sejak 14 Agustus 2026 INILAH yang menutup Gate 2, bukan
+                // rumus 0,4 x CV + 0,6 x interview. Callback tanpa baris ini
+                // berakhir 'flagged', dan itu memang disengaja.
+                'rekomendasi'        => $rekomendasi,
+                'alasan_rekomendasi' => 'Menimbang jawaban di transkrip dan kecocokan riwayat kerjanya.',
             ]);
     }
 
@@ -288,8 +293,10 @@ final class InterviewScheduleTest extends CIUnitTestCase
         $this->pastApprovedInterview($aid);
         $this->skorCv($aid, 0.80);
 
-        // 0.4*0.80 + 0.6*0.20 = 0.44 -> di bawah ambang -> TIDAK LOLOS otomatis
-        $this->nilaiLewatTranskrip($aid, 2);
+        // Sejak 14 Agustus 2026 yang menutup Gate 2 rekomendasi AI, bukan rumus
+        // 0,4 x CV + 0,6 x interview. Nilai 2 tetap dikirim supaya angkanya
+        // masuk akal berdampingan dengan penolakannya.
+        $this->nilaiLewatTranskrip($aid, 2, 'not_recommended');
 
         $this->seeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'gate_2', 'status' => 'failed']);
         $this->dontSeeInDatabase('candidate_stage_history', ['application_id' => $aid, 'stage' => 'berkas_kontrak']);

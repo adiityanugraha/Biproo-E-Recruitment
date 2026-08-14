@@ -18,12 +18,27 @@ Yang bisa dilakukan murah: tiap segmen ditulis satu baris. Whisper memotong
 segmen di jeda bicara, dan jeda bicara umumnya jatuh di pergantian giliran,
 jadi batas gilirannya masih terbaca walau tidak berlabel.
 
-UKURAN MODEL
+UKURAN MODEL: 'medium', BUKAN 'small'
 
-'small' (~460 MB) terukur 4,6x realtime pada CPU i5-11400H int8 - wawancara
-30 menit selesai sekitar 6 menit. Cukup, dan tidak menuntut pustaka CUDA
-ratusan megabita yang harus ikut dipasang tim DS. Mesin ber-GPU yang cuDNN
-dan cuBLAS-nya lengkap tinggal menyetel WHISPER_DEVICE=cuda.
+Diukur pada rekaman wawancara berbahasa Indonesia yang sama (14 Agustus 2026),
+CPU i5-11400H int8:
+
+    small  (~460 MB)  4,6x realtime   "Admin Gudang" -> "atming gudang"
+    medium (~1,5 GB)  3,5x realtime   "Admin Gudang" benar
+
+'small' merusak justru istilah yang paling penting - nama posisi, nama
+perusahaan, 'inbound'. Penilaiannya memang tetap sama karena modelnya bisa
+menebak dari konteks, tapi transkrip inilah yang ditunjukkan kepada orang yang
+bertanya kenapa seorang kandidat gugur, dan dokumen semacam itu tidak boleh
+berbunyi asal.
+
+Selisih waktunya kecil: wawancara 30 menit jadi 8,5 menit dari 6,5 menit, dan
+tidak ada yang menunggu di layar - transkripsinya berjalan di latar. Yang
+bertambah nyata cuma unduhan pertamanya.
+
+Mesin ber-GPU yang cuDNN dan cuBLAS-nya lengkap tinggal menyetel
+WHISPER_DEVICE=cuda. Mesin yang kepayahan bisa turun lagi lewat
+WHISPER_MODEL=small, dengan konsekuensi di atas.
 """
 
 import logging
@@ -36,7 +51,7 @@ from faster_whisper import WhisperModel
 
 load_dotenv()
 
-NAMA_MODEL = os.environ.get("WHISPER_MODEL", "small")
+NAMA_MODEL = os.environ.get("WHISPER_MODEL", "medium")
 
 # cpu/int8 bawaan: jalan di mesin mana pun tanpa pustaka tambahan. cuda/float16
 # butuh cublas64_12.dll dan cudnn - WhisperModel tetap terbentuk tanpa keduanya

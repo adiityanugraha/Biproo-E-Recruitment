@@ -26,7 +26,7 @@ Test: `.venv\Scripts\python -m pytest`
 | `EMBEDDING_MODEL` | tidak | default `gemini-embedding-001` |
 | `GENERATION_MODEL` | tidak | model chatbot, default `gemini-2.5-flash` |
 | `RETRY_BASE_DELAY` | tidak | detik backoff dasar retry provider, default `2` (deret 2-4-8) |
-| `WHISPER_MODEL` | tidak | ukuran model transkripsi, default `small` |
+| `WHISPER_MODEL` | tidak | ukuran model transkripsi, default `medium` |
 | `WHISPER_DEVICE` | tidak | `cpu` (default) atau `cuda` |
 | `WHISPER_COMPUTE` | tidak | `int8` (default) untuk CPU, `float16` untuk cuda |
 
@@ -39,11 +39,14 @@ cadangan bila faster-whisper belum terpasang atau hasilnya tidak layak. Alasanny
 kuota: jatah gratis Gemini 20 panggilan sehari, dan transkripsi tidak butuh
 penalaran sama sekali - cuma menyalin ucapan.
 
-- **Unduhan pertama ~460 MB** (model `small` dari HuggingFace), tersimpan di
+- **Unduhan pertama ~1,5 GB** (model `medium` dari HuggingFace), tersimpan di
   `~/.cache/huggingface`. Sesudah itu tidak butuh jaringan lagi.
-- Terukur **4,6x realtime** pada CPU i5-11400H `int8`: wawancara 30 menit selesai
-  sekitar 6 menit. Cukup, dan jalur ini berjalan di latar - tidak ada yang
-  menunggu di layar.
+- Terukur **3,5x realtime** pada CPU i5-11400H `int8`: wawancara 30 menit selesai
+  sekitar 8,5 menit. Jalur ini berjalan di latar - tidak ada yang menunggu di layar.
+- `small` (~460 MB, 4,6x realtime) merusak istilah penting dalam bahasa
+  Indonesia - "Admin Gudang" jadi "atming gudang", "inbound" jadi "inbond".
+  Penilaiannya tetap sama karena modelnya menebak dari konteks, tapi transkrip
+  inilah yang ditunjukkan kepada orang yang bertanya kenapa kandidat gugur.
 - `WHISPER_DEVICE=cuda` jauh lebih cepat tapi menuntut `cublas64_12.dll` dan
   cuDNN terpasang. Tanpa keduanya, model tetap terbentuk dan baru gagal saat
   menyalin - jadi jangan disetel sebelum yakin.

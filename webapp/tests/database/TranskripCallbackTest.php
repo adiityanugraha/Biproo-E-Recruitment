@@ -85,8 +85,13 @@ final class TranskripCallbackTest extends CIUnitTestCase
         return $aid;
     }
 
-    /** @param list<array<string, mixed>>|null $penilaian null = pakai nilai bagus untuk enam kompetensi */
-    private function kirim(int $aid, string $status = 'selesai', ?array $penilaian = null, string $catatan = '', ?string $token = null)
+    /**
+     * @param list<array<string, mixed>>|null $penilaian   null = pakai nilai bagus untuk enam kompetensi
+     * @param string|null                     $rekomendasi INILAH yang menutup Gate 2 sejak 14 Agustus 2026.
+     *                                                     null = AI tidak memutuskan -> 'flagged'.
+     */
+    private function kirim(int $aid, string $status = 'selesai', ?array $penilaian = null, string $catatan = '',
+        ?string $token = null, ?string $rekomendasi = 'recommended')
     {
         $penilaian ??= array_map(
             static fn (string $k): array => ['kompetensi' => $k, 'nilai' => 4, 'alasan' => 'Kandidat berkata "saya cek ulang stoknya".'],
@@ -96,11 +101,13 @@ final class TranskripCallbackTest extends CIUnitTestCase
         return $this->withHeaders(['X-Token' => $token ?? $this->token])
             ->withBodyFormat('json')
             ->post('interview/callback', [
-                'application_id' => $aid,
-                'status'         => $status,
-                'teks'           => "Pewawancara: Selamat pagi.\nKandidat: Selamat pagi, saya Reza.",
-                'penilaian'      => $penilaian,
-                'catatan'        => $catatan,
+                'application_id'     => $aid,
+                'status'             => $status,
+                'teks'               => "Pewawancara: Selamat pagi.\nKandidat: Selamat pagi, saya Reza.",
+                'penilaian'          => $penilaian,
+                'catatan'            => $catatan,
+                'rekomendasi'        => $rekomendasi,
+                'alasan_rekomendasi' => 'Menimbang jawaban di transkrip dan kecocokan riwayat kerjanya.',
             ]);
     }
 
@@ -203,7 +210,7 @@ final class TranskripCallbackTest extends CIUnitTestCase
             L::dariTranskrip()
         );
 
-        $this->kirim($aid, penilaian: $buruk);
+        $this->kirim($aid, penilaian: $buruk, rekomendasi: 'not_recommended');
 
         $this->assertSame('failed', $this->gate2($aid));
     }
@@ -329,6 +336,128 @@ final class TranskripCallbackTest extends CIUnitTestCase
         $this->kirim($aid);
 
         $this->assertNotEmpty((new InterviewTranskripModel())->terakhirUntuk($aid)['model_version']);
+    }
+
+    /**
+     * Sebab yang dicatat Gate 2 harus menyebut langkah yang benar-benar gagal.
+     *
+     * Sebabnya yang dibaca recruiter besok. Menyebut "transkripsi gagal" untuk
+     * transkrip yang lengkap membuatnya mencari-cari masalah yang tidak ada.
+     */
+    public function testSebabFlaggedMembedakanTranskripsiDariPenilaian(): void
+    {
+        $adaTeks = $this->fixture();
+        $this->withHeaders(['X-Token' => $this->token])->withBodyFormat('json')
+            ->post('interview/callback', [
+                'application_id' => $adaTeks, 'status' => 'gagal',
+                'teks'    => 'Kandidat: saya cek ulang surat jalannya satu per satu.',
+                'catatan' => "Client error '429 Too Many Requests'",
+            ]);
+
+        $kosong = $this->fixture();
+        $this->withHeaders(['X-Token' => $this->token])->withBodyFormat('json')
+            ->post('interview/callback', [
+                'application_id' => $kosong, 'status' => 'gagal',
+                'teks'    => '',
+                'catatan' => 'Rekaman tidak memuat suara orang berbicara.',
+            ]);
+
+        $model = new StageHistoryModel();
+        $this->assertStringContainsString('penilaiannya yang gagal',
+            $model->where(['application_id' => $adaTeks, 'stage' => 'gate_2'])->first()['note']);
+        $this->assertStringContainsString('Transkripsi tidak menghasilkan',
+            $model->where(['application_id' => $kosong, 'stage' => 'gate_2'])->first()['note']);
+    }
+
+    /**
+     * Callback yang datang DUA KALI mengganti lembarnya, bukan menumpuk.
+     *
+     * Bisa terjadi sungguhan: skor CV tidak ada membuat Gate 2 jadi 'flagged'
+     * alih-alih diputus, dan penjaga "sudah diputuskan" tidak menahan apa pun.
+     * `transkrip:resend` lalu mengirim ulang lamaran yang sama. Tanpa
+     * penggantian, kandidat punya dua set nilai dan LembarPenilaian::skor()
+     * merata-ratakan keduanya.
+     */
+    public function testCallbackDuaKaliTidakMenggandakanPenilaian(): void
+    {
+        $aid = $this->fixture(skorCv: null);   // tanpa skor CV -> flagged, bukan diputus
+
+        $this->kirim($aid, penilaian: [['kompetensi' => 'Adaptability', 'nilai' => 2, 'alasan' => 'a']]);
+        $this->kirim($aid, penilaian: [['kompetensi' => 'Adaptability', 'nilai' => 5, 'alasan' => 'b']]);
+
+        $ai = (new InterviewPenilaianModel())
+            ->where(['application_id' => $aid, 'sumber' => L::DARI_AI])->findAll();
+
+        $this->assertCount(1, $ai, 'dua kiriman tidak boleh meninggalkan dua baris');
+        $this->assertSame('5', $ai[0]['tingkat'], 'yang tersimpan kiriman terakhir');
+    }
+
+    /** Yang dihapus hanya milik AI - tiga nilai recruiter datang dari orang lain. */
+    public function testPenilaianRecruiterTidakIkutTerhapus(): void
+    {
+        $aid = $this->fixture(skorCv: null);   // fixture menyertakan tiga nilai recruiter
+
+        $this->kirim($aid);
+        $this->kirim($aid);
+
+        $this->assertCount(count(L::MATA_MANUSIA), (new InterviewPenilaianModel())
+            ->where(['application_id' => $aid, 'sumber' => L::DARI_RECRUITER])->findAll());
+    }
+
+    /**
+     * Nilai dan narasi harus masuk lewat SATU panggilan ganti().
+     *
+     * Keduanya bersumber 'ai'. Dua panggilan berturut membuat yang kedua
+     * menghapus hasil yang pertama - kegagalan yang cuma terlihat kalau
+     * keduanya diperiksa bersamaan.
+     */
+    public function testNilaiDanNarasiAiSamaSamaBertahan(): void
+    {
+        $aid = $this->fixture();
+
+        $this->withHeaders(['X-Token' => $this->token])->withBodyFormat('json')
+            ->post('interview/callback', [
+                'application_id' => $aid, 'status' => 'selesai',
+                'teks'      => 'Kandidat: saya cek ulang surat jalannya.',
+                'penilaian' => [['kompetensi' => 'Adaptability', 'nilai' => 4, 'alasan' => 'a']],
+                'kekuatan'  => 'Terbiasa menelusuri dokumen.',
+            ]);
+
+        $ai = (new InterviewPenilaianModel())
+            ->where(['application_id' => $aid, 'sumber' => L::DARI_AI])->findAll();
+
+        $this->assertSame(['Adaptability', 'strengths'], array_column($ai, 'kompetensi'));
+    }
+
+    /**
+     * Skor yang dicatat tidak boleh terbaca sama dengan ambang saat DITOLAK.
+     *
+     * Ambangnya 0,7. Skor 0,6988 dibulatkan ke bilangan bulat jadi "70/100",
+     * dan barisnya lalu berbunyi "Skor akhir 70/100 -> failed" - tidak bisa
+     * dijelaskan kepada siapa pun, termasuk kandidat yang bertanya kenapa ia
+     * gugur di angka yang sama dengan ambangnya. Terlihat pada uji e2e
+     * 14 Agustus 2026, bukan oleh satu pun tes sebelum ini.
+     */
+    public function testSkorDiPerbatasanTidakTerbacaSamaDenganAmbang(): void
+    {
+        // Angka yang benar-benar keluar dari uji e2e: enam kompetensi bernilai
+        // 4,4,4,4,3,3 -> skor interview 67/100, lalu
+        // 0,4 x 0,742 + 0,6 x 0,67 = 0,6988 - tepat di bawah ambang 0,7.
+        $aid   = $this->fixture(skorCv: 0.742, mataManusia: false);
+        $nilai = [4, 4, 4, 4, 3, 3];
+        $this->kirim($aid, penilaian: array_map(
+            static fn (string $k, int $n): array => ['kompetensi' => $k, 'nilai' => $n, 'alasan' => 'a'],
+            L::dariTranskrip(),
+            $nilai
+        ), rekomendasi: 'not_recommended');
+
+        $baris = (new StageHistoryModel())
+            ->where(['application_id' => $aid, 'stage' => 'gate_2'])->first();
+
+        $this->assertSame('failed', $baris['status']);
+        $this->assertStringNotContainsString('70/100', $baris['note'],
+            'skor yang ditolak tidak boleh tercatat persis seangka dengan ambangnya');
+        $this->assertStringContainsString('69,9/100', $baris['note']);
     }
 
     // --- keadaan yang TIDAK boleh diputus mesin ---
