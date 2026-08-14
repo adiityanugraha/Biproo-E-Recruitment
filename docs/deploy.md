@@ -244,6 +244,17 @@ bukan keputusan Anda, jadi tanyakan ke atasan sedini mungkin.
       Tier gratis hanya 20 permintaan LLM per hari. Di produksi artinya
       screening berhenti di kandidat ke-20 setiap harinya, dan sisanya jatuh ke
       pembacaan kasar tanpa ada yang menyadarinya.
+      Sejak 14 Agustus 2026 transkripsi tidak lagi ikut memakan jatah itu (lihat
+      di bawah), jadi per kandidat tinggal tiga panggilan - tapi 20 sehari tetap
+      tidak cukup untuk satu hari rekrutmen yang sungguhan.
+
+- [ ] **Model transkripsi terunduh di server.**
+      `ai-service` mentranskripsi dengan faster-whisper di mesin sendiri, dan
+      unduhan pertamanya ~460 MB ke `~/.cache/huggingface` milik user yang
+      menjalankan layanannya. Panaskan sekali sesudah deploy, jangan biarkan
+      recruiter pertama yang menunggunya. Kalau `pip install faster-whisper`
+      dilewat, seluruh jalur otomatis kembali ke Gemini - jalan, tapi kembali
+      memakan jatah harian dan bisa 429 di tengah hari.
 
 - [x] ~~**Scope Zoom `meeting:delete:meeting`**~~ sudah ditambahkan di Zoom
       Marketplace (6 Agustus 2026) dan sudah diuji terhadap meeting sungguhan:
@@ -309,8 +320,9 @@ php spark transkrip:resend             # kirim ulang yang antre/proses
 php spark transkrip:resend --gagal     # ikut yang sudah ditandai gagal
 ```
 
-Yang berstatus `selesai` tidak pernah ikut. Tiap pengiriman ulang memakan dua
-panggilan LLM dari jatah harian.
+Yang berstatus `selesai` tidak pernah ikut. Tiap pengiriman ulang memakan satu
+panggilan LLM dari jatah harian - transkripsinya jalan lokal, yang dihitung cuma
+penilaiannya.
 
 ---
 

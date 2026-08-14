@@ -859,6 +859,18 @@ class Recruiter extends BaseController
                 'Kandidat ini sudah diputuskan, rekamannya tidak bisa ditambah lagi.');
         }
 
+        // Kegagalan di tingkat PHP diperiksa DULUAN, sebelum aturan validasi.
+        //
+        // Berkas yang melewati upload_max_filesize dibuang PHP sebelum kode ini
+        // jalan; yang tersisa cuma kode galat di $_FILES. Aturan uploaded[] CI4
+        // menerjemahkannya jadi "belum ada berkas yang dipilih" - padahal
+        // berkasnya jelas dipilih, cuma terlalu besar. Recruiter yang membaca
+        // itu akan mencoba memilih ulang berkas yang sama, berkali-kali.
+        $galat = $this->galatUnggahan($this->request->getFile('rekaman'));
+        if ($galat !== null) {
+            return redirect()->to($tujuan)->with('error', $galat);
+        }
+
         $aturan = ['rekaman' => [
             'rules'  => 'uploaded[rekaman]|max_size[rekaman,' . self::REKAMAN_MAKS_KB . ']',
             'errors' => [
@@ -876,9 +888,16 @@ class Recruiter extends BaseController
         $berkas = $this->request->getFile('rekaman');
         $jenis  = $berkas->getMimeType();
         if (! isset(self::REKAMAN_MIME[$jenis])) {
+            // Jenis yang terbaca ikut disebut. Tanpa itu penolakan ini buntu:
+            // recruiter melihat berkas yang menurutnya jelas rekaman ditolak,
+            // dan tidak ada satu pun keterangan untuk ditindaklanjuti - baik
+            // olehnya maupun oleh yang memperbaiki kodenya.
+            log_message('warning', 'Rekaman ditolak, jenis tidak dikenal: ' . $jenis
+                . ' (' . $berkas->getClientName() . ', ' . $berkas->getSize() . ' byte)');
+
             return redirect()->to($tujuan)->with('error',
-                'Isi berkas bukan rekaman audio atau video. Format yang diterima: '
-                . self::REKAMAN_EKSTENSI . '.');
+                'Isi berkas terbaca sebagai "' . $jenis . '", bukan rekaman audio atau video. '
+                . 'Format yang diterima: ' . self::REKAMAN_EKSTENSI . '.');
         }
 
         // Ketiganya wajib, dan diperiksa SEBELUM berkasnya dipindahkan: lembar
@@ -927,6 +946,43 @@ class Recruiter extends BaseController
     }
 
     /**
+     * Kegagalan unggahan di tingkat PHP, dalam bahasa manusia. null = tidak ada.
+     *
+     * Yang paling sering dan paling membingungkan: UPLOAD_ERR_INI_SIZE. Berkas
+     * yang melewati upload_max_filesize dibuang PHP sebelum aplikasi melihatnya,
+     * jadi tidak ada apa pun untuk diperiksa selain kode galat ini - dan pesan
+     * bawaan CI4 untuk keadaan itu berbunyi seolah tidak ada berkas dipilih.
+     */
+    private function galatUnggahan(?\CodeIgniter\HTTP\Files\UploadedFile $berkas): ?string
+    {
+        if ($berkas === null) {
+            return 'Belum ada berkas rekaman yang dipilih.';
+        }
+
+        $maks = round(self::REKAMAN_MAKS_KB / 1024);
+
+        return match ($berkas->getError()) {
+            UPLOAD_ERR_OK, UPLOAD_ERR_NO_FILE => null,
+            UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => sprintf(
+                'Berkas terlalu besar (%s) dan ditolak server sebelum sempat diperiksa. '
+                . 'Batasnya %d MB, dan batas PHP di server ini %s. '
+                . 'Rekam AUDIO SAJA lewat Zoom - berkasnya bisa sepersepuluh rekaman video.',
+                $this->ukuranTerbaca($berkas->getSize()), $maks, ini_get('upload_max_filesize')
+            ),
+            UPLOAD_ERR_PARTIAL => 'Unggahan terputus di tengah jalan. Coba lagi.',
+            default            => 'Unggahan gagal di server (kode ' . $berkas->getError() . '). '
+                                  . 'Periksa folder sementara PHP dan ruang disk.',
+        };
+    }
+
+    private function ukuranTerbaca(int $byte): string
+    {
+        return $byte >= 1048576
+            ? round($byte / 1048576, 1) . ' MB'
+            : max(1, (int) round($byte / 1024)) . ' KB';
+    }
+
+    /**
      * Tiga nilai dari form, atau null bila ada yang belum diisi.
      *
      * @return array<string, int>|null
@@ -963,11 +1019,17 @@ class Recruiter extends BaseController
             ];
         }
 
-        // Kotak narasi lembar BIPROO (Strengths, Weaknesses, Notes, Remarks).
-        // Ikut di form yang sama, bukan halaman tersendiri: keempatnya ditulis
-        // dari ingatan wawancara, dan ingatan itu paling utuh persis sekarang.
+        // Kotak narasi MILIK RECRUITER saja (Additional Notes, Other Remarks).
+        //
+        // Strengths dan Weaknesses sengaja tidak ikut: keduanya dirangkum AI
+        // dari riwayat kerja dan transkrip. Disaring di sini, bukan cuma
+        // dihilangkan dari tampilan - form yang dikirim ulang dari riwayat
+        // browser, atau permintaan yang dirakit sendiri, tetap sampai kemari.
+        // Kalau lolos, satu lembar akan punya DUA baris strengths yang saling
+        // bertentangan tanpa ada yang tahu mana yang benar.
+        //
         // Bobot 0 - narasi tidak pernah ikut dihitung jadi skor.
-        foreach (LembarPenilaian::NARASI as $kunci => $label) {
+        foreach (LembarPenilaian::NARASI_RECRUITER as $kunci) {
             $teks = trim(preg_replace('/\s+/u', ' ', (string) ($narasi[$kunci] ?? '')));
             if ($teks === '') {
                 continue;

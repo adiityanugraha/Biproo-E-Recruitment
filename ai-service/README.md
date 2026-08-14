@@ -26,8 +26,33 @@ Test: `.venv\Scripts\python -m pytest`
 | `EMBEDDING_MODEL` | tidak | default `gemini-embedding-001` |
 | `GENERATION_MODEL` | tidak | model chatbot, default `gemini-2.5-flash` |
 | `RETRY_BASE_DELAY` | tidak | detik backoff dasar retry provider, default `2` (deret 2-4-8) |
+| `WHISPER_MODEL` | tidak | ukuran model transkripsi, default `small` |
+| `WHISPER_DEVICE` | tidak | `cpu` (default) atau `cuda` |
+| `WHISPER_COMPUTE` | tidak | `int8` (default) untuk CPU, `float16` untuk cuda |
 
 Tanpa `GEMINI_API_KEY`, test live embedding otomatis di-skip; test lain tetap jalan.
+
+## Transkripsi wawancara
+
+Rekaman ditranskripsi **di komputer sendiri** dengan faster-whisper; Gemini cuma
+cadangan bila faster-whisper belum terpasang atau hasilnya tidak layak. Alasannya
+kuota: jatah gratis Gemini 20 panggilan sehari, dan transkripsi tidak butuh
+penalaran sama sekali - cuma menyalin ucapan.
+
+- **Unduhan pertama ~460 MB** (model `small` dari HuggingFace), tersimpan di
+  `~/.cache/huggingface`. Sesudah itu tidak butuh jaringan lagi.
+- Terukur **4,6x realtime** pada CPU i5-11400H `int8`: wawancara 30 menit selesai
+  sekitar 6 menit. Cukup, dan jalur ini berjalan di latar - tidak ada yang
+  menunggu di layar.
+- `WHISPER_DEVICE=cuda` jauh lebih cepat tapi menuntut `cublas64_12.dll` dan
+  cuDNN terpasang. Tanpa keduanya, model tetap terbentuk dan baru gagal saat
+  menyalin - jadi jangan disetel sebelum yakin.
+- Yang lokal **tidak memberi penanda pembicara** (`Pewawancara:`/`Kandidat:`).
+  Tiap segmen ditulis satu baris supaya batas gilirannya masih terbaca. Mesin
+  yang dipakai dicatat CI4 di `interview_transkrip.model_version`.
+
+Lepas faster-whisper dari `requirements.txt` bila mesinnya tidak sanggup;
+seluruh jalur otomatis kembali ke Gemini tanpa perubahan kode.
 
 Dokumentasi interaktif otomatis: http://127.0.0.1:8000/docs
 

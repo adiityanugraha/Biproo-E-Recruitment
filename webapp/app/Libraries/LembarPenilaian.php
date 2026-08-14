@@ -102,6 +102,23 @@ final class LembarPenilaian
         'remarks'    => 'Other Remarks',
     ];
 
+    /**
+     * Dua kotak yang DISUSUN AI dari riwayat kerja dan transkrip wawancara.
+     *
+     * Keduanya rangkuman dari bahan yang sama dengan yang dipakai menilai
+     * kompetensi, jadi menyusunnya sekali lagi dari ingatan cuma menghasilkan
+     * versi yang lebih kabur. Sisanya - Additional Notes dan Other Remarks -
+     * tetap milik recruiter: itu pengamatannya sendiri, hal yang justru tidak
+     * ada di transkrip maupun CV.
+     *
+     * Tidak menambah panggilan LLM: ikut di jawaban yang sama dengan penilaian
+     * kompetensi, karena bahannya memang sudah dikirim ke sana.
+     */
+    public const NARASI_AI = ['strengths', 'weaknesses'];
+
+    /** Sisanya, ditulis recruiter di form unggah rekaman. */
+    public const NARASI_RECRUITER = ['notes', 'remarks'];
+
     public const MAKS_CATATAN = 500;
 
     /** Nilai kategori pada interview_penilaian. */

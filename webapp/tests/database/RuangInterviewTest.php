@@ -439,6 +439,44 @@ final class RuangInterviewTest extends CIUnitTestCase
         $this->assertStringContainsString('maksimal', session('error'));
     }
 
+    /**
+     * Berkas yang dibuang PHP karena kebesaran diberi tahu apa adanya.
+     *
+     * Aturan uploaded[] CI4 menerjemahkan keadaan ini jadi "belum ada berkas
+     * yang dipilih" - padahal berkasnya jelas dipilih, cuma terlalu besar.
+     * Recruiter yang membaca itu akan mencoba memilih ulang berkas yang sama.
+     */
+    public function testBerkasYangDibuangPhpKarenaKebesaranDijelaskan(): void
+    {
+        $aid = $this->fixture();
+        $tmp = tempnam(sys_get_temp_dir(), 'rek');
+        file_put_contents($tmp, $this->wav(1024));
+        $this->sampah[] = $tmp;
+
+        service('superglobals')->setFilesArray(['rekaman' => [
+            'name' => 'Voice_260710.m4a', 'type' => 'audio/mp4', 'tmp_name' => $tmp,
+            'error' => UPLOAD_ERR_INI_SIZE, 'size' => 62 * 1024 * 1024,
+        ]]);
+
+        $this->withSession($this->sesiRec)->post('recruiter/ruang/' . $aid . '/rekaman');
+
+        $pesan = (string) session('error');
+        $this->assertStringContainsString('terlalu besar', $pesan);
+        $this->assertStringContainsString('62 MB', $pesan, 'ukurannya disebut supaya bisa ditindaklanjuti');
+        $this->assertStringNotContainsString('Belum ada berkas', $pesan);
+    }
+
+    /** Jenis yang terbaca ikut disebut - tanpa itu penolakannya buntu. */
+    public function testPenolakanJenisMenyebutkanApaYangTerbaca(): void
+    {
+        $aid = $this->fixture();
+        $this->siapkanIsi('wawancara.m4a', "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
+
+        $this->withSession($this->sesiRec)->post('recruiter/ruang/' . $aid . '/rekaman');
+
+        $this->assertStringContainsString('application/pdf', (string) session('error'));
+    }
+
     public function testTanpaBerkasDitolak(): void
     {
         $aid = $this->fixture();
@@ -483,26 +521,43 @@ final class RuangInterviewTest extends CIUnitTestCase
     }
 
     /**
-     * Empat kotak narasi lembar BIPROO pindah ke form unggah.
+     * Form recruiter hanya memuat narasi yang MEMANG miliknya.
      *
-     * Dulu ada di halaman penilaian tersendiri yang sudah dihapus. Keempatnya
-     * ditulis dari ingatan wawancara, dan ingatan itu paling utuh persis saat
-     * recruiter mengunggah rekamannya.
+     * Candidate's Strengths dan Weaknesses dirangkum AI dari riwayat kerja dan
+     * transkrip - bahan yang sama dengan yang dipakai menilai kompetensi -
+     * sehingga menuliskannya ulang dari ingatan cuma menghasilkan versi yang
+     * lebih kabur. Additional Notes dan Other Remarks tetap milik recruiter:
+     * itu pengamatannya sendiri, hal yang justru tidak ada di transkrip.
      */
-    public function testFormUnggahMemuatKotakNarasi(): void
+    public function testFormUnggahHanyaMemuatNarasiMilikRecruiter(): void
     {
         $aid = $this->fixture();
         $this->tigaPertanyaan();
 
         $html = (string) $this->withSession($this->sesiRec)->get('recruiter/ruang/' . $aid)->getBody();
 
-        foreach (L::NARASI as $kunci => $label) {
+        foreach (L::NARASI_RECRUITER as $kunci) {
             $this->assertStringContainsString('narasi[' . $kunci . ']', $html);
-            // Label diperiksa tanpa tanda kutipnya: esc() CI4 memakai ENT_HTML5
-            // sehingga apostrof jadi &apos;, sedangkan esc() yang dipanggil dari
-            // uji ini menghasilkan &#039;. Keduanya benar dan tidak akan sama.
-            $this->assertStringContainsString(strtok($label, "'"), $html);
         }
+        foreach (L::NARASI_AI as $kunci) {
+            $this->assertStringNotContainsString('narasi[' . $kunci . ']', $html);
+        }
+    }
+
+    /**
+     * Pembagiannya menutup keempat kotak, tanpa tumpang tindih.
+     *
+     * Kalau ada kunci yang masuk dua-duanya, satu lembar bisa punya DUA baris
+     * untuk kotak yang sama - satu dari recruiter, satu dari AI - dan tidak ada
+     * yang tahu mana yang benar.
+     */
+    public function testPembagianNarasiAiDanRecruiterTidakTumpangTindih(): void
+    {
+        $this->assertSame([], array_intersect(L::NARASI_AI, L::NARASI_RECRUITER));
+        $this->assertEqualsCanonicalizing(
+            array_keys(L::NARASI),
+            array_merge(L::NARASI_AI, L::NARASI_RECRUITER)
+        );
     }
 
     /** Ruang interview milik recruiter. Kandidat tidak boleh masuk. */

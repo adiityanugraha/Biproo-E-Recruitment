@@ -1,5 +1,7 @@
+import logging
 import os
 import re
+import time
 from typing import Protocol
 
 import httpx
@@ -20,6 +22,71 @@ def tanpa_kunci(pesan: object) -> str:
     menyentuh panggilan API WAJIB lewat sini.
     """
     return re.sub(r"key=[^&\s'\"\)]+", "key=***", str(pesan))
+
+
+# --- mengulang panggilan yang gagalnya sementara ---
+
+ULANG_MAKS = 3
+
+# Jeda dipilih menurut SEBAB gagalnya, bukan satu angka untuk semuanya.
+#
+# 503/500 datang dari model yang sedang kelebihan beban di sisi Google. Terjadi
+# sungguhan 14 Agustus 2026 saat mentranskripsi rekaman wawancara. Beberapa
+# detik biasanya cukup.
+#
+# 429 lain: kuota gratis Gemini dihitung PER MENIT, jadi mengulang setelah
+# beberapa detik pasti kena lagi dan percobaan itu terbuang percuma - persis
+# yang terlihat di log app#37. Karena itu jedanya jauh lebih panjang.
+JEDA_SIBUK = float(os.environ.get("RETRY_JEDA_SIBUK", "5"))
+JEDA_KUOTA = float(os.environ.get("RETRY_JEDA_LLM", "20"))
+
+
+def _jeda_bila_sementara(e: Exception) -> float | None:
+    """Berapa detik menunggu sebelum mengulang. None = jangan diulang."""
+    if isinstance(e, httpx.HTTPStatusError):
+        kode = e.response.status_code
+        if kode == 429:
+            return JEDA_KUOTA
+
+        # 5xx = masalah di sisi Google. 4xx lain (400 permintaan salah, 403
+        # kunci ditolak) TIDAK diulang: mengulang permintaan yang memang keliru
+        # cuma menghabiskan waktu dan kuota untuk hasil yang sama.
+        return JEDA_SIBUK if kode >= 500 else None
+
+    # Putus jaringan, timeout: layak dicoba lagi.
+    return JEDA_SIBUK if isinstance(e, httpx.TransportError) else None
+
+
+def ulangi(panggil, apa: str):
+    """
+    Jalankan `panggil()`, ulangi bila kegagalannya bersifat sementara.
+
+    Dipakai jalur transkripsi dan penilaian wawancara. Keduanya berjalan di
+    latar dan tidak ada yang menunggu di depan layar, jadi menunggu beberapa
+    detik jauh lebih baik daripada menyerah - kegagalan di sini berujung pada
+    recruiter yang harus mengunggah ulang rekaman 8 MB karena kesibukan sesaat
+    di sisi Google.
+
+    Errornya DICATAT tiap percobaan, bukan ditelan: tanpa jejak, kegagalan
+    sporadis tidak bisa dibedakan dari kegagalan yang menetap.
+    """
+    log = logging.getLogger("uvicorn.error")
+
+    for percobaan in range(ULANG_MAKS):
+        try:
+            return panggil()
+        except Exception as e:
+            jeda = _jeda_bila_sementara(e)
+            log.warning(
+                "%s gagal (percobaan %d/%d): %s: %s",
+                apa, percobaan + 1, ULANG_MAKS, type(e).__name__, tanpa_kunci(e),
+            )
+            if jeda is None or percobaan == ULANG_MAKS - 1:
+                raise
+            time.sleep(jeda)
+
+    raise RuntimeError("unreachable")
+
 
 # ponytail: jawaban cadangan bila LLM tidak mengembalikan teks (mis. diblokir
 # safety filter) - lebih baik pesan sopan daripada string kosong

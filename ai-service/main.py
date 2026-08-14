@@ -228,14 +228,41 @@ async def process_jobs():
 TRANSKRIP_QUEUE: asyncio.Queue | None = None
 
 
+class RiwayatKerja(BaseModel):
+    """
+    Satu baris riwayat kerja kandidat dari hasil baca CV.
+
+    Bidangnya DIDAFTAR satu per satu, bukan diterima sebagai dict apa adanya,
+    dan itu penjaganya: hasil baca CV juga memuat gaji_terakhir dan alasan
+    keluar. Keduanya tidak ada urusannya dengan menyusun pertanyaan, dan bidang
+    yang tidak disebut di sini tidak akan pernah sampai ke penyedia LLM.
+    """
+
+    jabatan: str = ""
+    perusahaan: str = ""
+    periode: str = ""
+    deskripsi: str = ""
+
+
 class InterviewRequest(BaseModel):
     application_id: int
+    # Baris interview_transkrip yang sedang dikerjakan, dikembalikan apa adanya
+    # di callback. Tanpa ini CI4 harus menebak barisnya dari application_id, dan
+    # satu lamaran bisa punya beberapa rekaman - unggah ulang menambah baris,
+    # tidak menimpa. Hasil rekaman lama lalu mendarat di baris rekaman baru.
+    transkrip_id: int = 0
     # URL internal CI4 untuk mengunduh rekamannya, dijaga X-Token yang sama
     audio_url: HttpUrl
     mime: str = "audio/mp4"
     # Kompetensi yang dinilai DITENTUKAN CI4. Sumber kebenarannya
     # LembarPenilaian di sisi PHP, yang juga dipakai lembar profil dan Gate 2.
     kompetensi: list[str] = []
+    # Riwayat kerja dari hasil baca CV, untuk merangkum kekuatan dan kelemahan.
+    # Biodata TIDAK ikut: usia, agama, jenis kelamin tidak boleh menyentuh
+    # penilaian. RiwayatKerja mendaftar bidangnya satu per satu, jadi gaji dan
+    # alasan keluar juga tidak akan pernah terkirim.
+    riwayat: list[RiwayatKerja] = []
+    posisi: str = ""
     callback_url: HttpUrl
     callback_token: str | None = None
 
@@ -251,10 +278,14 @@ async def _proses_interview(job_id: str) -> None:
     badan = {
         "interview_job_id": job_id,
         "application_id": job["application_id"],
+        "transkrip_id": job["transkrip_id"],
         "status": "gagal",
         "teks": "",
         "penilaian": [],
+        "kekuatan": "",
+        "kelemahan": "",
         "catatan": "",
+        "mesin": "",
     }
 
     try:
@@ -269,6 +300,7 @@ async def _proses_interview(job_id: str) -> None:
     # Langkah 1: rekaman jadi teks.
     hasil = await asyncio.to_thread(trx.transkripsikan, data, job["mime"])
     badan["teks"] = hasil.teks
+    badan["mesin"] = hasil.mesin
     if not hasil.berhasil:
         badan["catatan"] = hasil.catatan
         job["status"] = "gagal"
@@ -280,11 +312,16 @@ async def _proses_interview(job_id: str) -> None:
     # gagal - ia hasil yang sudah didapat, dan recruiter masih bisa membacanya
     # lalu menilai sendiri.
     llm = getattr(app.state, "chat_provider", None) or get_chat_provider(MAKS_TOKEN_CV)
-    n = await asyncio.to_thread(nilai_dari_transkrip, hasil.teks, job["kompetensi"], llm)
+    n = await asyncio.to_thread(
+        nilai_dari_transkrip, hasil.teks, job["kompetensi"], llm,
+        job.get("riwayat", []), job.get("posisi", ""),
+    )
 
     badan["penilaian"] = [
         {"kompetensi": b.kompetensi, "nilai": b.nilai, "alasan": b.alasan} for b in n.butir
     ]
+    badan["kekuatan"] = n.kekuatan
+    badan["kelemahan"] = n.kelemahan
     badan["status"] = "selesai" if n.berhasil else "gagal"
     badan["catatan"] = n.catatan
     job["status"] = badan["status"]
@@ -325,9 +362,12 @@ def create_interview(req: InterviewRequest) -> InterviewAccepted:
     jobs[job_id] = {
         "status": "queued",
         "application_id": req.application_id,
+        "transkrip_id": req.transkrip_id,
         "audio_url": str(req.audio_url),
         "mime": req.mime,
         "kompetensi": list(req.kompetensi),
+        "riwayat": [r.model_dump() for r in req.riwayat],
+        "posisi": req.posisi,
         "callback_url": str(req.callback_url),
         "token": req.callback_token,
     }
@@ -475,22 +515,6 @@ SYSTEM_PERTANYAAN = (
     "pekerjaan. Ini larangan keras.\n"
     "8. Jawab HANYA JSON: {\"pertanyaan\": [\"...\", \"...\"]}"
 )
-
-
-class RiwayatKerja(BaseModel):
-    """
-    Satu baris riwayat kerja kandidat dari hasil baca CV.
-
-    Bidangnya DIDAFTAR satu per satu, bukan diterima sebagai dict apa adanya,
-    dan itu penjaganya: hasil baca CV juga memuat gaji_terakhir dan alasan
-    keluar. Keduanya tidak ada urusannya dengan menyusun pertanyaan, dan bidang
-    yang tidak disebut di sini tidak akan pernah sampai ke penyedia LLM.
-    """
-
-    jabatan: str = ""
-    perusahaan: str = ""
-    periode: str = ""
-    deskripsi: str = ""
 
 
 class PertanyaanRequest(BaseModel):

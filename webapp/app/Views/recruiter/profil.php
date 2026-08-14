@@ -21,7 +21,7 @@ use App\Libraries\LembarPenilaian as L;
  */
 
 // --- rakit baris penilaian jadi bentuk yang mudah dibaca template ---
-$hrd = $user = $narasi = [];
+$hrd = $user = $narasi = $asalNarasi = [];
 // Siapa yang memberi nilai, per kompetensi. Sejak penilaian dibaca dari
 // transkrip (revisi 12 Agustus 2026), satu lembar diisi DUA pihak: AI membaca
 // apa yang terucap, recruiter menilai apa yang hanya bisa dilihat mata.
@@ -36,7 +36,8 @@ foreach ($penilaian as $p) {
     } elseif ($kat === L::KAT_USER) {
         $user[$p['kompetensi']] = (int) $p['tingkat'];
     } elseif ($kat === L::KAT_NARASI) {
-        $narasi[$p['kompetensi']] = (string) $p['catatan'];
+        $narasi[$p['kompetensi']]     = (string) $p['catatan'];
+        $asalNarasi[$p['kompetensi']] = (string) ($p['sumber'] ?? '');
     }
 }
 
@@ -388,7 +389,16 @@ $titik = static function (array $nilai, float $skala) use ($hrd): string {
       <div style="margin-top:14px">
         <?php foreach (L::NARASI as $kunci => $label): ?>
           <div class="narasi">
-            <div class="l"><?= esc($label) ?></div>
+            <div class="l">
+              <?= esc($label) ?>
+              <?php // Ditandai seperti kompetensi: pembaca lembar ini berhak
+                    // tahu kalimat mana yang dirangkum mesin dari transkrip dan
+                    // mana yang ditulis pewawancara dari pengamatannya sendiri. ?>
+              <?php if (($narasi[$kunci] ?? '') !== '' && isset($asalNarasi[$kunci])): ?>
+                <span class="tag <?= $asalNarasi[$kunci] === L::DARI_AI ? 't-ai' : 't-org' ?>">
+                  <?= $asalNarasi[$kunci] === L::DARI_AI ? 'AI' : 'recruiter' ?></span>
+              <?php endif ?>
+            </div>
             <div class="t"><?= ($narasi[$kunci] ?? '') !== '' ? esc($narasi[$kunci]) : $kosong ?></div>
           </div>
         <?php endforeach ?>

@@ -197,6 +197,105 @@ def test_larangan_atribut_pribadi_ada_di_prompt():
         assert dilarang in s
 
 
+# --- kekuatan & kelemahan (14 Agustus 2026) ---
+
+RIWAYAT = [
+    {"jabatan": "Operator Inventory", "perusahaan": "PT. Cipar Sukses Bersama",
+     "periode": "2020 - 2021", "deskripsi": "Mencatat barang masuk dan keluar, stok opname berkala.",
+     "gaji_terakhir": "Rp 4.500.000"},
+]
+
+
+def _jawaban_lengkap(kekuatan="", kelemahan=""):
+    return json.dumps({
+        "penilaian": [{"kompetensi": k, "nilai": 4, "alasan": "a"} for k in KOMPETENSI],
+        "kekuatan": kekuatan,
+        "kelemahan": kelemahan,
+    }, ensure_ascii=False)
+
+
+def test_kekuatan_dan_kelemahan_terbaca():
+    llm = _LLM(_jawaban_lengkap("Terbiasa menelusuri dokumen.", "Belum pernah memakai WMS."))
+
+    h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, llm)
+
+    assert h.kekuatan == "Terbiasa menelusuri dokumen."
+    assert h.kelemahan == "Belum pernah memakai WMS."
+
+
+def test_riwayat_kerja_ikut_jadi_bahan():
+    """
+    Kekuatan dan kelemahan sebagiannya terbaca dari apa yang pernah DIKERJAKAN
+    kandidat, bukan cuma dari apa yang sempat ia katakan dalam 30 menit.
+    """
+    llm = _LLM(_jawaban_lengkap("a", "b"))
+
+    nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, llm, RIWAYAT, "Admin Gudang")
+
+    q = llm.terakhir["question"]
+    assert "RIWAYAT KERJA KANDIDAT" in q
+    assert "Operator Inventory di PT. Cipar Sukses Bersama" in q
+    assert "Admin Gudang" in q
+
+
+def test_gaji_tidak_ikut_jadi_bahan_penilaian():
+    llm = _LLM(_jawaban_lengkap("a", "b"))
+
+    nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, llm, RIWAYAT)
+
+    assert "4.500.000" not in llm.terakhir["question"]
+
+
+def test_narasi_kosong_tetap_kosong():
+    """'Tidak cukup bahan' jawaban yang sah - jangan dipaksa terisi."""
+    h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, _LLM(_jawaban_lengkap()))
+
+    assert h.berhasil
+    assert h.kekuatan == ""
+    assert h.kelemahan == ""
+
+
+def test_narasi_kepanjangan_dipotong_selebar_kolom():
+    h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, _LLM(_jawaban_lengkap("a" * 900, "b" * 900)))
+
+    assert len(h.kekuatan) == nilai.MAKS_NARASI
+    assert len(h.kelemahan) == nilai.MAKS_NARASI
+
+
+def test_narasi_tidak_ikut_saat_tak_satu_pun_kompetensi_dinilai():
+    """
+    Kalau bahannya memang tidak ada, rangkuman yang tetap terisi akan terbaca
+    sebagai penilaian yang sah - padahal ia lolos justru karena tidak dituntut
+    angka.
+    """
+    llm = _LLM(json.dumps({
+        "penilaian": [{"kompetensi": k, "nilai": None, "alasan": "tidak cukup bahan"} for k in KOMPETENSI],
+        "kekuatan": "Terdengar percaya diri.",
+        "kelemahan": "",
+    }, ensure_ascii=False))
+
+    h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, llm)
+
+    assert not h.berhasil
+    assert h.kekuatan == ""
+
+
+def test_prompt_melarang_kelemahan_yang_dilunakkan():
+    """Kelemahan karangan menyesatkan orang yang memutuskan nasib seseorang."""
+    assert "terlalu teliti" in nilai.SYSTEM_NILAI.lower()
+
+
+def test_prompt_menyuruh_menyebut_yang_belum_teruji():
+    """
+    Kandidat yang menjawab semuanya dengan baik tidak boleh dikarangkan
+    kelemahan, tapi kotak kosong juga tidak berguna bagi pewawancara
+    berikutnya. Jalan tengahnya: sebutkan apa yang belum tersentuh wawancara.
+    """
+    s = nilai.SYSTEM_NILAI.lower()
+    assert "belum teruji" in s
+    assert "jangan mengarang" in s
+
+
 def test_prompt_melarang_nilai_tengah_sebagai_pengisi():
     """Angka karangan lebih berbahaya daripada kolom kosong: ia ikut menentukan
     kandidat lolos atau tidak."""

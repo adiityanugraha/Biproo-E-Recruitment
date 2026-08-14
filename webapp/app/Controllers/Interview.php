@@ -68,9 +68,19 @@ class Interview extends BaseController
             return $this->response->setStatusCode(422)->setJSON(['error' => 'payload tidak valid']);
         }
 
+        // Baris yang ditulis ditentukan id yang IKUT DIBAWA pekerjaannya, bukan
+        // ditebak dari yang terbaru. Satu lamaran bisa punya beberapa rekaman -
+        // unggah ulang menambah baris - dan menebak lewat yang terbaru membuat
+        // hasil rekaman lama mendarat di baris rekaman baru. Terlihat 14 Agustus
+        // 2026 saat dua rekaman lamaran #72 dikirim ulang bersamaan.
+        //
+        // Tanpa id (pekerjaan dari versi lama yang masih di antrian) tetap jatuh
+        // ke tebakan lama, supaya yang sedang berjalan tidak hilang begitu saja.
         $tModel = new InterviewTranskripModel();
-        $baris  = $tModel->terakhirUntuk($appId);
-        if ($baris === null) {
+        $id     = (int) ($b['transkrip_id'] ?? 0);
+        $baris  = $id > 0 ? $tModel->find($id) : $tModel->terakhirUntuk($appId);
+
+        if ($baris === null || (int) $baris['application_id'] !== $appId) {
             return $this->response->setStatusCode(422)->setJSON(['error' => 'tidak ada rekaman untuk lamaran ini']);
         }
 
@@ -81,7 +91,12 @@ class Interview extends BaseController
             // didapat, dan recruiter masih bisa membacanya lalu menilai sendiri.
             'teks'          => (string) ($b['teks'] ?? ''),
             'catatan'       => mb_substr((string) ($b['catatan'] ?? ''), 0, 500) ?: null,
-            'model_version' => self::MODEL_VERSION,
+            // Mesin transkripsinya datang dari ai-service, bukan ditulis di
+            // sini: sejak 14 Agustus 2026 ada dua - Whisper lokal dan Gemini
+            // sebagai cadangan - dan hanya ai-service yang tahu mana yang
+            // akhirnya dipakai. Yang lokal tidak memberi penanda pembicara,
+            // jadi bedanya terbaca di transkripnya dan harus bisa dilacak.
+            'model_version' => mb_substr((string) ($b['mesin'] ?? '') ?: self::MODEL_VERSION, 0, 100),
             'updated_at'    => date('Y-m-d H:i:s'),
         ]);
 
@@ -94,6 +109,10 @@ class Interview extends BaseController
 
         if (! $gagal) {
             $this->simpanPenilaian($appId, (array) ($b['penilaian'] ?? []));
+            $this->simpanNarasi($appId, [
+                'strengths'  => (string) ($b['kekuatan'] ?? ''),
+                'weaknesses' => (string) ($b['kelemahan'] ?? ''),
+            ]);
         }
 
         $this->putuskan($appId, $app, $gagal, (string) ($b['catatan'] ?? ''));
@@ -154,6 +173,39 @@ class Interview extends BaseController
             $model->insert($r);
         }
         $db->transComplete();
+    }
+
+    /**
+     * Simpan Candidate's Strengths dan Weaknesses hasil rangkuman AI.
+     *
+     * Bobot 0: narasi tidak pernah ikut dihitung jadi skor. Yang kosong tidak
+     * disimpan - "tidak cukup bahan" adalah jawaban yang sah, dan baris kosong
+     * di lembar profil hanya akan terbaca sebagai kolom yang gagal terisi.
+     *
+     * Kunci yang bukan milik AI diabaikan: Additional Notes dan Other Remarks
+     * tetap punya recruiter, dan endpoint ini terbuka bagi siapa pun yang
+     * memegang token bersama.
+     *
+     * @param array<string, string> $narasi
+     */
+    private function simpanNarasi(int $appId, array $narasi): void
+    {
+        $model = new InterviewPenilaianModel();
+        foreach (LembarPenilaian::NARASI_AI as $kunci) {
+            $teks = trim(preg_replace('/\s+/u', ' ', $narasi[$kunci] ?? ''));
+            if ($teks === '') {
+                continue;
+            }
+            $model->insert([
+                'application_id' => $appId,
+                'kompetensi'     => $kunci,
+                'kategori'       => LembarPenilaian::KAT_NARASI,
+                'sumber'         => LembarPenilaian::DARI_AI,
+                'bobot'          => 0,
+                'tingkat'        => '',
+                'catatan'        => mb_substr($teks, 0, LembarPenilaian::MAKS_CATATAN),
+            ]);
+        }
     }
 
     /**

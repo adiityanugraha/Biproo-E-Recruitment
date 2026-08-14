@@ -2,7 +2,9 @@
 
 namespace App\Libraries;
 
+use App\Models\ApplicationModel;
 use App\Models\InterviewTranskripModel;
+use App\Models\ScreeningResultModel;
 
 /**
  * Kirim rekaman wawancara ke ai-service untuk ditranskripsi dan dinilai.
@@ -34,9 +36,20 @@ class KirimRekaman
         try {
             service('aiService')->post('interview', [
                 'application_id' => (int) $baris['application_id'],
+                // Ikut dibawa supaya hasilnya mendarat di BARIS YANG BENAR. Satu
+                // lamaran bisa punya beberapa rekaman - unggah ulang menambah
+                // baris, tidak menimpa - dan tanpa id ini callback cuma bisa
+                // menebak lewat baris terbaru.
+                'transkrip_id'   => $transkripId,
                 'audio_url'      => site_url('internal/rekaman/' . $transkripId),
                 'mime'           => $this->mime($baris['berkas']),
                 'kompetensi'     => LembarPenilaian::dariTranskrip(),
+                // Bahan untuk merangkum kekuatan dan kelemahan. Keduanya
+                // sebagiannya terbaca dari apa yang pernah DIKERJAKAN kandidat,
+                // bukan cuma dari apa yang sempat ia katakan dalam wawancara
+                // 30 menit. Biodata TIDAK ikut.
+                'riwayat'        => $this->riwayat((int) $baris['application_id']),
+                'posisi'         => $this->posisi((int) $baris['application_id']),
                 'callback_url'   => site_url('interview/callback'),
                 'callback_token' => $token,
             ]);
@@ -53,6 +66,49 @@ class KirimRekaman
         $model->update($transkripId, ['status' => 'proses', 'catatan' => null]);
 
         return true;
+    }
+
+    /**
+     * Riwayat kerja kandidat dari hasil baca CV.
+     *
+     * Empat bidang saja, sama dengan yang dipakai menyusun pertanyaan. Hasil
+     * baca CV juga memuat gaji terakhir, alasan keluar, dan biodata; tidak satu
+     * pun dari itu boleh ikut menentukan kekuatan atau kelemahan seseorang.
+     *
+     * @return list<array<string, string>>
+     */
+    private function riwayat(int $appId): array
+    {
+        $sr = (new ScreeningResultModel())->latestFor($appId);
+        $ex = $sr === null ? null : json_decode((string) ($sr['extracted_json'] ?? ''), true);
+        if (! is_array($ex) || ! is_array($ex['riwayat'] ?? null)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($ex['riwayat'] as $r) {
+            if (is_array($r)) {
+                $out[] = [
+                    'jabatan'    => (string) ($r['jabatan'] ?? ''),
+                    'perusahaan' => (string) ($r['perusahaan'] ?? ''),
+                    'periode'    => (string) ($r['periode'] ?? ''),
+                    'deskripsi'  => (string) ($r['deskripsi'] ?? ''),
+                ];
+            }
+        }
+
+        return $out;
+    }
+
+    private function posisi(int $appId): string
+    {
+        $app = (new ApplicationModel())
+            ->select('jobs.judul')
+            ->join('jobs', 'jobs.id = applications.job_id')
+            ->where('applications.id', $appId)
+            ->first();
+
+        return (string) ($app['judul'] ?? '');
     }
 
     /**

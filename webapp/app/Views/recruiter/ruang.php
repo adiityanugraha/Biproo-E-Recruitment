@@ -284,10 +284,14 @@ $dariAi = array_filter($penilaian, static fn ($p) => ($p['sumber'] ?? '') === L:
         <?php endforeach ?>
       </table>
 
-      <?php // Empat kotak narasi lembar BIPROO. Ikut di sini, bukan halaman
-            // tersendiri: keempatnya ditulis dari ingatan wawancara, dan
-            // ingatan itu paling utuh persis sekarang. Boleh dikosongkan. ?>
-      <?php foreach (L::NARASI as $kunci => $label): ?>
+      <?php // Dua kotak narasi milik recruiter. Candidate's Strengths dan
+            // Weaknesses tidak ada di sini: keduanya dirangkum AI dari riwayat
+            // kerja dan transkrip - bahan yang sama dengan yang dipakai menilai
+            // kompetensi - sehingga menuliskannya ulang dari ingatan cuma
+            // menghasilkan versi yang lebih kabur. Dua yang tersisa justru
+            // pengamatan recruiter sendiri, hal yang tidak ada di transkrip. ?>
+      <p style="margin:18px 0 4px"><b>Catatan Anda</b> <span style="font-weight:400;color:#888;font-size:12px">(boleh dikosongkan)</span></p>
+      <?php foreach (L::NARASI_RECRUITER as $kunci): $label = L::NARASI[$kunci]; ?>
         <label style="margin-top:12px"><?= esc($label) ?></label>
         <textarea name="narasi[<?= $kunci ?>]" rows="2" maxlength="<?= L::MAKS_CATATAN ?>"
                   style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid #e2e6ee;border-radius:8px;font-family:inherit;font-size:13px"></textarea>
