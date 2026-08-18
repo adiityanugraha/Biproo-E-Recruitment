@@ -460,6 +460,54 @@ final class TranskripCallbackTest extends CIUnitTestCase
         $this->assertStringContainsString('69,9/100', $baris['note']);
     }
 
+    /**
+     * Catatan sepanjang apa pun tidak boleh menjatuhkan pencatatan tahapnya.
+     *
+     * SQL Server menolak seluruh INSERT dengan galat 2628 kalau kolomnya
+     * kepenuhan, sehingga callback membalas 500 dan keputusan AI yang sudah
+     * jadi HILANG - kandidat tersangkut tanpa Gate 2 dan tanpa email. Terjadi
+     * sungguhan pada lamaran #72 begitu catatan Gate 2 mulai memuat alasan yang
+     * ditulis AI: 615 karakter ke kolom selebar 500.
+     *
+     * Berkas uji memakai SQLite, yang TIDAK menegakkan panjang VARCHAR sama
+     * sekali - karena itu yang diperiksa panjang yang TERSIMPAN, bukan sekadar
+     * "tidak melempar exception". Uji yang cuma memastikan tidak ada galat akan
+     * tetap hijau walau penjaganya dicabut.
+     */
+    public function testCatatanPanjangDipotongBukanMenjatuhkanPencatatan(): void
+    {
+        $aid = $this->fixture();
+
+        $this->withHeaders(['X-Token' => $this->token])->withBodyFormat('json')
+            ->post('interview/callback', [
+                'application_id'     => $aid,
+                'status'             => 'selesai',
+                'teks'               => 'Kandidat: saya cek ulang surat jalannya.',
+                'penilaian'          => [['kompetensi' => 'Adaptability', 'nilai' => 4, 'alasan' => 'a']],
+                'rekomendasi'        => 'not_recommended',
+                'alasan_rekomendasi' => str_repeat('alasan panjang sekali. ', 40),
+            ])->assertStatus(200);
+
+        $baris = (new StageHistoryModel())
+            ->where(['application_id' => $aid, 'stage' => 'gate_2'])->first();
+
+        $this->assertSame('failed', $baris['status'], 'tahapnya tetap tercatat');
+        $this->assertLessThanOrEqual(StageLogger::MAKS_NOTE, mb_strlen((string) $baris['note']));
+    }
+
+    /** Nama recruiter yang kepanjangan tidak menjatuhkan pencatatan tahapnya. */
+    public function testActorPanjangDipotong(): void
+    {
+        $aid = $this->fixture();
+
+        (new StageLogger())->log($aid, 'gate_2', 'flagged', 'recruiter:' . str_repeat('Nama', 60));
+
+        $baris = (new StageHistoryModel())
+            ->where(['application_id' => $aid, 'stage' => 'gate_2'])->first();
+
+        $this->assertLessThanOrEqual(StageLogger::MAKS_ACTOR, mb_strlen((string) $baris['actor']));
+    }
+
     // --- keadaan yang TIDAK boleh diputus mesin ---
 
     /**

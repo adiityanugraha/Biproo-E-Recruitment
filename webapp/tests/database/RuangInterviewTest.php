@@ -80,9 +80,14 @@ final class RuangInterviewTest extends CIUnitTestCase
 
         // Jam diturunkan dari $aid: interviews punya indeks unik terfilter pada
         // scheduled_at, jadi dua kandidat dengan jam yang sama menabraknya.
+        //
+        // Jadwalnya LAMPAU, dan itu bukan detail: sejak 18 Agustus 2026 lembar
+        // penilaian baru terbuka 30 menit setelah jam mulai. Jadwal masa depan
+        // membuat seluruh berkas ini menguji keadaan yang tidak wajar - unggah
+        // rekaman untuk wawancara yang belum terjadi.
         (new InterviewModel())->insert([
             'application_id' => $aid, 'status' => 'approved',
-            'scheduled_at'   => sprintf('2030-08-20 %02d:00:00', 8 + $aid % 10),
+            'scheduled_at'   => sprintf('2020-08-20 %02d:00:00', 8 + $aid % 10),
             'meeting_id'     => '9988', 'join_url' => 'https://us04web.zoom.us/j/9988',
         ]);
 
@@ -753,6 +758,137 @@ final class RuangInterviewTest extends CIUnitTestCase
         $this->assertStringContainsString('audio tidak terbaca', $html);
     }
 
+    // --- sebelum wawancaranya terjadi (18 Agustus 2026) ---
+
+    /** Jadwalkan wawancara lamaran ini di masa depan. */
+    private function jadwalNanti(int $aid): void
+    {
+        (new InterviewModel())->where('application_id', $aid)
+            ->set('scheduled_at', date('Y-m-d H:i:s', strtotime('+2 hours')))->update();
+    }
+
+    /**
+     * Lembar penilaian TIDAK boleh terbuka sebelum wawancaranya terjadi.
+     *
+     * Ruang interview dibuka recruiter SEBELUM wawancara - di situlah tiga
+     * pertanyaannya dibaca dan disunting. Kotak nilai yang ikut terbuka saat itu
+     * mengundang orang menilai kandidat yang belum ditemuinya, dan lembar yang
+     * terisi sebelum wawancara tidak bisa dibedakan lagi dari yang sesudahnya.
+     */
+    public function testSebelumJadwalLembarPenilaianTidakDitampilkan(): void
+    {
+        $aid = $this->fixture();
+        $this->tigaPertanyaan();
+        $this->jadwalNanti($aid);
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/ruang/' . $aid)->getBody();
+
+        $this->assertStringNotContainsString('name="rekaman"', $html);
+        $this->assertStringNotContainsString('name="nilai[0]"', $html);
+        $this->assertStringNotContainsString('name="narasi[notes]"', $html);
+    }
+
+    /** Yang disisakan justru daftar pertanyaannya - itu yang dibutuhkan sekarang. */
+    public function testSebelumJadwalPertanyaanTetapBisaDisunting(): void
+    {
+        $aid = $this->fixture();
+        $this->tigaPertanyaan();
+        $this->jadwalNanti($aid);
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/ruang/' . $aid)->getBody();
+
+        $this->assertStringContainsString('name="pertanyaan[]"', $html);
+        $this->assertStringContainsString('belum waktunya dinilai', $html);
+    }
+
+    /** Menyembunyikan form bukan penjagaan: kiriman dari riwayat browser tetap sampai. */
+    public function testUnggahanSebelumJadwalDitolakControllerNya(): void
+    {
+        $aid = $this->fixture();
+        $this->jadwalNanti($aid);
+        $this->siapkanBerkas('rekaman.wav');
+
+        $this->withSession($this->sesiRec)->post('recruiter/ruang/' . $aid . '/rekaman', [
+            'nilai' => [4, 4, 4],
+        ]);
+
+        $this->assertStringContainsString('belum selesai', (string) session('error'));
+        $this->assertNull((new InterviewTranskripModel())->terakhirUntuk($aid));
+        $this->assertCount(0, (new InterviewPenilaianModel())->untukLamaran($aid),
+            'nilai tidak boleh menyelinap masuk walau berkasnya ditolak');
+    }
+
+    /**
+     * Batasnya jadwal + 30 menit, sama dengan matinya tautan Zoom kandidat.
+     *
+     * Jam mulai saja tidak cukup: wawancaranya baru berjalan saat itu, dan
+     * rekamannya belum ada.
+     */
+    public function testTepatSetelahTigaPuluhMenitLembarPenilaianTerbuka(): void
+    {
+        $aid = $this->fixture();
+        $this->tigaPertanyaan();
+        (new InterviewModel())->where('application_id', $aid)
+            ->set('scheduled_at', date('Y-m-d H:i:s', strtotime('-31 minutes')))->update();
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/ruang/' . $aid)->getBody();
+
+        $this->assertStringContainsString('name="rekaman"', $html);
+    }
+
+    /** Sepuluh menit setelah jam mulai wawancaranya masih berjalan. */
+    public function testSaatWawancaraMasihBerjalanBelumBisaDinilai(): void
+    {
+        $aid = $this->fixture();
+        $this->tigaPertanyaan();
+        (new InterviewModel())->where('application_id', $aid)
+            ->set('scheduled_at', date('Y-m-d H:i:s', strtotime('-10 minutes')))->update();
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/ruang/' . $aid)->getBody();
+
+        $this->assertStringNotContainsString('name="rekaman"', $html);
+    }
+
+    /**
+     * Lamaran TANPA jadwal tidak ikut terkunci.
+     *
+     * Tidak ada yang bisa dijadikan patokan, dan mengunci recruiter di situ
+     * tidak menyelesaikan apa pun - ia justru kehilangan satu-satunya jalan
+     * menilai kandidat yang wawancaranya sudah terjadi di luar sistem.
+     */
+    public function testTanpaJadwalTidakIkutTerkunci(): void
+    {
+        $aid = $this->fixture();
+        $this->tigaPertanyaan();
+        (new InterviewModel())->where('application_id', $aid)->delete();
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/ruang/' . $aid)->getBody();
+
+        $this->assertStringContainsString('name="rekaman"', $html);
+    }
+
+    /**
+     * Rekaman yang SUDAH ada membuka kuncinya kembali.
+     *
+     * Transkripsi bisa gagal, dan unggah ulang satu-satunya jalan kembali ke
+     * penilaian otomatis. Jadwal yang aneh - misalnya disetel ulang ke masa
+     * depan - tidak boleh mengurung recruiter di situ.
+     */
+    public function testRekamanYangSudahAdaMembukaKuncinya(): void
+    {
+        $aid = $this->fixture();
+        $this->tigaPertanyaan();
+        $this->jadwalNanti($aid);
+        (new InterviewTranskripModel())->insert([
+            'application_id' => $aid, 'sumber' => 'unggahan', 'status' => 'gagal',
+            'berkas' => 'uploads/rekaman/x.wav', 'catatan' => 'transkripsi gagal',
+        ]);
+
+        $html = (string) $this->withSession($this->sesiRec)->get('recruiter/ruang/' . $aid)->getBody();
+
+        $this->assertStringContainsString('name="rekaman"', $html);
+    }
+
     // --- sesudah rekamannya diunggah ---
 
     /**
@@ -893,8 +1029,13 @@ final class RuangInterviewTest extends CIUnitTestCase
      */
     public function testTabelInterviewPunyaTombolRuangDiKeduaTab(): void
     {
+        // Fixture menjadwalkan di masa LAMPAU (lihat fixture), jadi yang akan
+        // datang harus disetel sendiri di sini - itu justru inti uji ini.
         $akanDatang = $this->fixture();
         $sudah      = $this->fixture([]);
+        (new InterviewModel())
+            ->where('application_id', $akanDatang)
+            ->set('scheduled_at', '2030-01-01 09:00:00')->update();
         (new InterviewModel())
             ->where('application_id', $sudah)
             ->set('scheduled_at', '2020-01-01 10:00:00')->update();

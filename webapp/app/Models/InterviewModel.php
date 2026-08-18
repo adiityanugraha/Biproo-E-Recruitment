@@ -79,6 +79,25 @@ class InterviewModel extends Model
     }
 
     /**
+     * Sesinya sudah lewat, jadi wawancaranya semestinya sudah terjadi.
+     *
+     * Batasnya sama dengan matinya link Zoom kandidat: jadwal + TUTUP_MENIT.
+     * Slot 10.00 dianggap selesai pukul 10.30. Satu aturan, bukan dua - tab
+     * "Selesai" di tabel Interview HRD memakai batas yang sama (lihat
+     * Recruiter::jadwalPerTab), dan kalau keduanya ditulis terpisah suatu hari
+     * salah satunya bergeser tanpa ada yang tahu.
+     *
+     * Fungsi murni (tanpa DB, waktu bisa disuntik) supaya langsung bisa dites.
+     */
+    public static function sudahSelesai(string $scheduledAt, ?DateTimeInterface $now = null): bool
+    {
+        $jadwal = new DateTimeImmutable($scheduledAt);
+        $now ??= new DateTimeImmutable();
+
+        return $now >= $jadwal->modify('+' . self::TUTUP_MENIT . ' minutes');
+    }
+
+    /**
      * Sesi interview benar-benar siap dimasuki kandidat: jadwalnya sudah di-acc
      * recruiter DAN jendela waktunya terbuka. Dipakai halaman jadwal maupun
      * stepper dashboard - keduanya harus sepakat, kalau tidak stepper menyala

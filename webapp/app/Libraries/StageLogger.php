@@ -26,6 +26,31 @@ class StageLogger
     ];
 
     /**
+     * Lebar kolom candidate_stage_history.note.
+     *
+     * Dipotong DI SINI, bukan diserahkan ke basis data. SQL Server menolak
+     * seluruh INSERT dengan galat 2628 kalau kepanjangan, sehingga perpindahan
+     * tahapnya gagal tercatat sama sekali - dan pemanggilnya, misalnya callback
+     * ai-service, membalas 500 lalu hasil yang sudah didapat hilang. Terjadi
+     * sungguhan pada lamaran #72 saat catatan Gate 2 mulai memuat alasan yang
+     * ditulis AI.
+     *
+     * TIDAK terlihat oleh satu pun uji: berkas uji memakai SQLite, yang tidak
+     * menegakkan panjang VARCHAR sama sekali. Semua tesnya hijau sementara
+     * produksi mati.
+     *
+     * Catatan yang terpotong jauh lebih baik daripada tahapan yang hilang.
+     */
+    public const MAKS_NOTE = 1000;
+
+    /**
+     * Lebar kolom actor. Dijaga karena sebagiannya datang dari nama recruiter
+     * yang diketik orang - 'recruiter:' . nama - dan nama yang kepanjangan
+     * menjatuhkan seluruh pencatatan tahapnya, persis seperti note.
+     */
+    public const MAKS_ACTOR = 100;
+
+    /**
      * @param array|null $email data kandidat utk notifikasi:
      *                          ['to' => email, 'nama' => ..., 'posisi' => ..., ...]
      *                          null = tidak ada email dikirim utk event ini
@@ -45,8 +70,8 @@ class StageLogger
             'application_id' => $applicationId,
             'stage'          => $stage,
             'status'         => $status,
-            'actor'          => $actor,
-            'note'           => $note,
+            'actor'          => mb_substr($actor, 0, self::MAKS_ACTOR),
+            'note'           => $note === null ? null : mb_substr($note, 0, self::MAKS_NOTE),
         ]);
 
         if ($id === false) {

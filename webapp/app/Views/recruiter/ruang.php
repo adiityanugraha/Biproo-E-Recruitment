@@ -3,6 +3,7 @@
 use App\Controllers\Recruiter;
 use App\Libraries\LembarPenilaian as L;
 use App\Libraries\PertanyaanKandidat as PK;
+use App\Models\InterviewModel;
 
 /**
  * Ruang interview satu kandidat (revisi 12 Agustus 2026).
@@ -267,7 +268,21 @@ $dariAi = array_filter($penilaian, static fn ($p) => ($p['sumber'] ?? '') === L:
   <?php endif ?>
 <?php endif ?>
 
-  <?php if ($sudah): ?>
+  <?php if ($belumWaktunya): ?>
+    <?php // Wawancaranya belum selesai. Kotak nilai yang terbuka di saat ini
+          // mengundang orang menilai kandidat yang belum ditemuinya, dan lembar
+          // yang terisi sebelum wawancara tidak bisa dibedakan lagi dari yang
+          // diisi sesudahnya. Tiga pertanyaan di atas tetap terbuka - justru
+          // itu yang dibutuhkan sekarang. ?>
+    <?php $buka = strtotime($iv['scheduled_at']) + InterviewModel::TUTUP_MENIT * 60; ?>
+    <p class="ket" style="margin-bottom:0">
+      <span class="status s-antre">belum waktunya dinilai</span><br>
+      Wawancaranya dijadwalkan <b><?= esc(date('d M Y, H:i', strtotime($iv['scheduled_at']))) ?> WIB</b>.
+      Unggahan rekaman dan lembar penilaian terbuka pukul <b><?= esc(date('H:i', $buka)) ?></b>,
+      yaitu <?= InterviewModel::TUTUP_MENIT ?> menit setelah jam mulai - sama dengan matinya tautan Zoom kandidat.
+      Sampai saat itu yang bisa Anda kerjakan tiga pertanyaan di atas.
+    </p>
+  <?php elseif ($sudah): ?>
     <p class="ket" style="margin-bottom:0">Kandidat ini sudah diputuskan.</p>
   <?php else: ?>
     <p class="ket">

@@ -784,6 +784,7 @@ class Recruiter extends BaseController
             // tidak pernah dibaca siapa pun sama saja dengan tidak beralasan.
             'penilaian'  => (new InterviewPenilaianModel())->untukLamaran($appId),
             'sudah'      => $this->sudahDiputus($appId),
+            'belumWaktunya' => $this->belumWaktunyaMenilai($appId),
             'bingkai'    => $this->request->getGet('bingkai') === '1',
             'disusunUlang' => $disusunUlang,
         ]);
@@ -867,6 +868,15 @@ class Recruiter extends BaseController
         if ($this->sudahDiputus($appId)) {
             return redirect()->to($tujuan)->with('error',
                 'Kandidat ini sudah diputuskan, rekamannya tidak bisa ditambah lagi.');
+        }
+
+        // Sama seperti di atas: menyembunyikan form bukan penjagaan. Kiriman
+        // dari riwayat browser atau permintaan yang dirakit sendiri tetap
+        // sampai kemari, dan penilaian yang mendarat sebelum wawancaranya
+        // terjadi tidak bisa dibedakan lagi dari yang sesudahnya.
+        if ($this->belumWaktunyaMenilai($appId)) {
+            return redirect()->to($tujuan)->with('error',
+                'Wawancaranya belum selesai. Penilaian baru bisa diisi 30 menit setelah jam mulai.');
         }
 
         // Kegagalan di tingkat PHP diperiksa DULUAN, sebelum aturan validasi.
@@ -1281,6 +1291,36 @@ class Recruiter extends BaseController
      * pulih, padahal rekamannya masih ada dan itu satu-satunya jalan kembali ke
      * penilaian otomatis.
      */
+    /**
+     * Penilaian belum boleh dibuka: jam wawancaranya belum lewat.
+     *
+     * Ruang interview dibuka recruiter SEBELUM wawancara - di situlah tiga
+     * pertanyaannya dibaca dan disunting. Kotak nilai yang ikut terbuka di saat
+     * itu mengundang orang menilai kandidat yang belum ditemuinya, dan lembar
+     * yang terisi sebelum wawancara tidak bisa dibedakan lagi dari yang diisi
+     * sesudahnya.
+     *
+     * Batasnya jadwal + 30 menit, sama dengan matinya link Zoom kandidat dan
+     * sama dengan tab "Selesai" (InterviewModel::sudahSelesai).
+     *
+     * TIDAK menghalangi dua keadaan: lamaran tanpa jadwal sama sekali - tidak
+     * ada yang bisa dijadikan patokan, dan mengunci recruiter di situ tidak
+     * menyelesaikan apa pun - dan lamaran yang rekamannya SUDAH ada, supaya
+     * unggah ulang setelah transkripsi gagal tidak ikut tertutup.
+     */
+    private function belumWaktunyaMenilai(int $appId): bool
+    {
+        $iv = (new InterviewModel())->forApplication($appId);
+        if ($iv === null || empty($iv['scheduled_at'])) {
+            return false;
+        }
+        if ((new InterviewTranskripModel())->terakhirUntuk($appId) !== null) {
+            return false;
+        }
+
+        return ! InterviewModel::sudahSelesai($iv['scheduled_at']);
+    }
+
     private function sudahDiputus(int $appId): bool
     {
         return in_array((new StageHistoryModel())->latestStatus($appId, 'gate_2'), ['passed', 'failed'], true);
