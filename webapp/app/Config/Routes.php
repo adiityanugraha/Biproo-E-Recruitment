@@ -45,6 +45,10 @@ $routes->group('recruiter', ['filter' => 'recruiterauth'], static function ($rou
     // Keputusan Gate 2 manual - satu-satunya jalan keluar manusia sejak Gate 2
     // menutup sendiri dari transkrip. Dipakai saat datanya memang kurang.
     $routes->post('gate2/(:num)', 'Recruiter::putusGate2/$1');
+    // Settings: alur rekrutmen per posisi (18 Agustus 2026). Tiap lowongan
+    // punya rangkaian tahapnya sendiri, mengikuti web recruiter BIPROO.
+    $routes->get('pengaturan', 'Recruiter::pengaturan');
+    $routes->match(['GET', 'POST'], 'pengaturan/alur/(:num)', 'Recruiter::alurLowongan/$1');
     $routes->match(['GET', 'POST'], 'review/(:num)', 'Recruiter::review/$1');
     $routes->match(['GET', 'POST'], 'pertanyaan/(:num)', 'Recruiter::pertanyaan/$1');
 });

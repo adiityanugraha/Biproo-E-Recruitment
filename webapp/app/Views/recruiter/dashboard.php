@@ -53,7 +53,7 @@
             ['Job Posting', '📢', null],
             ['Upload Candidat', '📤', null],
             ['Summary', '📊', null],
-            ['Settings', '⚙️', null],
+            ['Settings', '⚙️', site_url('recruiter/pengaturan')],
         ];
         foreach ($aksi as [$lbl, $ic, $url]): ?>
           <?php if ($url): ?>

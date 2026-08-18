@@ -3,6 +3,7 @@
 namespace App\Controllers;
 
 use App\Libraries\AiServiceException;
+use App\Libraries\AlurRekrutmen;
 use App\Libraries\GateOne;
 use App\Libraries\SlotJadwal;
 use App\Libraries\StageLogger;
@@ -43,25 +44,34 @@ class Lamaran extends BaseController
     ];
 
     /**
-     * Definisi stepper (stage nyata dipetakan ke dua kolom ala BIPROO).
+     * Stepper kandidat, dirakit dari alur MILIK LOWONGAN (18 Agustus 2026).
      *
-     * ai_verification sengaja TIDAK ditampilkan: itu proses internal yang tidak
-     * memerlukan tindakan kandidat dan tidak lagi menentukan kelolosan Gate 1.
+     * Dulu konstanta STEPPER: satu rangkaian tetap untuk semua posisi. Sejak
+     * tiap posisi punya alurnya sendiri - Sales Gadget memakai QLEAP, Sales
+     * Administration memakai Excel Test dan Interview User - rangkaian tetap
+     * itu menggambarkan tahapan yang tidak dilalui sebagian kandidat.
+     *
+     * ai_verification tetap TIDAK ditampilkan: proses internal yang tidak
+     * menuntut tindakan kandidat dan tidak lagi menentukan kelolosan Gate 1.
      * Riwayat lengkapnya tetap ada di halaman Status Lamaran untuk audit.
+     * AlurRekrutmen::TERSEMBUNYI yang mendaftarnya, dan katalognya memang tidak
+     * memuatnya.
+     *
+     * @return array{assessment: list<array{0:string,1:string,2:string}>, selection: list<...>}
      */
-    private const STEPPER = [
-        'assessment' => [
-            ['upload_cv', 'Upload CV', '📄'],
-            ['online_assessment', 'Assessment', '📝'],
-            ['gate_1', 'Keputusan Tahap 1', '🎯'],
-        ],
-        'selection' => [
-            ['penjadwalan', 'Penjadwalan Interview', '📅'],
-            ['interview_online', 'Interview', '🎥'],
-            ['gate_2', 'Keputusan Akhir', '✅'],
-            ['berkas_kontrak', 'Berkas & Kontrak', '📁'],
-        ],
-    ];
+    private static function stepper(?string $alurJson): array
+    {
+        $grup = AlurRekrutmen::perKelompok(AlurRekrutmen::untukLowongan($alurJson));
+        $peta = static fn (array $tahap): array => array_map(
+            static fn (array $t): array => [$t['kunci'], $t['label'], $t['ikon']],
+            $tahap
+        );
+
+        return [
+            'assessment' => $peta($grup[AlurRekrutmen::ASSESSMENT]),
+            'selection'  => $peta($grup[AlurRekrutmen::SELECTION]),
+        ];
+    }
 
     /**
      * Lamaran mana yang sedang dilihat, dari parameter ?app= milik kandidat sendiri.
@@ -94,7 +104,7 @@ class Lamaran extends BaseController
     public function dashboard()
     {
         $apps = (new ApplicationModel())
-            ->select('applications.id, jobs.judul')
+            ->select('applications.id, jobs.judul, jobs.alur_json')
             ->join('jobs', 'jobs.id = applications.job_id')
             ->where('candidate_id', session('candidate_id'))
             ->orderBy('applications.id', 'DESC')
@@ -105,7 +115,12 @@ class Lamaran extends BaseController
         // status terkini per stage (baris terakhir per stage yang menang)
         $statusMap = $aktif !== null ? (new StageHistoryModel())->latestStatusMap($aktif['id']) : [];
         // urutan global 8 tahap -> tahap sebelum tahap terkini dianggap done
-        $urutan   = array_column(array_merge(self::STEPPER['assessment'], self::STEPPER['selection']), 0);
+        // Rangkaian tahapnya milik LOWONGAN ini, bukan satu daftar tetap untuk
+        // semua posisi (18 Agustus 2026). Lowongan yang alur_json-nya belum
+        // disetel jatuh ke bawaan, yang isinya sama persis dengan daftar tetap
+        // sebelumnya - jadi lamaran yang sedang berjalan tidak berubah artinya.
+        $stepper  = self::stepper($aktif['alur_json'] ?? null);
+        $urutan   = array_column(array_merge($stepper['assessment'], $stepper['selection']), 0);
         $maxIdx   = -1;
         foreach ($urutan as $i => $stage) {
             if (isset($statusMap[$stage])) {
@@ -155,6 +170,19 @@ class Lamaran extends BaseController
                 $st  = ! isset($statusMap[$stage]) ? ($i > $maxIdx ? 'locked' : 'done')
                     : ($statusMap[$stage] === 'failed' ? 'failed'
                     : ($statusMap[$stage] === 'passed' || $i < $maxIdx ? 'done' : 'current'));
+                // Tahap PILIHAN yang belum ditandai tidak pernah dianggap selesai.
+                //
+                // Aturan di atas menyimpulkan 'done' dari posisi: tahap yang
+                // terlewati oleh tahap berikutnya dianggap sudah dilalui. Itu
+                // benar untuk tahap yang digerakkan mesin - mustahil lolos
+                // Gate 1 tanpa mengerjakan assessment - tapi salah untuk tahap
+                // seperti Excel Test atau Interview User, yang dikerjakan di
+                // luar sistem dan hanya tercatat kalau ada yang menandainya.
+                // Membiarkannya hijau berarti memberi tanda lulus pada tes yang
+                // belum tentu pernah diikuti kandidat.
+                if (! isset($statusMap[$stage]) && ! in_array($stage, AlurRekrutmen::wajib(), true)) {
+                    $st = 'locked';
+                }
                 // Assessment: menyala sejak CV terkirim, tidak menunggu screening CV
                 if ($stage === 'online_assessment' && $bisaAssessment && ! isset($statusMap[$stage])) {
                     $st = 'current';
@@ -189,8 +217,8 @@ class Lamaran extends BaseController
             'apps'            => $apps,
             'aktif'           => $aktif,
             'jumlahLamaran'   => count($apps),
-            'assessmentSteps' => $build(self::STEPPER['assessment']),
-            'selectionSteps'  => $build(self::STEPPER['selection']),
+            'assessmentSteps' => $build($stepper['assessment']),
+            'selectionSteps'  => $build($stepper['selection']),
         ]);
     }
 

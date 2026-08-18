@@ -573,10 +573,10 @@ final class InterviewScheduleTest extends CIUnitTestCase
 
         $html = $this->stepperDashboard($cid, $aid);
 
-        $this->assertStringContainsString('card mati', $this->langkah($html, 'Interview'),
+        $this->assertStringContainsString('card mati', $this->langkah($html, 'Interview HRD'),
             'sesi Interview harus mati sebelum waktunya');
         // mati berarti benar-benar tidak bisa diklik: bukan tautan, bukan modal
-        $this->assertStringNotContainsString("segera('Interview')", $html);
+        $this->assertStringNotContainsString("segera('Interview HRD')", $html);
     }
 
     public function testSesiInterviewMenyalaDanMengarahKeHalamanJadwalSaatRuangBuka(): void
@@ -584,7 +584,7 @@ final class InterviewScheduleTest extends CIUnitTestCase
         [$cid, $aid] = $this->fixture('passed');
         $this->approvedInterviewPada($aid, 'now');
 
-        $langkah = $this->langkah($this->stepperDashboard($cid, $aid), 'Interview');
+        $langkah = $this->langkah($this->stepperDashboard($cid, $aid), 'Interview HRD');
 
         $this->assertStringNotContainsString('card mati', $langkah);
         // menyala = tautan ke halaman jadwal, tempat tombol "Gabung via Zoom" berada
@@ -598,7 +598,7 @@ final class InterviewScheduleTest extends CIUnitTestCase
         $this->approvedInterviewPada($aid, '-3 hours'); // jendela 1 jam sudah lewat
 
         $this->assertStringContainsString('card mati',
-            $this->langkah($this->stepperDashboard($cid, $aid), 'Interview'));
+            $this->langkah($this->stepperDashboard($cid, $aid), 'Interview HRD'));
     }
 
     public function testKeputusanAkhirMatiSelamaSkorInterviewBelumKeluar(): void

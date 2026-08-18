@@ -3,6 +3,7 @@
 namespace App\Controllers;
 
 use App\Libraries\AiServiceException;
+use App\Libraries\AlurRekrutmen;
 use App\Libraries\GateTwo;
 use App\Libraries\KategoriPosisi;
 use App\Libraries\KirimRekaman;
@@ -1291,6 +1292,81 @@ class Recruiter extends BaseController
      * pulih, padahal rekamannya masih ada dan itu satu-satunya jalan kembali ke
      * penilaian otomatis.
      */
+    // --- Settings: alur rekrutmen per posisi ---
+
+    /**
+     * Daftar posisi beserta rangkaian tahapnya.
+     *
+     * Halaman ini yang dituju tombol Settings di dashboard. Mengikuti web
+     * recruiter BIPROO: satu baris per posisi, rangkaian tahapnya terbaca
+     * sekilas, dan Edit membuka pilihannya.
+     */
+    public function pengaturan()
+    {
+        $daftar = (new JobModel())->orderBy('id')->findAll();
+        foreach ($daftar as &$j) {
+            $j['alur'] = AlurRekrutmen::perKelompok(AlurRekrutmen::untukLowongan($j['alur_json'] ?? null));
+        }
+        unset($j);
+
+        return view('recruiter/pengaturan', [
+            'judul'  => 'Pengaturan Alur Rekrutmen',
+            'daftar' => $daftar,
+        ]);
+    }
+
+    /**
+     * Sunting alur satu posisi.
+     *
+     * GET menampilkan pilihannya, POST menyimpannya. Sengaja satu method:
+     * keduanya berangkat dari lowongan yang sama dan yang membedakan cuma
+     * kiriman formnya - pola yang sama dengan Recruiter::review.
+     */
+    public function alurLowongan(int $jobId)
+    {
+        $model = new JobModel();
+        $job   = $model->find($jobId);
+        if ($job === null) {
+            return redirect()->to('/recruiter/pengaturan')->with('error', 'Lowongan tidak ditemukan.');
+        }
+        $bingkai = $this->request->getGet('bingkai') === '1' || $this->request->getPost('bingkai') === '1';
+
+        if ($this->request->getMethod() === 'POST') {
+            // Urutan kiriman form YANG DIPAKAI, bukan urutan katalog: di situlah
+            // recruiter menyatakan D.I.S.C dikerjakan sebelum atau sesudah
+            // TIU 5. AlurRekrutmen yang menjaga tahap wajib tetap pada urutan
+            // mesin, jadi kiriman yang aneh pun tidak menghasilkan alur mustahil.
+            $model->update($jobId, [
+                'alur_json' => AlurRekrutmen::keJson((array) ($this->request->getPost('tahap') ?? [])),
+            ]);
+
+            // Di dalam jendela pratinjau, tujuannya BUKAN daftar posisi:
+            // redirect ke sana mendarat di dalam bingkai, dan recruiter melihat
+            // daftar terjepit di jendela kecil sementara daftar di belakangnya
+            // masih menampilkan alur yang lama. Yang dituju halaman antara yang
+            // menutup jendelanya lalu menyegarkan induknya.
+            return redirect()->to('recruiter/pengaturan/alur/' . $jobId
+                    . ($bingkai ? '?bingkai=1&tutup=1' : ''))
+                ->with('sukses', 'Alur "' . $job['judul'] . '" tersimpan.');
+        }
+
+        // Halaman antara sesudah simpan. Pesan suksesnya DITAHAN satu permintaan
+        // lagi supaya tidak habis di sini - yang membacanya recruiter di daftar
+        // posisi setelah tersegarkan, bukan layar yang cuma terlihat sekejap.
+        if ($this->request->getGet('tutup') === '1') {
+            session()->keepFlashdata('sukses');
+
+            return view('recruiter/tutup_jendela');
+        }
+
+        return view('recruiter/alur', [
+            'judul'   => 'Alur Rekrutmen',
+            'job'     => $job,
+            'terpilih' => AlurRekrutmen::untukLowongan($job['alur_json'] ?? null),
+            'bingkai' => $bingkai,
+        ]);
+    }
+
     /**
      * Penilaian belum boleh dibuka: jam wawancaranya belum lewat.
      *
