@@ -27,6 +27,7 @@ class Filters extends BaseFilters
     public array $aliases = [
         'candidateauth' => \App\Filters\CandidateAuth::class,
         'recruiterauth' => \App\Filters\RecruiterAuth::class,
+        'atasanauth'    => \App\Filters\AtasanAuth::class,
         'csrf'          => CSRF::class,
         'toolbar'       => DebugToolbar::class,
         'honeypot'      => Honeypot::class,

@@ -307,9 +307,13 @@ def test_prompt_melarang_nilai_tengah_sebagai_pengisi():
 
 
 def _jawaban_rekomendasi(rek, alasan="Riwayat kerjanya cocok dengan posisinya."):
+    # kecocokan 'tinggi' disebut eksplisit: sejak 18 Agustus 2026 kecocokan yang
+    # tidak dijawab diperlakukan sebagai 'rendah' dan MEMBATALKAN rekomendasinya,
+    # jadi tanpa baris ini uji-uji di bawah menguji jalur yang lain.
     return json.dumps({
         "penilaian": [{"kompetensi": k, "nilai": 4, "alasan": "a"} for k in KOMPETENSI],
         "kekuatan": "a", "kelemahan": "b",
+        "kecocokan": "tinggi", "alasan_kecocokan": "Menjawab ketiga pertanyaannya.",
         "rekomendasi": rek, "alasan_rekomendasi": alasan,
     }, ensure_ascii=False)
 
@@ -398,3 +402,108 @@ def test_prompt_melarang_atribut_pribadi_menyentuh_keputusan():
     aturan = nilai.SYSTEM_NILAI.lower().split("terakhir, putuskan rekomendasi")[1]
     for dilarang in ("usia", "agama", "suku", "jenis kelamin", "status pernikahan"):
         assert dilarang in aturan
+
+
+# --- kecocokan dengan posisi (18 Agustus 2026) ---
+
+SYARAT = {
+    "skill": "Patroli area, pemantauan CCTV, penanganan gangguan keamanan",
+    "pengalaman": "1 tahun sebagai petugas keamanan",
+    "pendidikan": "SMA",
+    "deskripsi": "Menjaga keamanan area toko dan menindaklanjuti kejadian.",
+}
+TANYA = ["Ceritakan pengalaman Anda menangani gangguan keamanan di area toko."]
+
+
+def _jawaban_kecocokan(kecocokan, rekomendasi="recommended"):
+    return json.dumps({
+        "penilaian": [{"kompetensi": k, "nilai": 4, "alasan": "a"} for k in KOMPETENSI],
+        "kekuatan": "a", "kelemahan": "b",
+        "kecocokan": kecocokan, "alasan_kecocokan": "Seluruh jawabannya soal stok gudang.",
+        "rekomendasi": rekomendasi, "alasan_rekomendasi": "jawabannya runtut",
+    }, ensure_ascii=False)
+
+
+def test_syarat_posisi_ikut_dikirim():
+    """
+    Sebelum 18 Agustus 2026 yang dikirim cuma JUDUL posisi. "Security System"
+    tidak menerangkan apa pun tentang pekerjaannya, sehingga model tidak punya
+    dasar menilai wawancaranya nyambung atau tidak - dan transkrip operator
+    gudang lolos dengan nilai bagus di posisi itu.
+    """
+    llm = _LLM(_jawaban_kecocokan("rendah"))
+
+    nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, llm, posisi="Security System", syarat=SYARAT)
+
+    q = llm.terakhir["question"]
+    assert "SYARAT POSISI" in q
+    assert "pemantauan CCTV" in q
+    assert "Menjaga keamanan area toko" in q
+
+
+def test_pertanyaan_yang_diajukan_ikut_dikirim():
+    """Petunjuk paling terang bahwa transkripnya dari wawancara yang lain:
+    jawabannya tidak menjawab apa pun yang ditanyakan."""
+    llm = _LLM(_jawaban_kecocokan("rendah"))
+
+    nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, llm, pertanyaan=TANYA)
+
+    assert "PERTANYAAN YANG DIAJUKAN" in llm.terakhir["question"]
+    assert "gangguan keamanan" in llm.terakhir["question"]
+
+
+def test_kecocokan_rendah_membatalkan_rekomendasi():
+    """
+    INI perbaikan intinya. Transkrip wawancara gudang yang dimasukkan ke posisi
+    Security System dulu tetap diloloskan dengan nilai bagus: jawabannya memang
+    runtut, cuma tentang pekerjaan yang lain sama sekali.
+
+    Ditegakkan di kode, bukan cuma diminta lewat aturan prompt - model bisa saja
+    mengisi 'rendah' lalu tetap merekomendasikan, dan itu persis yang terjadi.
+    """
+    h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, _LLM(_jawaban_kecocokan("rendah", "recommended")))
+
+    assert h.kecocokan == "rendah"
+    assert h.rekomendasi is None, "kecocokan rendah tidak boleh meloloskan"
+    assert h.berhasil, "penilaian per kompetensinya tetap tersimpan"
+
+
+def test_kecocokan_rendah_juga_membatalkan_penolakan():
+    """Wawancara yang membahas pekerjaan lain tidak cukup untuk meloloskan
+    MAUPUN menggugurkan - keputusannya milik perekrut."""
+    h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, _LLM(_jawaban_kecocokan("rendah", "not_recommended")))
+
+    assert h.rekomendasi is None
+
+
+def test_kecocokan_tinggi_tidak_mengganggu_rekomendasi():
+    h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, _LLM(_jawaban_kecocokan("tinggi", "recommended")))
+
+    assert h.kecocokan == "tinggi"
+    assert h.rekomendasi == "recommended"
+
+
+def test_kecocokan_yang_tidak_dijawab_dianggap_rendah():
+    """Tanpa jawaban itu tidak ada yang tahu wawancaranya nyambung atau tidak,
+    dan justru itu keadaan yang mau dihindari."""
+    for asing in ("", "lumayan", None, 3):
+        h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, _LLM(_jawaban_kecocokan(asing)))
+
+        assert h.kecocokan == "rendah", asing
+        assert h.rekomendasi is None, asing
+
+
+def test_tanpa_syarat_tidak_ada_blok_karangan():
+    llm = _LLM(_jawaban_kecocokan("tinggi"))
+
+    nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, llm)
+
+    assert "SYARAT POSISI" not in llm.terakhir["question"]
+    assert "PERTANYAAN YANG DIAJUKAN" not in llm.terakhir["question"]
+
+
+def test_prompt_mencontohkan_kasus_yang_terjadi():
+    """Contoh yang konkret jauh lebih menempel daripada aturan abstrak."""
+    s = nilai.SYSTEM_NILAI.lower()
+    assert "stok gudang" in s
+    assert "petugas keamanan" in s

@@ -130,7 +130,7 @@ foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
                       // (layout_bingkai), karena keduanya sudah ada di halaman ini. ?>
                 <a href="<?= site_url('recruiter/ruang/' . $a['id']) ?>?bingkai=1"
                    onclick="return bukaJendela(this.href, <?= esc(json_encode('Ruang Interview - ' . $a['nama']), 'attr') ?>)">
-                  <button class="b-tanya">Ruang Interview</button></a>
+                  <button class="b-tanya">Interview</button></a>
                 <?php // Melepas jadwal: slot kembali ke daftar, kandidat memilih ulang.
                       // Bukan menggugurkan kandidat, jadi warnanya netral bukan merah.
                       // Alasannya ditanyakan lewat prompt (lihat alasanReschedule). ?>
@@ -147,7 +147,7 @@ foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
                       // sudah berpindah ke tab ini. ?>
                 <a href="<?= site_url('recruiter/ruang/' . $a['id']) ?>?bingkai=1"
                    onclick="return bukaJendela(this.href, <?= esc(json_encode('Ruang Interview - ' . $a['nama']), 'attr') ?>)">
-                  <button class="b-tanya">Ruang Interview</button></a>
+                  <button class="b-tanya">Interview</button></a>
                 <?php if ($a['gate2'] === 'passed'): ?>
                   <span style="color:#1d6b3d;font-weight:700">✅ Lolos</span>
                 <?php elseif ($a['gate2'] === 'failed'): ?>

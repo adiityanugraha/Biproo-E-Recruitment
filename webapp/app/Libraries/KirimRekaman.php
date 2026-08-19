@@ -55,6 +55,14 @@ class KirimRekaman
                 // sama sekali dari keputusan - padahal di rumus lama ia 40%
                 // bobotnya - dan kandidat dinilai semata dari 30 menit bicara.
                 'skor_cv'        => $this->skorCv((int) $baris['application_id']),
+                // Syarat lowongan dan tiga pertanyaan yang BENAR-BENAR diajukan
+                // (18 Agustus 2026). Sebelumnya yang dikirim cuma judul posisi,
+                // dan judul tidak menerangkan apa pun tentang pekerjaannya:
+                // transkrip operator gudang lolos dengan nilai bagus di posisi
+                // Security System karena tidak ada yang bisa dipakai model untuk
+                // menyimpulkan wawancaranya membahas pekerjaan yang lain.
+                'syarat'         => $this->syarat((int) $baris['application_id']),
+                'pertanyaan'     => $this->pertanyaan((int) $baris['application_id']),
                 'callback_url'   => site_url('interview/callback'),
                 'callback_token' => $token,
             ]);
@@ -111,6 +119,48 @@ class KirimRekaman
         $sr = (new ScreeningResultModel())->latestFor($appId);
 
         return $sr === null || $sr['score_overall'] === null ? null : (float) $sr['score_overall'];
+    }
+
+    /**
+     * Syarat lowongan apa adanya dari tabel jobs.
+     *
+     * Empat bidang yang sama dengan yang dipakai screening CV, jadi penilai
+     * wawancara menimbang lowongan yang sama dengan yang menyeleksi CV-nya.
+     *
+     * @return array<string, string>
+     */
+    private function syarat(int $appId): array
+    {
+        $app = (new ApplicationModel())
+            ->select('jobs.req_skill, jobs.req_pendidikan, jobs.req_pengalaman, jobs.deskripsi')
+            ->join('jobs', 'jobs.id = applications.job_id')
+            ->where('applications.id', $appId)
+            ->first();
+
+        return [
+            'skill'      => (string) ($app['req_skill'] ?? ''),
+            'pendidikan' => (string) ($app['req_pendidikan'] ?? ''),
+            'pengalaman' => (string) ($app['req_pengalaman'] ?? ''),
+            'deskripsi'  => (string) ($app['deskripsi'] ?? ''),
+        ];
+    }
+
+    /**
+     * Tiga pertanyaan yang diajukan ke kandidat ini.
+     *
+     * Tanpa ini penilai tidak bisa melihat bahwa jawabannya tidak menjawab apa
+     * pun yang ditanyakan - petunjuk paling terang bahwa transkripnya berasal
+     * dari wawancara yang lain.
+     *
+     * @return list<string>
+     */
+    private function pertanyaan(int $appId): array
+    {
+        // tersimpan(), BUKAN untukLamaran(): yang kedua menyusun pertanyaan
+        // baru bila belum ada, dan itu satu panggilan LLM yang tidak diminta
+        // siapa pun - lahir pula SESUDAH wawancaranya terjadi. Yang belum
+        // punya pertanyaan tersimpan cukup mengirim daftar kosong.
+        return array_column((new PertanyaanKandidat())->tersimpan($appId), 'pertanyaan');
     }
 
     private function posisi(int $appId): string

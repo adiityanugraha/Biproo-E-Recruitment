@@ -247,6 +247,22 @@ class PertanyaanKandidat
     }
 
     /** @return list<array{pertanyaan: string, sumber: string}> */
+    /**
+     * Pertanyaan yang SUDAH tersimpan, tanpa menyusun yang baru.
+     *
+     * Berbeda dari untukLamaran(), yang jatuh ke buatUlang() bila kosong -
+     * dan itu satu panggilan LLM. Pemakai yang cuma ingin tahu apa yang
+     * ditanyakan, misalnya penilai wawancara, tidak boleh memicu penyusunan
+     * pertanyaan baru: kuotanya terpakai tanpa ada yang meminta, dan
+     * pertanyaannya lahir SESUDAH wawancaranya terjadi.
+     *
+     * @return list<array{pertanyaan: string, sumber: string}>
+     */
+    public function tersimpan(int $appId): array
+    {
+        return $this->baca($appId);
+    }
+
     private function baca(int $appId): array
     {
         $app = (new ApplicationModel())->find($appId);

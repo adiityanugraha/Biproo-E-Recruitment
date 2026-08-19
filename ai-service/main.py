@@ -269,6 +269,12 @@ class InterviewRequest(BaseModel):
     # 40% bobotnya - dan kandidat dinilai semata dari 30 menit bicara.
     # None = screening belum menghasilkan skor.
     skor_cv: float | None = None
+    # Syarat lowongan dan tiga pertanyaan yang benar-benar diajukan (18
+    # Agustus 2026). Sebelumnya yang dikirim cuma JUDUL posisi, dan judul
+    # tidak menerangkan apa pun tentang pekerjaannya - transkrip operator
+    # gudang pun lolos dengan nilai bagus di posisi Security System.
+    syarat: dict = {}
+    pertanyaan: list[str] = []
     callback_url: HttpUrl
     callback_token: str | None = None
 
@@ -295,6 +301,8 @@ async def _proses_interview(job_id: str) -> None:
         # null = model tidak memutuskan; CI4 menyerahkannya ke perekrut.
         "rekomendasi": None,
         "alasan_rekomendasi": "",
+        "kecocokan": "",
+        "alasan_kecocokan": "",
     }
 
     try:
@@ -324,6 +332,7 @@ async def _proses_interview(job_id: str) -> None:
     n = await asyncio.to_thread(
         nilai_dari_transkrip, hasil.teks, job["kompetensi"], llm,
         job.get("riwayat", []), job.get("posisi", ""), job.get("skor_cv"),
+        job.get("syarat", {}), job.get("pertanyaan", []),
     )
 
     badan["penilaian"] = [
@@ -333,6 +342,8 @@ async def _proses_interview(job_id: str) -> None:
     badan["kelemahan"] = n.kelemahan
     badan["rekomendasi"] = n.rekomendasi
     badan["alasan_rekomendasi"] = n.alasan_rekomendasi
+    badan["kecocokan"] = n.kecocokan
+    badan["alasan_kecocokan"] = n.alasan_kecocokan
     badan["status"] = "selesai" if n.berhasil else "gagal"
     badan["catatan"] = n.catatan
     job["status"] = badan["status"]
@@ -380,6 +391,8 @@ def create_interview(req: InterviewRequest) -> InterviewAccepted:
         "riwayat": [r.model_dump() for r in req.riwayat],
         "posisi": req.posisi,
         "skor_cv": req.skor_cv,
+        "syarat": dict(req.syarat),
+        "pertanyaan": list(req.pertanyaan),
         "callback_url": str(req.callback_url),
         "token": req.callback_token,
     }

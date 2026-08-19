@@ -2,6 +2,7 @@
 
 namespace App\Controllers;
 
+use App\Libraries\AlurRekrutmen;
 use App\Libraries\GateTwo;
 use App\Libraries\LembarPenilaian;
 use App\Libraries\StageLogger;
@@ -229,7 +230,15 @@ class Interview extends BaseController
         // dan model hampir selalu mengakhirinya dengan titik sendiri.
         $alasan = rtrim(trim((string) ($b['alasan_rekomendasi'] ?? '')), '.');
 
-        return [$lolos, mb_substr($alasan, 0, 400)];
+        // Kecocokan wawancara dengan posisinya ikut dibawa: ia sebab paling
+        // sering di balik rekomendasi yang kosong, dan tanpa menyebutnya
+        // recruiter cuma membaca 'AI tidak memberi rekomendasi' tanpa tahu
+        // bahwa transkrip yang diunggah membahas pekerjaan yang lain.
+        $kecocokan = (string) ($b['kecocokan'] ?? '');
+        $sebabKec  = rtrim(trim((string) ($b['alasan_kecocokan'] ?? '')), '.');
+
+        return [$lolos, mb_substr($alasan, 0, 400), $kecocokan,
+            mb_substr($sebabKec, 0, 300)];
     }
 
     /**
@@ -254,10 +263,10 @@ class Interview extends BaseController
      * bukan otomatisasi melainkan tebakan yang dikirim lewat email.
      *
      * @param array<string, mixed>   $app
-     * @param array{0: ?bool, 1: string} $rekomendasi [lolos, alasan] dari AI
+     * @param array{0: ?bool, 1: string, 2: string, 3: string} $rekomendasi [lolos, alasan, kecocokan, alasan kecocokan] dari AI
      */
     private function putuskan(int $appId, array $app, bool $gagal, string $catatan,
-        bool $adaTranskrip = false, array $rekomendasi = [null, '']): void
+        bool $adaTranskrip = false, array $rekomendasi = [null, '', '', '']): void
     {
         $logger = new StageLogger();
         $actor  = 'system:transkrip';
@@ -314,7 +323,16 @@ class Interview extends BaseController
             // ambangnya. Terlihat pada uji e2e 14 Agustus 2026.
             . '. Skor akhir rumus ' . skor_100($rec['score'], 1) . '/100';
 
-        [$lolos, $alasanAi] = $rekomendasi;
+        [$lolos, $alasanAi, $kecocokan, $sebabKecocokan] = $rekomendasi + [null, '', '', ''];
+
+        // Wawancara yang membahas pekerjaan lain tidak pernah diputus mesin:
+        // ai-service mengosongkan rekomendasinya sendiri saat kecocokannya
+        // rendah. Yang ditambahkan di sini SEBABNYA, supaya recruiter tahu
+        // transkrip yang diunggah tidak nyambung dengan posisinya - bukan
+        // sekadar tahu bahwa AI tidak menjawab.
+        $catatanKec = $kecocokan === '' ? ''
+            : ' Kecocokan wawancara dengan posisi: ' . $kecocokan
+            . ($sebabKecocokan === '' ? '.' : ' - ' . $sebabKecocokan . '.');
 
         if ($lolos === null) {
             // AI tidak memutuskan - aturan 13 di SYSTEM_NILAI memang membolehkan
@@ -324,7 +342,8 @@ class Interview extends BaseController
             // sebagian orang dinilai dengan aturan yang berbeda dari sebelahnya,
             // tanpa ada yang tahu siapa.
             $logger->log($appId, 'gate_2', 'flagged', $actor,
-                $rincian . '. AI tidak memberi rekomendasi, keputusan diserahkan ke recruiter.');
+                $rincian . '. AI tidak memberi rekomendasi, keputusan diserahkan ke recruiter.'
+                . $catatanKec);
 
             return;
         }
@@ -339,7 +358,35 @@ class Interview extends BaseController
             // Ketidaksepakatan disebut terang-terangan. Ia tidak mengubah
             // keputusan, tapi ia satu-satunya penanda yang bisa dihitung kalau
             // suatu hari ada yang bertanya seberapa sering keduanya berbeda.
-            . ($rumus === $lolos ? ' (sepakat)' : ' (BERBEDA dari rekomendasi AI)');
+            . ($rumus === $lolos ? ' (sepakat)' : ' (BERBEDA dari rekomendasi AI)')
+            . $catatanKec;
+
+        // POSISI YANG MEMAKAI INTERVIEW USER BERHENTI DI SINI (19 Agustus 2026).
+        //
+        // Alurnya: HRD menyaring, kandidat yang lolos wawancara HRD diteruskan
+        // ke calon atasannya, dan ATASAN yang memutuskan terakhir. Menutup
+        // Gate 2 di sini berarti mengabari kandidat 'Anda diterima' sebelum
+        // orang yang akan jadi atasannya sempat menemuinya - dan kalau si
+        // atasan lalu menolak, kandidat sudah terlanjur menerima dua surat
+        // yang bertentangan.
+        //
+        // Rekomendasi AI-nya TIDAK hilang: ia tercatat di riwayat tahap dan
+        // terbaca atasan di lembar profil sebagai bahan pertimbangan.
+        if (AlurRekrutmen::pakaiInterviewUser($app['alur_json'] ?? null)) {
+            $logger->log($appId, 'interview_online', $lolos ? 'passed' : 'failed', $actor,
+                'Tahap HRD: ' . $catat);
+            if ($lolos) {
+                $logger->log($appId, 'interview_user', 'entered', $actor,
+                    'Menunggu wawancara dengan atasan posisi ini.');
+            } else {
+                // Gugur di tahap HRD tidak perlu menunggu atasan: kandidatnya
+                // memang tidak diteruskan, dan menahan kabarnya cuma membuat
+                // orang menunggu jawaban yang sudah ada.
+                $logger->log($appId, 'gate_2', 'failed', $actor, $catat, $email);
+            }
+
+            return;
+        }
 
         $logger->log($appId, 'gate_2', $lolos ? 'passed' : 'failed', $actor, $catat, $email);
         if ($lolos) {
@@ -358,7 +405,7 @@ class Interview extends BaseController
     private function lamaran(int $appId): ?array
     {
         return (new ApplicationModel())
-            ->select('applications.id, candidates.nama, candidates.email, jobs.judul, jobs.bobot_json, jobs.threshold_json')
+            ->select('applications.id, candidates.nama, candidates.email, jobs.judul, jobs.bobot_json, jobs.threshold_json, jobs.alur_json')
             ->join('candidates', 'candidates.id = applications.candidate_id')
             ->join('jobs', 'jobs.id = applications.job_id')
             ->where('applications.id', $appId)

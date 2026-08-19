@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Libraries\AlurRekrutmen;
 use CodeIgniter\Model;
 use LogicException;
 
@@ -16,10 +17,30 @@ class StageHistoryModel extends Model
 
     protected $validationRules = [
         'application_id' => 'required|is_natural_no_zero',
-        'stage'          => 'required|in_list[upload_cv,ai_verification,online_assessment,gate_1,penjadwalan,interview_online,gate_2,berkas_kontrak]',
         'status'         => 'required|in_list[entered,passed,failed,flagged,retry_queued]',
         'actor'          => 'required|max_length[100]',
     ];
+
+    /**
+     * Daftar tahap yang sah DITURUNKAN dari katalog alur, bukan diketik ulang.
+     *
+     * Dulu daftarnya ditulis tangan di validationRules, dan itu diam-diam
+     * menutup pintu: sejak alur bisa disetel per posisi (18 Agustus 2026),
+     * tahap tambahan seperti Interview User, Excel Test, dan Training Class
+     * tidak akan pernah bisa dicatat - StageLogger melempar RuntimeException
+     * yang menyebut daftar lama, dan tidak ada satu pun tempat yang
+     * mengingatkan bahwa dua daftar itu harus tetap sama.
+     *
+     * ai_verification ikut disebut terpisah karena ia proses internal yang
+     * memang tidak tampil di alur, jadi katalog tidak memuatnya.
+     */
+    public function __construct()
+    {
+        parent::__construct();
+
+        $sah = array_merge(array_keys(AlurRekrutmen::KATALOG), AlurRekrutmen::TERSEMBUNYI);
+        $this->validationRules['stage'] = 'required|in_list[' . implode(',', $sah) . ']';
+    }
 
     public function update($id = null, $row = null): bool
     {

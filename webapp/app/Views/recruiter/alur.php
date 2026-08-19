@@ -75,6 +75,18 @@ foreach (array_keys(A::KATALOG) as $kunci) {
                      font-family: inherit; font-weight: 600; font-size: 13px; }
   .btn-save { background: #1E8E5A; color: #fff; }
   .btn-close { background: #6C757D; color: #fff; }
+  .atasan { border: 1px solid #FFD9A0; background: #FFF9EF; border-radius: 8px;
+            padding: 12px 14px; margin-bottom: 16px; font-size: 12.5px; }
+  /* Belum dipakai posisi ini: tetap terlihat, cuma diredupkan supaya tidak
+     merebut perhatian dari pilihan tahapnya. */
+  .atasan.tidur { background: #FAFBFD; border-color: #e2e6ee; }
+  .atasan .isian label { flex: 1; min-width: 190px; display: block;
+                         font-size: 11.5px; font-weight: 600; color: #555; }
+  .atasan .isian label input { width: 100%; box-sizing: border-box; margin-top: 4px; }
+  .atasan p { margin: 5px 0 10px; color: #666; line-height: 1.6; }
+  .atasan .isian { display: flex; gap: 8px; flex-wrap: wrap; }
+  .atasan input { flex: 1; min-width: 190px; margin: 0; padding: 8px 11px; font-size: 13px;
+                  border: 1px solid #e2e6ee; border-radius: 6px; font-family: inherit; }
   .ket { font-size: 12px; color: #666; line-height: 1.6; margin: 0 0 14px; }
 </style>
 <?= $this->endSection() ?>
@@ -101,6 +113,53 @@ foreach (array_keys(A::KATALOG) as $kunci) {
         diputus dari hasil assessment, Interview HRD mengisi transkrip dan penilaiannya, Keputusan
         Akhir ditutup mesin penilai. Urutan mengikuti urutan memasukkan.
       </p>
+
+      <?php // Muncul hanya bila posisi ini memakai Interview User. Ditaruh di
+            // ATAS pilihan tahapnya, bukan di bawah: begitu recruiter menarik
+            // Interview User ke kiri, matanya sudah lewat kotak ini dan tahu
+            // ada yang harus diisi. JavaScript menyalakannya seketika, tapi
+            // nilainya tetap terkirim walau JavaScript mati - yang tersembunyi
+            // cuma tampilannya. ?>
+      <?php // SELALU TAMPIL, bukan disembunyikan sampai Interview User dipakai.
+            //
+            // Versi pertama menyembunyikannya, dan itu keliru: recruiter yang
+            // hendak MENYIAPKAN Interview User membuka jendela ini lalu tidak
+            // menemukan tempat mengisi nama atasannya - fiturnya seolah tidak
+            // ada. Yang tersembunyi tidak bisa ditemukan orang yang belum tahu
+            // ia ada.
+            //
+            // Yang berubah keterangannya, bukan keberadaannya: saat tahapnya
+            // belum dipakai, kotak ini menyebut dirinya belum berlaku. ?>
+      <?php $pakaiUser = in_array('interview_user', $terpilih, true); ?>
+      <div id="kotakAtasan" class="atasan<?= $pakaiUser ? '' : ' tidur' ?>">
+        <b>Pewawancara Interview User</b>
+        <p>
+          <span id="ketAtasanAktif"<?= $pakaiUser ? '' : ' hidden' ?>>
+            Atasan yang akan mewawancarai kandidat posisi ini. Menyimpan akan menerbitkan akunnya dan
+            mengirim kata sandi ke alamat di bawah. <b>Sandinya tidak pernah ditampilkan di layar ini</b> -
+            termasuk kepada Anda.
+          </span>
+          <span id="ketAtasanTidur"<?= $pakaiUser ? ' hidden' : '' ?>>
+            Posisi ini belum memakai <b>Interview User</b>. Isian di bawah boleh diisi sekarang, tapi
+            akunnya baru diterbitkan setelah tahap Interview User dipindahkan ke kotak kiri.
+          </span>
+          <?php if (($atasan['dikirim_at'] ?? null) !== null): ?>
+            <br>Terakhir dikirim <?= esc(date('d M Y, H:i', strtotime($atasan['dikirim_at']))) ?> WIB.
+          <?php endif ?>
+        </p>
+        <div class="isian">
+          <label>
+            Nama atasan
+            <input type="text" name="atasan_nama" placeholder="mis. Budi Santoso"
+                   maxlength="160" value="<?= esc($atasan['nama'] ?? '', 'attr') ?>">
+          </label>
+          <label>
+            Email atasan
+            <input type="email" name="atasan_email" placeholder="mis. budi@biproo.com"
+                   maxlength="255" value="<?= esc($atasan['email'] ?? '', 'attr') ?>">
+          </label>
+        </div>
+      </div>
 
       <div class="dua">
         <?php foreach ([A::ASSESSMENT => 'Assessment Progress', A::SELECTION => 'Selection Progress'] as $grup => $judulGrup): ?>
@@ -195,6 +254,7 @@ foreach (array_keys(A::KATALOG) as $kunci) {
       opsi.addEventListener('dragend', function () {
           opsi.classList.remove('diseret');
           document.querySelectorAll('.kotak.tujuan').forEach(function (k) { k.classList.remove('tujuan'); });
+          segarkanKotakAtasan();
           seret = null;
           // Klik yang menyusul sesudah lepas jangan sampai memindahkannya lagi.
           setTimeout(function () { baruSeret = false; }, 0);
@@ -249,8 +309,24 @@ foreach (array_keys(A::KATALOG) as $kunci) {
               ? bagian.querySelector('.kotak.sedia')
               : bagian.querySelector('.kotak.pakai');
           tujuan.appendChild(opsi);
+          segarkanKotakAtasan();
       });
   });
+
+  // Kotak pewawancara ikut keadaan Interview User. Dipanggil sesudah tiap
+  // perpindahan - seret maupun klik - supaya isiannya muncul tepat saat tahapnya
+  // dipakai, bukan setelah halaman dimuat ulang.
+  function segarkanKotakAtasan() {
+      var kotak = document.getElementById('kotakAtasan');
+      if (!kotak) { return; }
+      var dipakai = !!document.querySelector('.bagian .kotak.pakai .opsi[data-kunci="interview_user"]');
+
+      // Kotaknya TIDAK disembunyikan - yang berganti cuma keterangannya, supaya
+      // recruiter yang belum memakai Interview User tetap melihat isian ini ada.
+      kotak.classList.toggle('tidur', !dipakai);
+      document.getElementById('ketAtasanAktif').hidden = !dipakai;
+      document.getElementById('ketAtasanTidur').hidden = dipakai;
+  }
 
   // Assessment dulu baru Selection: urutan itulah yang dibaca AlurRekrutmen.
   document.getElementById('formAlur').addEventListener('submit', function () {

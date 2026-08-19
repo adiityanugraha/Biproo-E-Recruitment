@@ -11,6 +11,7 @@ use App\Libraries\LembarPenilaian;
 use App\Libraries\PertanyaanKandidat;
 use App\Libraries\StageLogger;
 use App\Libraries\ZoomException;
+use App\Models\AkunAtasanModel;
 use App\Models\ApplicationModel;
 use App\Models\EmailQueueModel;
 use App\Models\InterviewModel;
@@ -1336,9 +1337,9 @@ class Recruiter extends BaseController
             // recruiter menyatakan D.I.S.C dikerjakan sebelum atau sesudah
             // TIU 5. AlurRekrutmen yang menjaga tahap wajib tetap pada urutan
             // mesin, jadi kiriman yang aneh pun tidak menghasilkan alur mustahil.
-            $model->update($jobId, [
-                'alur_json' => AlurRekrutmen::keJson((array) ($this->request->getPost('tahap') ?? [])),
-            ]);
+            $alur = AlurRekrutmen::keJson((array) ($this->request->getPost('tahap') ?? []));
+            $model->update($jobId, ['alur_json' => $alur]);
+            $pesan = $this->terbitkanAkunAtasan($jobId, $job['judul'], $alur);
 
             // Di dalam jendela pratinjau, tujuannya BUKAN daftar posisi:
             // redirect ke sana mendarat di dalam bingkai, dan recruiter melihat
@@ -1347,7 +1348,7 @@ class Recruiter extends BaseController
             // menutup jendelanya lalu menyegarkan induknya.
             return redirect()->to('recruiter/pengaturan/alur/' . $jobId
                     . ($bingkai ? '?bingkai=1&tutup=1' : ''))
-                ->with('sukses', 'Alur "' . $job['judul'] . '" tersimpan.');
+                ->with('sukses', 'Alur "' . $job['judul'] . '" tersimpan.' . $pesan);
         }
 
         // Halaman antara sesudah simpan. Pesan suksesnya DITAHAN satu permintaan
@@ -1360,11 +1361,55 @@ class Recruiter extends BaseController
         }
 
         return view('recruiter/alur', [
-            'judul'   => 'Alur Rekrutmen',
-            'job'     => $job,
+            'judul'    => 'Alur Rekrutmen',
+            'job'      => $job,
             'terpilih' => AlurRekrutmen::untukLowongan($job['alur_json'] ?? null),
-            'bingkai' => $bingkai,
+            'atasan'   => (new AkunAtasanModel())->untukLowongan($jobId),
+            'bingkai'  => $bingkai,
         ]);
+    }
+
+    /**
+     * Terbitkan akun atasan bila posisi ini memakai Interview User.
+     *
+     * SANDINYA TIDAK PERNAH DILIHAT HRD. Ia dibuat acak, di-hash, lalu langsung
+     * masuk ke badan email - tidak dikembalikan ke layar dan tidak dicatat di
+     * log. HRD cukup tahu emailnya sudah terkirim ke alamat mana.
+     *
+     * Diterbitkan ulang tiap kali disimpan dengan email yang sama, dan itu
+     * disengaja: satu-satunya saat kredensial sampai ke atasan adalah lewat
+     * email ini, jadi menahannya berarti atasan yang kehilangan sandinya tidak
+     * punya jalan apa pun selain minta HRD menyunting alurnya lagi.
+     *
+     * @return string potongan kalimat untuk pesan sukses, '' bila tidak ada
+     */
+    private function terbitkanAkunAtasan(int $jobId, string $posisi, string $alurJson): string
+    {
+        $nama  = trim((string) $this->request->getPost('atasan_nama'));
+        $email = trim((string) $this->request->getPost('atasan_email'));
+
+        if (! AlurRekrutmen::pakaiInterviewUser($alurJson) || $nama === '' || $email === '') {
+            return '';
+        }
+        if (! filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return ' Akun atasan TIDAK dibuat: alamat email tidak sah.';
+        }
+
+        $sandi = (new AkunAtasanModel())->terbitkan($jobId, $nama, $email);
+
+        (new EmailQueueModel())->insert([
+            'to_email'     => $email,
+            'template'     => 'akun_atasan',
+            'payload_json' => json_encode([
+                'nama'   => $nama,
+                'posisi' => $posisi,
+                'email'  => $email,
+                'sandi'  => $sandi,
+                'url'    => site_url('atasan/login'),
+            ]),
+        ]);
+
+        return ' Akun Interview User dikirim ke ' . $email . '.';
     }
 
     /**

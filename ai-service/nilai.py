@@ -42,6 +42,13 @@ MAKS_DESKRIPSI = 300
 # angkanya sama dengan lebar kolom interview_penilaian.catatan.
 MAKS_NARASI = 500
 
+# Syarat lowongan diketik manusia dan panjangnya tak menentu; dipotong
+# supaya uraian pekerjaan yang bertele-tele tidak menenggelamkan
+# transkripnya sendiri.
+MAKS_SYARAT = 600
+MAKS_PERTANYAAN = 300
+MAKS_JUMLAH_PERTANYAAN = 3
+
 SYSTEM_NILAI = (
     "Kamu perekrut senior di perusahaan retail gadget Indonesia. Nilai kandidat "
     "dari TRANSKRIP wawancara di bawah, pada kompetensi yang diminta saja.\n\n"
@@ -76,27 +83,45 @@ SYSTEM_NILAI = (
     "transkripnya benar-benar tidak memberi bahan apa pun.\n"
     "9. Maksimal dua kalimat masing-masing. JANGAN menyinggung usia, agama, "
     "suku, jenis kelamin, status pernikahan, atau kondisi kesehatan.\n\n"
+    "Sebelum memutuskan, nilai KECOCOKAN wawancara ini dengan posisinya.\n"
+    "10. Isi 'kecocokan' dengan 'tinggi', 'sedang', atau 'rendah'. Yang "
+    "ditimbang: apakah yang dibicarakan kandidat benar-benar menyangkut "
+    "pekerjaan pada SYARAT POSISI di atas, dan apakah ia menjawab PERTANYAAN "
+    "yang diajukan.\n"
+    "11. Isi 'rendah' bila wawancaranya membahas jenis pekerjaan yang lain "
+    "sama sekali - misalnya seluruh jawabannya tentang pencatatan stok gudang "
+    "sementara posisi yang dilamar petugas keamanan. Jawaban yang bagus untuk "
+    "pekerjaan lain tetap TIDAK menerangkan apa pun tentang kesiapan kandidat "
+    "di posisi INI, dan menilainya tinggi berarti meloloskan orang atas dasar "
+    "yang keliru. Pengalaman yang berbeda tapi tugasnya bersinggungan itu "
+    "'sedang', bukan 'rendah'.\n"
+    "12. 'alasan_kecocokan' WAJIB dan menyebut hal yang konkret: bagian mana "
+    "dari syarat posisi yang tersentuh wawancara, dan mana yang tidak.\n\n"
     "Terakhir, putuskan REKOMENDASI.\n"
-    "10. Isi 'rekomendasi' dengan 'recommended' atau 'not_recommended'. Ini "
+    "13. Isi 'rekomendasi' dengan 'recommended' atau 'not_recommended'. Ini "
     "keputusan sungguhan: kandidat yang not_recommended akan menerima surat "
     "penolakan, dan tidak ada orang yang memeriksa ulang sebelum surat itu "
     "terkirim.\n"
-    "11. Timbang TIGA hal: jawaban di transkrip, kecocokan riwayat kerja dengan "
+    "14. Timbang TIGA hal: jawaban di transkrip, kecocokan riwayat kerja dengan "
     "posisi yang dilamar, dan skor kecocokan CV bila diberikan. Kekurangan yang "
     "bisa dipelajari dalam beberapa minggu bukan alasan menolak; kekurangan pada "
     "hal inti pekerjaan adalah alasan yang sah.\n"
-    "12. 'alasan_rekomendasi' WAJIB, paling banyak tiga kalimat, dan menyebut "
+    "15. 'alasan_rekomendasi' WAJIB, paling banyak tiga kalimat, dan menyebut "
     "hal yang konkret dari transkrip atau riwayat kerja. Kalimat ini yang "
     "dibaca perekrut saat kandidat bertanya kenapa ia gugur, jadi 'kurang "
     "sesuai' saja tidak sah.\n"
-    "13. Bila transkripnya terlalu tipis untuk memutuskan dengan yakin, isi "
+    "16. Bila transkripnya terlalu tipis untuk memutuskan dengan yakin, isi "
     "'rekomendasi' dengan null. Itu bukan kegagalan - keputusannya lalu "
     "diserahkan ke perekrut, dan itu jauh lebih baik daripada menolak orang "
     "dari bahan yang tidak cukup.\n"
-    "14. JANGAN memutuskan berdasarkan usia, agama, suku, jenis kelamin, status "
+    "17. Bila 'kecocokan' bernilai 'rendah', isi 'rekomendasi' dengan null "
+    "juga. Wawancara yang membahas pekerjaan lain tidak cukup untuk meloloskan "
+    "MAUPUN menggugurkan seseorang - yang benar menyerahkannya ke perekrut.\n"
+    "18. JANGAN memutuskan berdasarkan usia, agama, suku, jenis kelamin, status "
     "pernikahan, atau kondisi kesehatan. Ini larangan keras.\n\n"
-    '15. Jawab HANYA JSON: {"penilaian": [{"kompetensi": "...", "nilai": 1-5 '
+    '19. Jawab HANYA JSON: {"penilaian": [{"kompetensi": "...", "nilai": 1-5 '
     'atau null, "alasan": "..."}], "kekuatan": "...", "kelemahan": "...", '
+    '"kecocokan": "tinggi" | "sedang" | "rendah", "alasan_kecocokan": "...", '
     '"rekomendasi": "recommended" | "not_recommended" | null, '
     '"alasan_rekomendasi": "..."}'
 )
@@ -104,6 +129,12 @@ SYSTEM_NILAI = (
 # Nilai 'rekomendasi' yang diakui. Selain ini - termasuk variasi ejaan yang
 # dikarang model - dianggap tidak menjawab, dan keputusannya jatuh ke perekrut.
 REKOMENDASI = ("recommended", "not_recommended")
+
+# Nilai kecocokan yang diakui. Selain ini dianggap tidak menjawab, dan tidak
+# menjawab diperlakukan sama dengan 'rendah': meloloskan orang tanpa tahu
+# wawancaranya nyambung dengan posisinya atau tidak justru keadaan yang mau
+# dihindari.
+KECOCOKAN = ("tinggi", "sedang", "rendah")
 
 
 class Butir(NamedTuple):
@@ -124,6 +155,12 @@ class Hasil(NamedTuple):
     # None = model tidak memutuskan; CI4 lalu menyerahkannya ke perekrut.
     rekomendasi: str | None = None
     alasan_rekomendasi: str = ""
+    # Seberapa nyambung wawancaranya dengan posisi yang dilamar (18 Agustus
+    # 2026). 'rendah' berarti yang dibicarakan pekerjaan lain sama sekali,
+    # dan penilaian sebagus apa pun di atasnya tidak menerangkan kesiapan
+    # kandidat DI POSISI INI.
+    kecocokan: str = ""
+    alasan_kecocokan: str = ""
 
     @property
     def berhasil(self) -> bool:
@@ -159,6 +196,45 @@ def _blok_riwayat(riwayat: list[dict]) -> str:
     return "\n".join(baris)
 
 
+def _blok_syarat(syarat: dict) -> str:
+    """
+    Syarat lowongan, apa adanya dari kolom jobs.
+
+    KENAPA INI ADA. Sebelum 18 Agustus 2026 yang dikirim ke penilai cuma JUDUL
+    posisi. "Security System" tidak menerangkan apa pun tentang pekerjaannya,
+    sehingga model tidak punya dasar menilai wawancaranya nyambung atau tidak -
+    dan transkrip operator gudang pun lolos dengan nilai bagus di posisi itu.
+    Terlihat sungguhan saat dicoba pemakainya, bukan oleh satu pun uji.
+    """
+    baris = []
+    for kunci, label in (("skill", "Keahlian yang dibutuhkan"),
+                         ("pengalaman", "Pengalaman yang dibutuhkan"),
+                         ("pendidikan", "Pendidikan"),
+                         ("deskripsi", "Uraian pekerjaan")):
+        isi = str(syarat.get(kunci, "")).strip()[:MAKS_SYARAT]
+        if isi:
+            baris.append(f"- {label}: {isi}")
+
+    return "SYARAT POSISI:\n" + "\n".join(baris) + "\n\n" if baris else ""
+
+
+def _blok_pertanyaan(pertanyaan: list) -> str:
+    """
+    Tiga pertanyaan yang BENAR-BENAR diajukan ke kandidat.
+
+    Tanpa ini model tidak bisa melihat bahwa jawabannya tidak menjawab apa pun
+    yang ditanyakan - petunjuk paling terang bahwa transkripnya berasal dari
+    wawancara yang lain.
+    """
+    baris = [
+        f"{i}. {str(p).strip()[:MAKS_PERTANYAAN]}"
+        for i, p in enumerate(pertanyaan[:MAKS_JUMLAH_PERTANYAAN], 1)
+        if str(p).strip()
+    ]
+
+    return "PERTANYAAN YANG DIAJUKAN:\n" + "\n".join(baris) + "\n\n" if baris else ""
+
+
 def nilai_dari_transkrip(
     teks: str,
     kompetensi: list[str],
@@ -166,6 +242,8 @@ def nilai_dari_transkrip(
     riwayat: list[dict] | None = None,
     posisi: str = "",
     skor_cv: float | None = None,
+    syarat: dict | None = None,
+    pertanyaan: list | None = None,
 ) -> Hasil:
     """
     Nilai tiap kompetensi yang diminta CI4, plus rangkum kekuatan dan kelemahan.
@@ -193,6 +271,8 @@ def nilai_dari_transkrip(
         # bobotnya - dan kandidat dinilai semata dari 30 menit bicara.
         + (f"SKOR KECOCOKAN CV TERHADAP LOWONGAN: {skor_cv:.2f} dari 1,00\n\n"
            if skor_cv is not None else "")
+        + _blok_syarat(syarat or {})
+        + _blok_pertanyaan(pertanyaan or [])
         + f"KOMPETENSI YANG DINILAI:\n{daftar}\n\n"
         + f"=== TRANSKRIP WAWANCARA ===\n{teks[:MAKS_TRANSKRIP]}\n=== AKHIR TRANSKRIP ==="
     )
@@ -251,5 +331,19 @@ def nilai_dari_transkrip(
     rek = d.get("rekomendasi")
     rek = rek if rek in REKOMENDASI else None
 
+    # Kecocokan yang tidak dijawab diperlakukan sama dengan 'rendah': tanpa
+    # jawaban itu tidak ada yang tahu wawancaranya nyambung atau tidak, dan
+    # justru itu keadaan yang mau dihindari.
+    kec = d.get("kecocokan")
+    kec = kec if kec in KECOCOKAN else "rendah"
+
+    # DITEGAKKAN DI KODE, bukan cuma diminta lewat aturan 17. Transkrip yang
+    # membahas pekerjaan lain tidak cukup untuk meloloskan MAUPUN
+    # menggugurkan seseorang; keputusannya milik perekrut. Sisi CI4 sudah
+    # memperlakukan rekomendasi kosong sebagai 'flagged', jadi jalurnya ada
+    # dan tidak perlu aturan baru di sana.
+    if kec == "rendah":
+        rek = None
+
     return Hasil(hasil, "selesai", "", narasi("kekuatan"), narasi("kelemahan"),
-                 rek, narasi("alasan_rekomendasi"))
+                 rek, narasi("alasan_rekomendasi"), kec, narasi("alasan_kecocokan"))

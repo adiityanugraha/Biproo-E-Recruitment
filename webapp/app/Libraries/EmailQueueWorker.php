@@ -24,6 +24,7 @@ class EmailQueueWorker
         'hasil_gate'            => 'Hasil Tahap Seleksi E-REQ',
         'undangan_interview'    => 'Undangan Interview E-REQ',
         'jadwal_reschedule'     => 'Interview Anda Perlu Dijadwalkan Ulang',
+        'akun_atasan'           => 'Akun Interview User E-REQ',
     ];
 
     private bool $dryRun;

@@ -108,6 +108,8 @@ final class TranskripCallbackTest extends CIUnitTestCase
                 'catatan'            => $catatan,
                 'rekomendasi'        => $rekomendasi,
                 'alasan_rekomendasi' => 'Menimbang jawaban di transkrip dan kecocokan riwayat kerjanya.',
+                'kecocokan'          => 'tinggi',
+                'alasan_kecocokan'   => 'Menjawab ketiga pertanyaan yang diajukan.',
             ]);
     }
 
@@ -506,6 +508,50 @@ final class TranskripCallbackTest extends CIUnitTestCase
             ->where(['application_id' => $aid, 'stage' => 'gate_2'])->first();
 
         $this->assertLessThanOrEqual(StageLogger::MAKS_ACTOR, mb_strlen((string) $baris['actor']));
+    }
+
+    /**
+     * Sebab kecocokan ikut tercatat saat AI tidak memberi rekomendasi.
+     *
+     * Transkrip wawancara gudang yang diunggah ke posisi Security System dulu
+     * tetap diloloskan dengan nilai bagus. Sekarang ai-service mengosongkan
+     * rekomendasinya, dan yang diuji di sini recruiter benar-benar diberi tahu
+     * SEBABNYA - bukan sekadar "AI tidak memberi rekomendasi", yang membuatnya
+     * mencari-cari masalah di tempat yang salah.
+     */
+    public function testSebabKecocokanRendahIkutDicatat(): void
+    {
+        $aid = $this->fixture();
+
+        $this->withHeaders(['X-Token' => $this->token])->withBodyFormat('json')
+            ->post('interview/callback', [
+                'application_id'   => $aid,
+                'status'           => 'selesai',
+                'teks'             => 'Kandidat: saya cek stok gudang tiap shift.',
+                'penilaian'        => [['kompetensi' => 'Adaptability', 'nilai' => 4, 'alasan' => 'a']],
+                'rekomendasi'      => null,
+                'kecocokan'        => 'rendah',
+                'alasan_kecocokan' => 'Seluruh jawabannya tentang stok gudang, bukan keamanan.',
+            ])->assertStatus(200);
+
+        $note = (new StageHistoryModel())
+            ->where(['application_id' => $aid, 'stage' => 'gate_2'])->first()['note'];
+
+        $this->assertStringContainsString('flagged', $this->gate2($aid) ?? '');
+        $this->assertStringContainsString('Kecocokan wawancara dengan posisi: rendah', $note);
+        $this->assertStringContainsString('bukan keamanan', $note);
+    }
+
+    /** Kecocokan tinggi ikut tercatat juga, sebagai jejak keputusan yang sah. */
+    public function testKecocokanIkutDicatatSaatDiputus(): void
+    {
+        $aid = $this->fixture();
+
+        $this->kirim($aid, rekomendasi: 'recommended');
+
+        $note = (new StageHistoryModel())
+            ->where(['application_id' => $aid, 'stage' => 'gate_2'])->first()['note'];
+        $this->assertStringContainsString('Kecocokan wawancara dengan posisi: tinggi', $note);
     }
 
     // --- keadaan yang TIDAK boleh diputus mesin ---

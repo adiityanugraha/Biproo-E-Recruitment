@@ -56,6 +56,10 @@ final class LembarPenilaian
     /** Asal sebuah nilai, disimpan di interview_penilaian.sumber. */
     public const DARI_AI = 'ai';
     public const DARI_RECRUITER = 'recruiter';
+    // Atasan yang mewawancarai di tahap Interview User (19 Agustus 2026).
+    // Dibedakan dari DARI_RECRUITER karena orangnya memang berbeda, dan
+    // lembar profil menyebut siapa yang memberi tiap nilai.
+    public const DARI_ATASAN = 'atasan';
 
     /**
      * Kompetensi yang dinilai dari transkrip.
@@ -272,6 +276,12 @@ final class LembarPenilaian
         $n = (int) $nilai;
 
         return $n >= 1 && $n <= $maks ? $n : null;
+    }
+
+    /** Rapikan teks isian bebas agar muat di kolom catatan. */
+    public static function rapikan(string $teks): string
+    {
+        return self::bersih($teks);
     }
 
     private static function bersih(string $teks): string

@@ -218,6 +218,18 @@ class AlurRekrutmen
         return $out;
     }
 
+    /**
+     * Apakah lowongan ini memakai Interview User.
+     *
+     * Penentu apakah Gate 2 masih keputusan akhir. Kalau posisinya memakai
+     * Interview User, wawancara HRD hanya menyaring dan yang memutuskan
+     * terakhir atasannya - lihat Interview::putuskan().
+     */
+    public static function pakaiInterviewUser(?string $alurJson): bool
+    {
+        return in_array('interview_user', self::untukLowongan($alurJson), true);
+    }
+
     /** Label satu tahap, atau kuncinya sendiri bila tak dikenal. */
     public static function label(string $kunci): string
     {

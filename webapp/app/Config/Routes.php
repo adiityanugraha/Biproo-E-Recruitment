@@ -30,6 +30,16 @@ $routes->group('', ['filter' => 'candidateauth'], static function ($routes) {
 
 $routes->match(['GET', 'POST'], 'recruiter/login', 'Recruiter::login');
 $routes->get('recruiter/logout', 'Recruiter::logout');
+// Interview User: halaman atasan yang mewawancarai kandidat posisinya sendiri
+// (19 Agustus 2026). Sesinya terpisah dari recruiter - akun ini hanya berhak
+// melihat pelamar SATU lowongan.
+$routes->match(['GET', 'POST'], 'atasan/login', 'Atasan::login');
+$routes->get('atasan/logout', 'Atasan::logout');
+$routes->group('atasan', ['filter' => 'atasanauth'], static function ($routes) {
+    $routes->get('', 'Atasan::index');
+    $routes->match(['GET', 'POST'], 'nilai/(:num)', 'Atasan::nilai/$1');
+});
+
 $routes->group('recruiter', ['filter' => 'recruiterauth'], static function ($routes) {
     $routes->get('', 'Recruiter::index');
     $routes->get('tahap/(:segment)', 'Recruiter::tahap/$1');
