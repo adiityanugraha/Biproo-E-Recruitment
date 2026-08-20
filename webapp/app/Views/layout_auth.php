@@ -27,6 +27,7 @@
   input { width: 100%; padding: 11px 13px; border: 1px solid #e2e6ee; border-radius: 10px; font-size: 14px; font-family: inherit; }
   button { width: 100%; margin-top: 20px; padding: 12px; border: none; border-radius: 10px; cursor: pointer;
            background: #1a1a1a; color: #fff; font-size: 15px; font-weight: 600; font-family: inherit; }
+  .syarat-sandi { font-size: 12px; color: #777; margin: 6px 0 0; }
   .tautan { font-size: 13px; text-align: center; margin-top: 16px; color: #555; }
   .tautan a { color: #F7941D; font-weight: 600; }
   .pesan-error { background: #FDECEC; border: 1px solid #E23B4E; color: #a12734; padding: 10px 12px; border-radius: 10px; margin-bottom: 8px; font-size: 13px; }

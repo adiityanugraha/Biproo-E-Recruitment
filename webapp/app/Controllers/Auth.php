@@ -10,11 +10,30 @@ class Auth extends BaseController
     {
         if ($this->request->is('post')) {
             $rules = [
-                'nama'     => 'required|min_length[3]|max_length[160]',
-                'email'    => 'required|valid_email|is_unique[candidates.email]',
-                'password' => 'required|min_length[8]',
+                'nama'  => 'required|min_length[3]|max_length[160]',
+                'email' => 'required|valid_email|is_unique[candidates.email]',
+                // Bentuk larik, bukan rangkaian berpemisah '|': regexnya memuat
+                // tanda kurung siku, dan aturan yang dirangkai gampang terpotong
+                // di tempat yang salah begitu polanya ditambah.
+                'password' => [
+                    'rules' => [
+                        'required',
+                        'min_length[8]',
+                        // Huruf kecil, huruf besar, dan angka. Tiga kelas ini
+                        // yang menghalangi sandi seperti 'password' dan
+                        // '12345678' - dua yang paling sering dipakai orang.
+                        'regex_match[/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/]',
+                    ],
+                ],
             ];
-            if (! $this->validate($rules, ['email' => ['is_unique' => 'Email sudah terdaftar - silakan login.']])) {
+            $pesan = [
+                'email'    => ['is_unique' => 'Email sudah terdaftar - silakan login.'],
+                'password' => [
+                    'min_length'  => 'Password minimal 8 karakter.',
+                    'regex_match' => 'Password harus memuat huruf besar, huruf kecil, dan angka.',
+                ],
+            ];
+            if (! $this->validate($rules, $pesan)) {
                 return view('auth/daftar', ['errors' => $this->validator->getErrors()]);
             }
 
