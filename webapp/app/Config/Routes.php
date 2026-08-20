@@ -58,6 +58,8 @@ $routes->group('recruiter', ['filter' => 'recruiterauth'], static function ($rou
     // Settings: alur rekrutmen per posisi (18 Agustus 2026). Tiap lowongan
     // punya rangkaian tahapnya sendiri, mengikuti web recruiter BIPROO.
     $routes->get('pengaturan', 'Recruiter::pengaturan');
+    $routes->match(['GET', 'POST'], 'pengaturan/lowongan', 'Recruiter::lowongan');
+    $routes->match(['GET', 'POST'], 'pengaturan/lowongan/(:num)', 'Recruiter::lowongan/$1');
     $routes->match(['GET', 'POST'], 'pengaturan/alur/(:num)', 'Recruiter::alurLowongan/$1');
     $routes->match(['GET', 'POST'], 'review/(:num)', 'Recruiter::review/$1');
     $routes->match(['GET', 'POST'], 'pertanyaan/(:num)', 'Recruiter::pertanyaan/$1');

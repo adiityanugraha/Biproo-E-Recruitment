@@ -57,6 +57,15 @@ use App\Libraries\AlurRekrutmen as A;
               font-family: inherit; font-weight: 600; font-size: 12.5px;
               background: #FDF0D0; color: #8a6d1e; }
   .ket { font-size: 12.5px; color: #666; line-height: 1.65; margin: 0 0 14px; }
+
+  .btn-tambah { padding: 7px 16px; border: none; border-radius: 6px; cursor: pointer;
+                font-family: inherit; font-weight: 600; font-size: 12.5px;
+                background: #1E8E5A; color: #fff; }
+  /* Nama posisi merangkap tautan ke data lowongannya. Tidak diberi tombol
+     sendiri: kolom Action sudah dipakai Edit alur, dan menambah tombol kedua di
+     sana membuat tabelnya menjauh dari tampilan sistem lama tanpa perlu. */
+  table.posisi td.nama a { color: #2E9BDA; font-weight: 600; }
+  table.posisi td.nama a:hover { text-decoration: underline; }
 </style>
 <?= $this->endSection() ?>
 
@@ -71,6 +80,11 @@ use App\Libraries\AlurRekrutmen as A;
   <div class="kunci-warna">
     <span class="k"><i class="k-ass"></i> Assessment</span>
     <span class="k"><i class="k-sel"></i> Selection</span>
+    <span style="margin-left:auto">
+      <a href="<?= site_url('recruiter/pengaturan/lowongan') ?>?bingkai=1"
+         onclick="return bukaJendela(this.href, 'Lowongan Baru')">
+        <button class="btn-tambah">+ Tambah Lowongan</button></a>
+    </span>
   </div>
 
   <p class="ket">
@@ -78,6 +92,11 @@ use App\Libraries\AlurRekrutmen as A;
     ditandai recruiter; sisanya digerakkan sistem dan tidak bisa dicabut - Keputusan Tahap 1,
     Interview HRD, dan Keputusan Akhir dipakai mesin penilai, jadi mencabutnya akan mematikan
     otomatisasinya tanpa ada yang kelihatan.
+  </p>
+
+  <p class="ket">
+    Klik <b>nama posisi</b> untuk mengubah data lowongannya - judul, rumpun, dan kolom syarat
+    yang dibaca mesin penilai. Tombol <b>Edit</b> mengatur rangkaian tahapnya.
   </p>
 
   <?php if ($daftar === []): ?>
@@ -101,7 +120,11 @@ use App\Libraries\AlurRekrutmen as A;
                  onclick="return bukaJendela(this.href, <?= esc(json_encode('Recruitment Progress - ' . $j['judul']), 'attr') ?>)">
                 <button class="btn-edit">Edit</button></a>
             </td>
-            <td class="nama"><?= esc($j['judul']) ?></td>
+            <td class="nama">
+              <a href="<?= site_url('recruiter/pengaturan/lowongan/' . $j['id']) ?>?bingkai=1"
+                 onclick="return bukaJendela(this.href, <?= esc(json_encode('Ubah Lowongan - ' . $j['judul']), 'attr') ?>)"
+                 title="Ubah data lowongan"><?= esc($j['judul']) ?></a>
+            </td>
             <td>
               <div class="alur">
                 <?php foreach ([A::ASSESSMENT => 'ass', A::SELECTION => 'sel'] as $grup => $kelas): ?>

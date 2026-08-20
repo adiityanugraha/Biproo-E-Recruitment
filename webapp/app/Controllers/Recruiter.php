@@ -440,13 +440,24 @@ class Recruiter extends BaseController
      */
     private function pinjamSerumpun(array $job): array
     {
-        $tebakan = KategoriPosisi::tebak((string) $job['judul']);
-        if ($tebakan['kategori'] === null) {
+        // Yang DITULIS di kolomnya menang atas tebakan judul. Sejak lowongan
+        // bisa dibuat lewat form (20 Agustus 2026), rumpunnya dinyatakan
+        // recruiter sendiri; menebak ulang dari judul berarti mengabaikan
+        // pernyataan itu, dan judul buatan sendiri seperti "Staff Operasional
+        // Cabang" tidak memuat satu pun kata kunci - posisinya berdiri tanpa
+        // bank soal cadangan padahal rumpunnya sudah jelas.
+        //
+        // Tebakan judul tetap dipakai untuk lowongan lama yang kolomnya kosong.
+        $rumpun = trim((string) ($job['kategori'] ?? ''));
+        if ($rumpun === '') {
+            $rumpun = (string) (KategoriPosisi::tebak((string) $job['judul'])['kategori'] ?? '');
+        }
+        if ($rumpun === '') {
             return ['pertanyaan' => [], 'dari' => null];
         }
 
         $serumpun = (new JobModel())
-            ->where('kategori', $tebakan['kategori'])
+            ->where('kategori', $rumpun)
             ->where('id !=', $job['id'])
             ->orderBy('id')
             ->findAll();
@@ -1339,6 +1350,138 @@ class Recruiter extends BaseController
             'judul'  => 'Pengaturan Alur Rekrutmen',
             'daftar' => $daftar,
         ]);
+    }
+
+    /**
+     * Buat lowongan baru, atau ubah data lowongan yang sudah ada.
+     *
+     * $jobId null berarti membuat. Satu method untuk keduanya karena formnya
+     * sama persis; yang berbeda cuma barisnya sudah ada atau belum - pola yang
+     * sama dengan Recruiter::alurLowongan.
+     *
+     * KOLOM SYARAT DIWAJIBKAN, dan itu bukan kerewelan form. Tiga bagian
+     * sistem membaca teks yang sama:
+     *
+     *   1. skor kemiripan CV, yang meng-embed keempat kolom;
+     *   2. penyusun pertanyaan interview (PertanyaanKandidat);
+     *   3. sejak 18 Agustus 2026, penilai kecocokan posisi - yang memutuskan
+     *      boleh atau tidaknya AI meloloskan kandidat.
+     *
+     * Syarat yang ditulis "yang penting rajin" tidak membuat sistemnya rusak,
+     * ia membuatnya menjawab dengan yakin dari bahan yang tidak ada. Kolom
+     * pendidikan sengaja TIDAK diwajibkan: seluruh lowongan hasil impor tim DS
+     * mengosongkannya, dan mewajibkannya di sini berarti data yang sudah ada
+     * tidak bisa disunting tanpa mengarang isi.
+     */
+    public function lowongan(?int $jobId = null)
+    {
+        $model = new JobModel();
+        $job   = [];
+        if ($jobId !== null) {
+            $job = $model->find($jobId);
+            if ($job === null) {
+                return redirect()->to('/recruiter/pengaturan')->with('error', 'Lowongan tidak ditemukan.');
+            }
+        }
+        $bingkai  = $this->request->getGet('bingkai') === '1' || $this->request->getPost('bingkai') === '1';
+        $kategori = $this->daftarKategori();
+
+        if ($this->request->getMethod() === 'POST') {
+            $aturan = [
+                'judul'    => 'required|min_length[3]|max_length[160]',
+                'kategori' => 'required|in_list[' . implode(',', $kategori) . ']',
+                // Panjang minimum, bukan sekadar wajib. Kolom yang diisi "-"
+                // memenuhi 'required' dan tetap tidak memberi bahan apa pun
+                // kepada tiga pembacanya.
+                'req_skill'      => 'required|min_length[15]',
+                'req_pengalaman' => 'required|min_length[5]|max_length[160]',
+                'req_pendidikan' => 'permit_empty|max_length[160]',
+                'deskripsi'      => 'permit_empty|max_length[2000]',
+            ];
+            $pesan = [
+                'kategori'  => ['in_list' => 'Rumpun posisi belum dipilih.'],
+                'req_skill' => [
+                    'min_length' => 'Keahlian terlalu pendek. Tulis keahlian yang benar-benar '
+                        . 'diuji, dipisah koma - inilah yang dibaca mesin penilai.',
+                ],
+            ];
+
+            $isi = [
+                'judul'          => trim((string) $this->request->getPost('judul')),
+                'kategori'       => (string) $this->request->getPost('kategori'),
+                'req_skill'      => trim((string) $this->request->getPost('req_skill')),
+                'req_pendidikan' => trim((string) $this->request->getPost('req_pendidikan')),
+                'req_pengalaman' => trim((string) $this->request->getPost('req_pengalaman')),
+                'deskripsi'      => trim((string) $this->request->getPost('deskripsi')),
+            ];
+
+            if (! $this->validate($aturan, $pesan)) {
+                // Yang dikirim balik isian recruiter, bukan baris basis data:
+                // form yang mengosongkan diri sendiri sesudah ditolak membuat
+                // orang mengetik ulang semuanya demi satu kolom yang salah.
+                return view('recruiter/lowongan', [
+                    'judul'    => $jobId === null ? 'Lowongan Baru' : 'Ubah Lowongan',
+                    'job'      => $isi + $job,
+                    'jobId'    => $jobId,
+                    'kategori' => $kategori,
+                    'bingkai'  => $bingkai,
+                    'errors'   => $this->validator->getErrors(),
+                ]);
+            }
+
+            if ($jobId === null) {
+                $jobId = (int) $model->insert($isi);
+                $kabar = 'Lowongan "' . $isi['judul'] . '" dibuat. Alurnya memakai bawaan - '
+                    . 'ubah lewat tombol Edit bila posisi ini perlu tahap lain.';
+            } else {
+                $model->update($jobId, $isi);
+                $kabar = 'Lowongan "' . $isi['judul'] . '" tersimpan.';
+            }
+
+            return redirect()->to('recruiter/pengaturan/lowongan/' . $jobId
+                    . ($bingkai ? '?bingkai=1&tutup=1' : ''))
+                ->with('sukses', $kabar);
+        }
+
+        if ($this->request->getGet('tutup') === '1') {
+            session()->keepFlashdata('sukses');
+
+            return view('recruiter/tutup_jendela');
+        }
+
+        return view('recruiter/lowongan', [
+            'judul'    => $jobId === null ? 'Lowongan Baru' : 'Ubah Lowongan',
+            'job'      => $job,
+            'jobId'    => $jobId,
+            'kategori' => $kategori,
+            'bingkai'  => $bingkai,
+            'errors'   => [],
+        ]);
+    }
+
+    /**
+     * Rumpun yang boleh dipilih: yang dikenali KategoriPosisi DITAMBAH yang
+     * sudah dipakai lowongan lain.
+     *
+     * Bagian kedua yang penting. Lowongan hasil impor tim DS membawa job_family
+     * apa adanya dari CSV mereka, dan daftar itu tidak dijamin sama dengan
+     * kata kunci di KategoriPosisi. Tanpa penggabungan ini, menyunting lowongan
+     * impor akan menolak kategorinya sendiri lalu memaksa recruiter memindahkan
+     * posisi itu ke rumpun lain - diam-diam memutuskannya dari bank soal
+     * serumpunnya.
+     *
+     * @return list<string>
+     */
+    private function daftarKategori(): array
+    {
+        $dipakai = array_column(
+            (new JobModel())->select('kategori')->distinct()->where('kategori IS NOT NULL')->findAll(),
+            'kategori',
+        );
+        $semua = array_values(array_unique(array_merge(KategoriPosisi::rumpun(), array_filter($dipakai))));
+        sort($semua);
+
+        return $semua;
     }
 
     /**

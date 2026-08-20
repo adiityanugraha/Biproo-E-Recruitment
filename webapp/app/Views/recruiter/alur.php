@@ -215,17 +215,9 @@ foreach (array_keys(A::KATALOG) as $kunci) {
   </div>
 </form>
 
+<?= $this->include('partials/tutup_bingkai') ?>
+
 <script>
-  function tutupBingkai() {
-      if (window.parent && window.parent !== window && window.parent.tutupJendela) {
-          window.parent.tutupJendela();
-
-          return false;
-      }
-
-      return true;   // bukan di dalam bingkai: biarkan tautannya berpindah
-  }
-
   // Seret-lepas memakai API bawaan peramban, tanpa pustaka apa pun.
   //
   // Elemennya benar-benar DIPINDAHKAN saat kursor melintas, bukan digambar

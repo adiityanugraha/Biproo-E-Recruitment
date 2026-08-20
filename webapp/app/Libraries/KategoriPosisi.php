@@ -51,6 +51,22 @@ final class KategoriPosisi
     ];
 
     /**
+     * Rumpun yang dikenali, untuk dipilih recruiter saat membuat lowongan.
+     *
+     * Diambil dari kunci KATA_KUNCI supaya cuma ada satu sumber: rumpun yang
+     * bisa ditebak dari judul dan rumpun yang bisa dipilih di form selalu
+     * daftar yang sama. Lowongan hasil impor tim DS bisa memuat job_family di
+     * luar daftar ini; yang menggabungkannya Recruiter::daftarKategori(),
+     * bukan di sini - berkas ini tidak menyentuh basis data.
+     *
+     * @return list<string>
+     */
+    public static function rumpun(): array
+    {
+        return array_keys(self::KATA_KUNCI);
+    }
+
+    /**
      * @return array{kategori: string|null, cocok: bool}
      *         kategori null = tidak ada tebakan sama sekali.
      *         cocok false   = jangan perlakukan hasilnya sebagai kepastian.
