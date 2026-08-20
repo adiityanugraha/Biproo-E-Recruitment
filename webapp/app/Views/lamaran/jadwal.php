@@ -29,7 +29,23 @@ $adaSesiTerbuka = (bool) array_filter($apps, static fn (array $a): bool => $a['l
 <?php foreach ($apps as $app): ?>
   <?php $iv = $app['interview']; ?>
   <div class="kartu">
-    <h2 style="font-size:17px"><?= esc($app['judul']) ?></h2>
+    <?php // Jenis wawancaranya DISEBUT, bukan disimpulkan dari urutan kartu.
+          // Satu lamaran bisa muncul dua kali di halaman ini, dan tanpa penanda
+          // ini kandidat memilih jam untuk wawancara yang salah lalu datang ke
+          // ruangan yang tidak menunggunya. ?>
+    <h2 style="font-size:17px">
+      <?= esc($app['judul']) ?>
+      <span style="display:inline-block;vertical-align:middle;margin-left:8px;font-size:11px;
+                   font-weight:600;padding:3px 10px;border-radius:20px;
+                   background:<?= $app['jenis'] === 'user' ? '#E8F7EE;color:#1d6b3d' : '#DCE9FF;color:#2b4d8a' ?>">
+        <?= $app['jenis'] === 'user' ? 'Interview User' : 'Interview HRD' ?>
+      </span>
+    </h2>
+    <?php if ($app['jenis'] === 'user'): ?>
+      <p style="margin:2px 0 0;font-size:13px;color:#666">
+        Wawancara dengan calon atasan Anda di posisi ini. Anda sudah lolos wawancara bersama tim HRD.
+      </p>
+    <?php endif ?>
 
     <?php if ($iv && $iv['status'] === 'approved'): ?>
       <div style="padding:14px;background:#F3FBF5;border:1px solid #2E9E5B;border-radius:10px">
@@ -76,7 +92,10 @@ $adaSesiTerbuka = (bool) array_filter($apps, static fn (array $a): bool => $a['l
         </div>
       <?php endif ?>
 
-      <?php $adaSlot = false; foreach ($slot as $isi) { foreach ($isi as $s) { if (! $s['terpakai']) { $adaSlot = true; break 2; } } } ?>
+      <?php // Slotnya per JENIS wawancara: pewawancaranya orang yang berbeda,
+            // jadi jam yang penuh untuk HRD belum tentu penuh untuk Interview User. ?>
+      <?php $slotJenis = $slot[$app['jenis']] ?? []; ?>
+      <?php $adaSlot = false; foreach ($slotJenis as $isi) { foreach ($isi as $s) { if (! $s['terpakai']) { $adaSlot = true; break 2; } } } ?>
 
       <?php if (! $adaSlot): ?>
         <p style="color:#666;font-size:14px">Semua slot dalam 7 hari kerja ke depan sudah terisi. Silakan cek lagi besok.</p>
@@ -85,8 +104,9 @@ $adaSesiTerbuka = (bool) array_filter($apps, static fn (array $a): bool => $a['l
           dipilih kandidat lain tidak bisa diambil lagi.</p>
 
         <form method="post" action="<?= site_url('interview/ajukan/' . $app['id']) ?>">
+          <input type="hidden" name="jenis" value="<?= esc($app['jenis'], 'attr') ?>">
           <?= csrf_field() ?>
-          <?php foreach ($slot as $tanggal => $jamJam): ?>
+          <?php foreach ($slotJenis as $tanggal => $jamJam): ?>
             <div style="margin-bottom:12px">
               <div style="font-size:13px;font-weight:600;margin-bottom:6px">
                 <?= esc(date('l, d M Y', strtotime($tanggal))) ?>

@@ -6,6 +6,7 @@ use App\Libraries\LembarPenilaian;
 use App\Libraries\StageLogger;
 use App\Models\AkunAtasanModel;
 use App\Models\ApplicationModel;
+use App\Models\InterviewModel;
 use App\Models\InterviewPenilaianModel;
 use App\Models\InterviewTranskripModel;
 use App\Models\ScreeningResultModel;
@@ -23,17 +24,21 @@ use App\Models\StageHistoryModel;
  * bukan dari parameter URL. Atasan yang mengetik id lamaran orang lain di alamat
  * peramban tetap ditolak, karena yang membatasi bukan tautan yang ia klik.
  *
- * Kompetensinya berbeda dari wawancara HRD: tujuh butir skala 10 (LembarPenilaian
- * ::USER) mengikuti formulir BIPROO, bukan sembilan butir skala 5.
+ * Kompetensinya berbeda dari wawancara HRD: tujuh butir (LembarPenilaian::USER)
+ * mengikuti formulir Interview User BIPROO, bukan sembilan butir lembar HRD.
+ * Skalanya sama-sama 1-5 sejak 19 Agustus 2026.
  */
 class Atasan extends BaseController
 {
     public function login()
     {
         if ($this->request->is('post')) {
-            $akun = (new AkunAtasanModel())->untukEmail((string) $this->request->getPost('email'));
+            $akun = (new AkunAtasanModel())->cocokkan(
+                (string) $this->request->getPost('email'),
+                (string) $this->request->getPost('password'),
+            );
 
-            if ($akun === null || ! password_verify((string) $this->request->getPost('password'), $akun['password_hash'])) {
+            if ($akun === null) {
                 return view('atasan/login', [
                     'judul'  => 'Masuk Interview User',
                     'errors' => ['login' => 'Email atau kata sandi salah.'],
@@ -88,6 +93,10 @@ class Atasan extends BaseController
                 continue;
             }
             $a['diputus'] = $peta['gate_2'] ?? null;
+            // Jadwal yang DIPILIH KANDIDAT, beserta tautan Zoom-nya. Tanpa ini
+            // atasan tahu ada yang harus diwawancarai tapi tidak tahu kapan -
+            // dan menghubungi HRD untuk sesuatu yang datanya sudah ada.
+            $a['jadwal']  = (new InterviewModel())->forApplication((int) $a['id'], InterviewModel::JENIS_USER);
             $daftar[]     = $a;
         }
 
@@ -124,6 +133,7 @@ class Atasan extends BaseController
             'app'       => $app,
             'riwayat'   => is_array($ex['riwayat'] ?? null) ? $ex['riwayat'] : [],
             'transkrip' => (new InterviewTranskripModel())->terakhirUntuk($appId),
+            'jadwal'    => (new InterviewModel())->forApplication($appId, InterviewModel::JENIS_USER),
             'penilaian' => (new InterviewPenilaianModel())->untukLamaran($appId),
             'diputus'   => (new StageHistoryModel())->latestStatus($appId, 'gate_2'),
         ]);

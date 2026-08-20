@@ -10,9 +10,21 @@ callback dibangun di Fase 1. Progres job bisa dicek via `GET /screening/{id}`.
 
 ## Cara Menjalankan
 
+Sekali saja, menyiapkan lingkungannya:
+
 ```
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
+```
+
+Sehari-hari cukup klik dua kali **`ai-service.bat`**, lalu biarkan
+jendelanya terbuka - sama polanya dengan `kirim-email-otomatis.bat` di webapp.
+Berkas itu menolak jalan bila port 8000 sudah dipakai, dan menghidupkan
+layanannya kembali bila ia mati sendiri.
+
+Untuk mengembangkan kodenya (memuat ulang tiap berkas berubah):
+
+```
 .venv\Scripts\uvicorn main:app --reload
 ```
 

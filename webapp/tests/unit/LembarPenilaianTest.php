@@ -21,7 +21,9 @@ final class LembarPenilaianTest extends CIUnitTestCase
     public function testTujuhButirInterviewUser(): void
     {
         $this->assertCount(7, L::USER);
-        $this->assertSame(10, L::MAKS_USER);
+        // Skalanya disamakan dengan lembar HRD 19 Agustus 2026, semula 1-10.
+        $this->assertSame(5, L::MAKS_USER);
+        $this->assertSame(L::MAKS_SKALA, L::MAKS_USER, 'kedua lembar memakai skala yang sama');
     }
 
     public function testNilaiFormDirakitJadiBarisPenilaian(): void

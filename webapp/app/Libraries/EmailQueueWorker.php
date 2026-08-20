@@ -70,6 +70,12 @@ class EmailQueueWorker
                     'status'   => 'sent',
                     'attempts' => $attempts,
                     'sent_at'  => date('Y-m-d H:i:s'),
+                    // Rahasia dibuang begitu emailnya terkirim. Payload email
+                    // akun atasan memuat sandi MENTAH - ia harus ada sampai
+                    // badan emailnya dirakit, tapi sesudah itu tidak ada lagi
+                    // gunanya, sementara barisnya tinggal di basis data
+                    // selamanya dan terbaca siapa pun yang bisa membacanya.
+                    'payload_json' => $this->tanpaRahasia($row['payload_json']),
                 ]);
                 $result['sent']++;
             } catch (Throwable $e) {
@@ -83,6 +89,24 @@ class EmailQueueWorker
         }
 
         return $result;
+    }
+
+    /** Kunci payload yang tidak boleh tertinggal di basis data setelah terkirim. */
+    private const RAHASIA = ['sandi'];
+
+    private function tanpaRahasia(string $payloadJson): string
+    {
+        $d = json_decode($payloadJson, true);
+        if (! is_array($d)) {
+            return $payloadJson;
+        }
+        foreach (self::RAHASIA as $kunci) {
+            if (isset($d[$kunci])) {
+                $d[$kunci] = '(dibuang setelah terkirim)';
+            }
+        }
+
+        return json_encode($d);
     }
 
     protected function deliver(string $to, string $subject, string $body): void

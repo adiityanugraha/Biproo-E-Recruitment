@@ -351,12 +351,22 @@ class Lamaran extends BaseController
         $history   = new StageHistoryModel();
         $interview = new InterviewModel();
         $lolos     = [];
+
+        // SATU LAMARAN BISA MUNCUL DUA KALI di halaman ini, dan itu disengaja:
+        // wawancara HRD dan Interview User dijadwalkan terpisah, pewawancaranya
+        // orang yang berbeda, dan kandidat memilih slotnya sendiri-sendiri.
+        // Menggabungkannya jadi satu baris membuat kandidat yang sudah selesai
+        // dengan HRD melihat jadwal lamanya, bukan undangan berikutnya.
         foreach ($apps as $app) {
-            if ($history->latestStatus($app['id'], 'gate_1') === 'passed') {
-                $iv                = $interview->forApplication($app['id']);
-                $app['interview']  = $iv;
-                $app['link_aktif'] = InterviewModel::siapDimasuki($iv);
-                $lolos[]           = $app;
+            $peta = $history->latestStatusMap((int) $app['id']);
+
+            if (($peta['gate_1'] ?? null) === 'passed') {
+                $lolos[] = $this->barisJadwal($app, $interview, InterviewModel::JENIS_HRD);
+            }
+            // Interview User baru ditawarkan setelah tahap HRD-nya lolos -
+            // penandanya baris interview_user yang ditulis Interview::putuskan.
+            if (($peta['interview_user'] ?? null) !== null) {
+                $lolos[] = $this->barisJadwal($app, $interview, InterviewModel::JENIS_USER);
             }
         }
 
@@ -364,8 +374,15 @@ class Lamaran extends BaseController
             'apps' => $lolos,
             // slot yang sudah dipegang kandidat lain ikut ditampilkan tapi mati,
             // supaya kandidat tahu jam itu memang sudah terisi - bukan hilang
-            // begitu saja seolah sistemnya tidak menawarkan jam tersebut
-            'slot' => SlotJadwal::perTanggal($interview->slotTerpakai()),
+            // begitu saja seolah sistemnya tidak menawarkan jam tersebut.
+            //
+            // Dipisah per jenis: pewawancaranya orang yang berbeda, jadi jam
+            // yang penuh untuk wawancara HRD belum tentu penuh untuk Interview
+            // User.
+            'slot' => [
+                InterviewModel::JENIS_HRD  => SlotJadwal::perTanggal($interview->slotTerpakai(InterviewModel::JENIS_HRD)),
+                InterviewModel::JENIS_USER => SlotJadwal::perTanggal($interview->slotTerpakai(InterviewModel::JENIS_USER)),
+            ],
         ]);
     }
 
@@ -378,18 +395,48 @@ class Lamaran extends BaseController
      * di jam itu, jadi langkah acc cuma menunda kandidat tanpa menambah
      * keputusan apa pun. Meeting Zoom dibuat saat itu juga.
      */
+    /**
+     * Satu baris di halaman jadwal: lamaran + jenis wawancaranya.
+     *
+     * @param  array<string, mixed> $app
+     * @return array<string, mixed>
+     */
+    private function barisJadwal(array $app, InterviewModel $interview, string $jenis): array
+    {
+        $iv                = $interview->forApplication((int) $app['id'], $jenis);
+        $app['jenis']      = $jenis;
+        $app['interview']  = $iv;
+        $app['link_aktif'] = InterviewModel::siapDimasuki($iv);
+
+        return $app;
+    }
+
     public function ajukanInterview(int $appId)
     {
         $app = $this->lamaranDetailMilikSendiri($appId);
         if ($app === null) {
             return redirect()->to('/jadwal')->with('error', 'Lamaran tidak ditemukan.');
         }
-        if ((new StageHistoryModel())->latestStatus($appId, 'gate_1') !== 'passed') {
+        // Jenis wawancara ikut dikirim form, dan SYARATNYA BERBEDA: wawancara
+        // HRD dibuka oleh Gate 1, Interview User oleh selesainya tahap HRD.
+        // Kandidat yang mem-POST 'user' tanpa pernah lolos wawancara HRD
+        // tersaring di sini, bukan cuma tidak melihat tombolnya.
+        $jenis = $this->request->getPost('jenis') === InterviewModel::JENIS_USER
+            ? InterviewModel::JENIS_USER
+            : InterviewModel::JENIS_HRD;
+
+        $peta = (new StageHistoryModel())->latestStatusMap($appId);
+        if ($jenis === InterviewModel::JENIS_USER) {
+            if (($peta['interview_user'] ?? null) === null) {
+                return redirect()->to('/jadwal')->with('error',
+                    'Jadwal Interview User baru bisa dipilih setelah Anda lolos wawancara HRD.');
+            }
+        } elseif (($peta['gate_1'] ?? null) !== 'passed') {
             return redirect()->to('/jadwal')->with('error', 'Pilih jadwal interview hanya setelah lolos Tahap 1.');
         }
 
         $interview = new InterviewModel();
-        $iv        = $interview->forApplication($appId);
+        $iv        = $interview->forApplication($appId, $jenis);
         if ($iv !== null && in_array($iv['status'], ['requested', 'approved'], true)) {
             return redirect()->to('/jadwal')->with('error', 'Sudah ada jadwal interview untuk lamaran ini.');
         }
@@ -400,7 +447,7 @@ class Lamaran extends BaseController
         if (! SlotJadwal::sah($slot)) {
             return redirect()->to('/jadwal')->with('error', 'Slot itu tidak tersedia. Silakan pilih dari daftar.');
         }
-        if (in_array($slot, $interview->slotTerpakai(), true)) {
+        if (in_array($slot, $interview->slotTerpakai($jenis), true)) {
             return redirect()->to('/jadwal')->with('error', 'Slot itu baru saja diambil kandidat lain. Silakan pilih jam lain.');
         }
 
@@ -408,7 +455,8 @@ class Lamaran extends BaseController
 
         try {
             $meeting = service('zoomService')->createMeeting(
-                'Interview - ' . $app['nama'] . ' - ' . $app['judul'],
+                ($jenis === InterviewModel::JENIS_USER ? 'Interview User - ' : 'Interview HRD - ')
+                    . $app['nama'] . ' - ' . $app['judul'],
                 $dt->format('Y-m-d\TH:i:s'),
             );
         } catch (ZoomException $e) {
@@ -419,6 +467,7 @@ class Lamaran extends BaseController
 
         $data = [
             'application_id' => $appId,
+            'jenis'          => $jenis,
             'status'         => 'approved',
             'scheduled_at'   => $dt->format('Y-m-d H:i:s'),
             'meeting_id'     => $meeting['meeting_id'],

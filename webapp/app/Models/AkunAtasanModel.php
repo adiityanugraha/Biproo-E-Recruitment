@@ -32,10 +32,34 @@ class AkunAtasanModel extends Model
         return $this->where('job_id', $jobId)->first();
     }
 
-    /** @return array<string, mixed>|null */
-    public function untukEmail(string $email): ?array
+    /**
+     * Akun yang cocok dengan email DAN sandinya.
+     *
+     * Satu orang bisa jadi atasan di LEBIH DARI SATU posisi - Head Developer
+     * yang membuka dua lowongan sekaligus - dan tiap posisi punya akunnya
+     * sendiri dengan sandi sendiri. Karena itu email saja tidak cukup untuk
+     * menentukan akun mana yang dimaksud.
+     *
+     * Versi pertama mengambil baris PERTAMA yang emailnya cocok, dan itu
+     * membuat orang yang memakai sandi posisi keduanya selalu ditolak - sandi
+     * benar, tapi dibandingkan dengan hash akun yang lain. Terlihat sungguhan
+     * 19 Agustus 2026 saat satu email dipakai dua posisi.
+     *
+     * Sandinya yang menentukan posisi mana yang dibuka. Itu bukan kebetulan:
+     * tiap akun menerima sandi acaknya sendiri, jadi tidak mungkin satu sandi
+     * cocok ke dua akun.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function cocokkan(string $email, string $sandi): ?array
     {
-        return $this->where('email', $email)->first();
+        foreach ($this->where('email', $email)->findAll() as $akun) {
+            if (password_verify($sandi, $akun['password_hash'])) {
+                return $akun;
+            }
+        }
+
+        return null;
     }
 
     /** Sandi acak yang bisa dibaca ulang orang tanpa salah ketik. */

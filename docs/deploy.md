@@ -272,7 +272,11 @@ bukan keputusan Anda, jadi tanyakan ke atasan sedini mungkin.
       yaitu jendela CMD yang harus dibiarkan terbuka. Di server diganti Task
       Scheduler yang memanggil `php spark email:send` tiap menit.
 
-- [ ] **`ai-service` dijalankan sebagai layanan**, bukan uvicorn di terminal,
+- [ ] **`ai-service` dijalankan sebagai layanan**, bukan uvicorn di terminal
+      maupun `ai-service.bat`. Berkas .bat itu jalan tengah untuk
+      mesin pengembangan - ia menghidupkan layanan kembali bila mati, tapi
+      tetap menuntut satu jendela dibiarkan terbuka dan ikut tertutup saat
+      orangnya logout. Di server dipakai NSSM atau Task Scheduler,
       supaya hidup lagi sendiri setelah server restart. Isi `GEMINI_API_KEY` di
       `ai-service/.env`, dan pastikan token bersamanya sama persis dengan
       `aiservice.sharedToken` di `webapp/.env`.

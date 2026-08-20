@@ -103,22 +103,43 @@ final class PertanyaanInterviewTest extends CIUnitTestCase
      * menampilkan halaman kosong atau error: rutenya sudah tidak dikenal, jadi
      * pengunjung dikembalikan ke dashboard.
      */
-    public function testInterviewUserSudahTidakBisaDibuka(): void
+    /**
+     * Interview User punya halamannya sendiri (19 Agustus 2026).
+     *
+     * Sampai 18 Agustus tahap ini sengaja dimatikan - waktu itu ia belum punya
+     * jadwal maupun pewawancara sendiri. Sekarang keduanya ada: kolom
+     * interviews.jenis memisahkan jadwalnya dari jadwal HRD, dan atasan
+     * menilainya lewat akunnya sendiri.
+     */
+    public function testInterviewUserPunyaHalamanSendiri(): void
     {
         $jid = $this->job();
         $this->kandidatTerjadwal($jid);
 
-        $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_user')
-            ->assertRedirectTo(site_url('recruiter'));
+        $html = (string) $this->withSession($this->sesiRec)
+            ->get('recruiter/tahap/interview_user')->getBody();
+
+        $this->assertStringContainsString('Interview User', $html);
     }
 
-    /** Menunya tetap terlihat tapi mati, seperti FPK dan Job Posting. */
-    public function testMenuInterviewUserTampilTapiNonaktif(): void
+    /** Tata letak tabnya sama dengan Interview HRD: terjadwal, dilepas, selesai. */
+    public function testInterviewUserPunyaTigaTabYangSamaDenganHrd(): void
+    {
+        $html = (string) $this->withSession($this->sesiRec)
+            ->get('recruiter/tahap/interview_user')->getBody();
+
+        foreach (['On Progress', 'Rescheduled', 'Completed'] as $tab) {
+            $this->assertStringContainsString($tab, $html);
+        }
+        $this->assertStringNotContainsString('>Passed<', $html, 'yang terjadwal belum lolos apa-apa');
+    }
+
+    /** Menunya di dashboard sekarang benar-benar mengarah ke sana. */
+    public function testMenuInterviewUserTerhubung(): void
     {
         $html = (string) $this->withSession($this->sesiRec)->get('recruiter')->getBody();
 
-        $this->assertStringContainsString('Interview User', $html);
-        $this->assertStringNotContainsString('recruiter/tahap/interview_user', $html);
+        $this->assertStringContainsString('recruiter/tahap/interview_user', $html);
     }
 
     /** Interview HRD tetap punya tiga tabnya. */

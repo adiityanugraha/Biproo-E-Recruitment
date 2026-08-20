@@ -88,10 +88,10 @@ class Recruiter extends BaseController
             ],
             'selectionSteps' => [
                 ['Interview HRD', '👔', site_url('recruiter/tahap/interview_online')],
-                // Dinonaktifkan 6 Agustus 2026: Interview User ternyata tahap
-                // tersendiri yang tidak menumpang jadwal HRD, dan bank
-                // pertanyaannya sudah pindah ke Interview HRD.
-                ['Interview User', '💬', null],
+                // Dinyalakan 19 Agustus 2026. Benar bahwa ia tahap tersendiri
+                // yang tidak menumpang jadwal HRD - dan sekarang memang punya
+                // jadwalnya sendiri (interviews.jenis) serta halaman atasannya.
+                ['Interview User', '💬', site_url('recruiter/tahap/interview_user')],
                 ['On Job Training', '🛠️', null],
                 ['Training Class', '🎓', null],
                 ['Input Data & Berkas', '🗂️', site_url('recruiter/tahap/berkas_kontrak')],
@@ -136,6 +136,7 @@ class Recruiter extends BaseController
             'upload_cv'         => 'Upload CV',
             'online_assessment' => 'Tes Intelegensi Umum 5',
             'interview_online'  => 'Interview HRD',
+            'interview_user'    => 'Interview User',
             'berkas_kontrak'    => 'Input Data & Berkas',
         ];
         if (! isset($valid[$stage])) {
@@ -150,10 +151,11 @@ class Recruiter extends BaseController
         $status  = $this->tabAktif($stage, $satuTab);
 
         // Dua sumber baris yang berbeda, bukan dua cabang dari sumber yang sama.
-        // Interview HRD dibaca dari JADWAL (tabel interviews), tahap lain dari
-        // RIWAYAT tahapan. Karena itu keduanya dipisah jadi method sendiri.
-        if ($stage === 'interview_online') {
-            $ivMap = $this->jadwalPerTab($status);
+        // Kedua tahap wawancara dibaca dari JADWAL (tabel interviews), tahap lain
+        // dari RIWAYAT tahapan. Karena itu keduanya dipisah jadi method sendiri.
+        $jenis = self::JENIS_TAHAP[$stage] ?? null;
+        if ($jenis !== null) {
+            $ivMap = $this->jadwalPerTab($status, $jenis);
             $ids   = array_keys($ivMap);
         } else {
             $ivMap = [];
@@ -164,7 +166,7 @@ class Recruiter extends BaseController
             'stage'  => $stage,
             'judul'  => $valid[$stage],
             'status' => $status,
-            'daftar' => $this->barisTabel($ids, $ivMap, $stage === 'interview_online' && $status === 'completed'),
+            'daftar' => $this->barisTabel($ids, $ivMap, $jenis !== null && $status === 'completed'),
         ]);
     }
 
@@ -175,6 +177,19 @@ class Recruiter extends BaseController
      * lama diarahkan ke penggantinya, bukan dibiarkan jatuh diam-diam ke
      * On Progress dan menampilkan daftar yang salah.
      */
+    /**
+     * Tahap yang barisnya dibaca dari JADWAL, beserta jenis wawancaranya.
+     *
+     * Keduanya memakai tabel interviews dan tata letak tab yang sama - terjadwal,
+     * dilepas, selesai - yang membedakan hanya siapa yang mewawancarai. Ditulis
+     * sebagai peta supaya percabangan 'stage === interview_online' yang berserak
+     * tidak perlu digandakan tiap kali tahap wawancara bertambah.
+     */
+    private const JENIS_TAHAP = [
+        'interview_online' => InterviewModel::JENIS_HRD,
+        'interview_user'   => InterviewModel::JENIS_USER,
+    ];
+
     private function tabAktif(string $stage, bool $satuTab): string
     {
         if ($satuTab) {
@@ -184,7 +199,10 @@ class Recruiter extends BaseController
         $req    = $this->request->getGet('status');
         $status = in_array($req, ['passed', 'failed', 'rescheduled', 'completed'], true) ? $req : 'progress';
 
-        return $stage === 'interview_online'
+        // Tahap wawancara tidak punya Passed/Failed: yang terjadwal belum lolos
+        // apa-apa, dan jadwal yang dilepas bukan kandidat yang gugur. Tautan lama
+        // yang masih memakai ?status=passed dialihkan ke tab yang setara.
+        return isset(self::JENIS_TAHAP[$stage])
             ? (['passed' => 'progress', 'failed' => 'rescheduled'][$status] ?? $status)
             : $status;
     }
@@ -206,9 +224,9 @@ class Recruiter extends BaseController
      *
      * @return array<int, array<string, mixed>> application_id => baris interview
      */
-    private function jadwalPerTab(string $status): array
+    private function jadwalPerTab(string $status, string $jenis = InterviewModel::JENIS_HRD): array
     {
-        $q = new InterviewModel();
+        $q = (new InterviewModel())->where('jenis', $jenis);
 
         // Batas dihitung di PHP, bukan CURRENT_TIMESTAMP. Sejak appTimezone
         // diperbaiki ke Asia/Jakarta, jam PHP dan jam DB sama, sedangkan
@@ -612,10 +630,17 @@ class Recruiter extends BaseController
         if ($app === null) {
             return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
         }
-        $kembali = '/recruiter/tahap/interview_online?status=passed';
+        // Jenis wawancara mana yang dilepas ikut dikirim form. Tanpa ini
+        // melepas jadwal Interview User akan mencabut jadwal HRD-nya - dua
+        // wawancara berbeda yang kebetulan milik lamaran yang sama.
+        $jenis = $this->request->getPost('jenis') === InterviewModel::JENIS_USER
+            ? InterviewModel::JENIS_USER
+            : InterviewModel::JENIS_HRD;
+        $kembali = '/recruiter/tahap/'
+            . ($jenis === InterviewModel::JENIS_USER ? 'interview_user' : 'interview_online');
 
         $interview = new InterviewModel();
-        $iv        = $interview->forApplication($appId);
+        $iv        = $interview->forApplication($appId, $jenis);
         if ($iv === null || $iv['status'] !== 'approved') {
             return redirect()->to($kembali)->with('error', 'Tidak ada jadwal interview aktif untuk lamaran ini.');
         }

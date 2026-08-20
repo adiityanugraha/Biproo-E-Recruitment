@@ -96,7 +96,19 @@ final class LembarPenilaian
         'Stabilitas dari pekerjaan sebelumnya',
     ];
 
-    public const MAKS_USER = 10;
+    /**
+     * Skala Interview User: 1-5, sama dengan lembar HRD (19 Agustus 2026).
+     *
+     * Semula 1-10. Disamakan atas permintaan, dan hasilnya lebih baik: satu
+     * orang yang membaca lembar profil tidak lagi harus mengingat bahwa 7 di
+     * bagian atas berarti sesuatu yang lain dari 7 di bagian bawah.
+     *
+     * Tetap konstanta tersendiri walau nilainya kebetulan sama dengan
+     * MAKS_SKALA: keduanya mengikuti DUA formulir BIPROO yang berbeda, dan
+     * menyatukannya membuat perubahan pada salah satunya diam-diam menggeser
+     * yang lain.
+     */
+    public const MAKS_USER = 5;
 
     /** Kotak isian bebas di bawah tabel kompetensi. */
     public const NARASI = [

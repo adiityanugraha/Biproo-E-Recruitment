@@ -19,7 +19,17 @@ class InterviewModel extends Model
     public const TUTUP_MENIT = 30;
 
     protected $table         = 'interviews';
-    protected $allowedFields  = ['application_id', 'status', 'scheduled_at', 'meeting_id', 'join_url', 'start_url', 'recording_url'];
+    protected $allowedFields  = ['application_id', 'jenis', 'status', 'scheduled_at', 'meeting_id', 'join_url', 'start_url', 'recording_url'];
+
+    /**
+     * Wawancara oleh recruiter, dan wawancara oleh calon atasan.
+     *
+     * Dua-duanya memakai tabel dan alur penjadwalan yang sama - kandidat
+     * memilih slot, Zoom dibuatkan seketika - yang berbeda siapa yang
+     * mewawancarai dan di layar siapa tautannya muncul.
+     */
+    public const JENIS_HRD  = 'hrd';
+    public const JENIS_USER = 'user';
 
     protected $validationRules = [
         'application_id' => 'required|is_natural_no_zero',
@@ -30,10 +40,19 @@ class InterviewModel extends Model
         'scheduled_at'   => 'required|valid_date',
     ];
 
-    /** Ajuan/jadwal terkini sebuah lamaran (satu baris per lamaran). */
-    public function forApplication(int $applicationId): ?array
+    /**
+     * Jadwal terkini sebuah lamaran untuk SATU jenis wawancara.
+     *
+     * Jenisnya wajib disebut lewat bawaan 'hrd', bukan diambil yang terbaru:
+     * sejak Interview User punya jadwalnya sendiri, "yang terbaru" akan
+     * mengembalikan jadwal atasan kepada ruang interview HRD - lengkap dengan
+     * tautan Zoom ke ruangan yang salah.
+     */
+    public function forApplication(int $applicationId, string $jenis = self::JENIS_HRD): ?array
     {
-        return $this->where('application_id', $applicationId)->orderBy('id', 'DESC')->first();
+        return $this->where('application_id', $applicationId)
+            ->where('jenis', $jenis)
+            ->orderBy('id', 'DESC')->first();
     }
 
     /**
@@ -49,9 +68,13 @@ class InterviewModel extends Model
      *
      * @return list<string>
      */
-    public function slotTerpakai(): array
+    public function slotTerpakai(string $jenis = self::JENIS_HRD): array
     {
+        // Disaring per JENIS: pewawancaranya orang yang berbeda, jadi wawancara
+        // HRD pukul 10.00 tidak menghalangi Interview User pukul 10.00. Indeks
+        // uniknya di basis data memakai pasangan kolom yang sama.
         $baris = $this->select('scheduled_at')
+            ->where('jenis', $jenis)
             ->whereIn('status', ['requested', 'approved'])
             ->findAll();
 

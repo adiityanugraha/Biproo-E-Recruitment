@@ -79,8 +79,8 @@ final class InterviewUserTest extends CIUnitTestCase
         return $aid;
     }
 
-    /** @return array<string, mixed> tujuh nilai penuh */
-    private function nilaiPenuh(int $n = 8): array
+    /** @return array<string, mixed> tujuh nilai penuh, skala 1-5 seperti lembar HRD */
+    private function nilaiPenuh(int $n = 4): array
     {
         return ['nilai' => array_fill(0, count(L::USER), $n)];
     }
@@ -218,6 +218,70 @@ final class InterviewUserTest extends CIUnitTestCase
         $this->assertStringContainsString('auth-wrap', $html);
     }
 
+    /**
+     * Satu orang bisa jadi atasan di LEBIH DARI SATU posisi.
+     *
+     * Versi pertama mencari akun lewat email saja lalu mengambil baris pertama,
+     * sehingga sandi posisi kedua selalu ditolak - sandinya benar, tapi
+     * dibandingkan dengan hash akun yang lain. Terjadi sungguhan 19 Agustus
+     * 2026 pada satu email yang dipakai dua posisi.
+     */
+    public function testSatuEmailDuaPosisiMasukKeAkunYangBenar(): void
+    {
+        $satu = $this->lowongan();
+        $dua  = $this->lowongan();
+        $model = new AkunAtasanModel();
+        $sandiSatu = $model->terbitkan($satu, 'Head Developer', 'head@example.com');
+        $sandiDua  = $model->terbitkan($dua, 'Head Developer', 'head@example.com');
+
+        $a = $model->cocokkan('head@example.com', $sandiSatu);
+        $b = $model->cocokkan('head@example.com', $sandiDua);
+
+        $this->assertSame($satu, (int) $a['job_id'], 'sandi posisi pertama membuka posisi pertama');
+        $this->assertSame($dua, (int) $b['job_id'], 'sandi posisi kedua membuka posisi kedua');
+        $this->assertNull($model->cocokkan('head@example.com', 'sandi-ngawur'));
+    }
+
+    /** Masuk lewat HTTP membawa job_id akun yang cocok, bukan yang pertama ketemu. */
+    public function testLoginMembawaPosisiMilikSandinya(): void
+    {
+        $this->lowongan();                 // akun pertama, tidak dipakai
+        $dua   = $this->lowongan();
+        $model = new AkunAtasanModel();
+        $model->terbitkan($this->lowongan(), 'Head', 'head@example.com');
+        $sandi = $model->terbitkan($dua, 'Head', 'head@example.com');
+
+        $this->post('atasan/login', ['email' => 'head@example.com', 'password' => $sandi])
+            ->assertRedirectTo(site_url('atasan'));
+
+        $this->assertSame($dua, (int) session('atasan_job_id'));
+    }
+
+    /**
+     * Sandi mentah tidak boleh tertinggal di antrian email setelah terkirim.
+     *
+     * Payload email akun atasan MEMUAT sandi terbaca - ia harus ada sampai
+     * badan emailnya dirakit. Tanpa dibuang, barisnya tinggal di basis data
+     * selamanya dan terbaca siapa pun yang bisa membaca tabel itu, termasuk
+     * HRD yang justru tidak boleh melihatnya.
+     */
+    public function testSandiDibuangDariAntrianSetelahTerkirim(): void
+    {
+        $jobId = $this->lowongan();
+        $sandi = (new AkunAtasanModel())->terbitkan($jobId, 'Head', 'head@example.com');
+        (new EmailQueueModel())->insert([
+            'to_email' => 'head@example.com', 'template' => 'akun_atasan',
+            'payload_json' => json_encode(['nama' => 'Head', 'posisi' => 'X',
+                'email' => 'head@example.com', 'sandi' => $sandi, 'url' => 'http://x/atasan/login']),
+        ]);
+
+        (new \App\Libraries\EmailQueueWorker(true))->process();
+
+        $baris = (new EmailQueueModel())->where('template', 'akun_atasan')->first();
+        $this->assertSame('sent', $baris['status']);
+        $this->assertStringNotContainsString($sandi, $baris['payload_json']);
+    }
+
     // --- Gate 2 berhenti jadi keputusan akhir ---
 
     /**
@@ -323,7 +387,7 @@ final class InterviewUserTest extends CIUnitTestCase
         $aid   = $this->menungguAtasan($jobId);
 
         $this->withSession($this->sesiAtasan($jobId))
-            ->post('atasan/nilai/' . $aid, $this->nilaiPenuh(9) + ['keputusan' => 'lolos']);
+            ->post('atasan/nilai/' . $aid, $this->nilaiPenuh(5) + ['keputusan' => 'lolos']);
 
         $sh = new StageHistoryModel();
         $this->assertSame('passed', $sh->latestStatus($aid, 'gate_2'));
@@ -338,7 +402,7 @@ final class InterviewUserTest extends CIUnitTestCase
         $aid   = $this->menungguAtasan($jobId);
 
         $this->withSession($this->sesiAtasan($jobId))
-            ->post('atasan/nilai/' . $aid, $this->nilaiPenuh(3) + ['keputusan' => 'gagal']);
+            ->post('atasan/nilai/' . $aid, $this->nilaiPenuh(2) + ['keputusan' => 'gagal']);
 
         $sh = new StageHistoryModel();
         $this->assertSame('failed', $sh->latestStatus($aid, 'gate_2'));
@@ -351,14 +415,14 @@ final class InterviewUserTest extends CIUnitTestCase
         $aid   = $this->menungguAtasan($jobId);
 
         $this->withSession($this->sesiAtasan($jobId))
-            ->post('atasan/nilai/' . $aid, $this->nilaiPenuh(7) + ['keputusan' => 'lolos']);
+            ->post('atasan/nilai/' . $aid, $this->nilaiPenuh(4) + ['keputusan' => 'lolos']);
 
         $baris = (new InterviewPenilaianModel())
             ->where(['application_id' => $aid, 'sumber' => L::DARI_ATASAN])->findAll();
 
         $this->assertCount(count(L::USER), $baris);
         $this->assertSame(L::KAT_USER, $baris[0]['kategori']);
-        $this->assertSame('7', $baris[0]['tingkat']);
+        $this->assertSame('4', $baris[0]['tingkat']);
     }
 
     /**
@@ -378,14 +442,14 @@ final class InterviewUserTest extends CIUnitTestCase
             ->where(['application_id' => $aid, 'sumber' => L::DARI_ATASAN])->findAll());
     }
 
-    /** Nilai di luar skala 1-10 diperlakukan sama dengan kosong. */
+    /** Nilai di luar skala 1-5 diperlakukan sama dengan kosong. */
     public function testNilaiDiLuarSkalaDitolak(): void
     {
         $jobId = $this->lowongan();
         $aid   = $this->menungguAtasan($jobId);
 
         $this->withSession($this->sesiAtasan($jobId))
-            ->post('atasan/nilai/' . $aid, $this->nilaiPenuh(11) + ['keputusan' => 'lolos']);
+            ->post('atasan/nilai/' . $aid, $this->nilaiPenuh(6) + ['keputusan' => 'lolos']);
 
         $this->assertNull((new StageHistoryModel())->latestStatus($aid, 'gate_2'));
     }
@@ -397,7 +461,7 @@ final class InterviewUserTest extends CIUnitTestCase
         $aid   = $this->menungguAtasan($jobId);
         $sesi  = $this->sesiAtasan($jobId);
 
-        $this->withSession($sesi)->post('atasan/nilai/' . $aid, $this->nilaiPenuh(9) + ['keputusan' => 'lolos']);
+        $this->withSession($sesi)->post('atasan/nilai/' . $aid, $this->nilaiPenuh(5) + ['keputusan' => 'lolos']);
         $this->withSession($sesi)->post('atasan/nilai/' . $aid, $this->nilaiPenuh(2) + ['keputusan' => 'gagal']);
 
         $this->assertSame('passed', (new StageHistoryModel())->latestStatus($aid, 'gate_2'));
@@ -427,6 +491,218 @@ final class InterviewUserTest extends CIUnitTestCase
             $this->assertFileExists(APPPATH . 'Views/emails/' . $template . '.php',
                 $template . ' tidak punya berkas view');
         }
+    }
+
+    // --- halaman Interview User di sisi recruiter ---
+
+    /** Jadwal Interview User TIDAK muncul di tabel Interview HRD, dan sebaliknya. */
+    public function testTabelHrdDanUserTidakSalingBocor(): void
+    {
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+        $model = new \App\Models\InterviewModel();
+        $model->insert(['application_id' => $aid, 'jenis' => 'hrd', 'status' => 'approved',
+            'scheduled_at' => '2030-05-05 09:00:00', 'meeting_id' => 'h1', 'join_url' => 'https://zoom.us/j/h1']);
+        $model->insert(['application_id' => $aid, 'jenis' => 'user', 'status' => 'approved',
+            'scheduled_at' => '2030-05-05 14:00:00', 'meeting_id' => 'u1', 'join_url' => 'https://zoom.us/j/u1']);
+
+        $hrd  = (string) $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_online')->getBody();
+        $user = (string) $this->withSession($this->sesiRec)->get('recruiter/tahap/interview_user')->getBody();
+
+        // Tabel recruiter memformat jadwal tanpa koma (lihat tahap.php).
+        $this->assertStringContainsString('05 May 2030 09:00', $hrd);
+        $this->assertStringNotContainsString('05 May 2030 14:00', $hrd);
+        $this->assertStringContainsString('05 May 2030 14:00', $user);
+        $this->assertStringNotContainsString('05 May 2030 09:00', $user);
+    }
+
+    /** Tab Completed menampilkan keputusan atasannya, sama seperti Interview HRD. */
+    public function testTabCompletedMenampilkanKeputusanAtasan(): void
+    {
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+        (new \App\Models\InterviewModel())->insert([
+            'application_id' => $aid, 'jenis' => 'user', 'status' => 'approved',
+            'scheduled_at' => '2020-05-05 14:00:00', 'meeting_id' => 'u1',
+        ]);
+
+        $belum = (string) $this->withSession($this->sesiRec)
+            ->get('recruiter/tahap/interview_user?status=completed')->getBody();
+        $this->assertStringContainsString('menunggu penilaian atasan', $belum);
+
+        (new StageLogger())->log($aid, 'gate_2', 'passed', 'atasan:Head');
+
+        $sudah = (string) $this->withSession($this->sesiRec)
+            ->get('recruiter/tahap/interview_user?status=completed')->getBody();
+        $this->assertStringContainsString('Diterima', $sudah);
+    }
+
+    /**
+     * Recruiter tidak diberi tombol memutuskan di tahap ini.
+     *
+     * Keputusannya sengaja diserahkan ke atasan. Menaruh tombolnya di sini akan
+     * membuat recruiter diam-diam memutuskan hal yang justru dipindahkan
+     * kepadanya.
+     */
+    public function testRecruiterTidakBisaMemutuskanDariTabelInterviewUser(): void
+    {
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+        (new \App\Models\InterviewModel())->insert([
+            'application_id' => $aid, 'jenis' => 'user', 'status' => 'approved',
+            'scheduled_at' => '2020-05-05 14:00:00', 'meeting_id' => 'u1',
+        ]);
+
+        $html = (string) $this->withSession($this->sesiRec)
+            ->get('recruiter/tahap/interview_user?status=completed')->getBody();
+
+        $this->assertStringNotContainsString('recruiter/gate2/' . $aid, $html);
+    }
+
+    /** Melepas jadwal Interview User tidak ikut mencabut jadwal HRD-nya. */
+    public function testRescheduleUserTidakMenyentuhJadwalHrd(): void
+    {
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+        $model = new \App\Models\InterviewModel();
+        $model->insert(['application_id' => $aid, 'jenis' => 'hrd', 'status' => 'approved',
+            'scheduled_at' => '2030-06-06 09:00:00', 'meeting_id' => 'h1']);
+        $model->insert(['application_id' => $aid, 'jenis' => 'user', 'status' => 'approved',
+            'scheduled_at' => '2030-06-06 14:00:00', 'meeting_id' => 'u1']);
+
+        $this->withSession($this->sesiRec)->post('recruiter/interview/reschedule/' . $aid, [
+            'jenis' => 'user', 'alasan' => 'atasan berhalangan',
+        ]);
+
+        $this->assertSame('approved', $model->forApplication($aid, 'hrd')['status'], 'jadwal HRD tidak boleh ikut lepas');
+        $this->assertSame('rescheduled', $model->forApplication($aid, 'user')['status']);
+    }
+
+    // --- kandidat memilih jadwal Interview User ---
+
+    private function fakeZoom(): void
+    {
+        \CodeIgniter\Config\Services::injectMock('zoomService', new class () extends \App\Libraries\ZoomService {
+            public function __construct() {}
+
+            public function createMeeting(string $topic, ?string $startAt = null): array
+            {
+                return ['meeting_id' => '777', 'join_url' => 'https://zoom.us/j/777',
+                    'start_url' => 'https://zoom.us/s/777?zak=x'];
+            }
+        });
+    }
+
+    private function sesiKandidat(int $aid): array
+    {
+        $app = (new ApplicationModel())->find($aid);
+
+        return ['candidate_id' => $app['candidate_id'], 'candidate_nama' => 'Sinta'];
+    }
+
+    /**
+     * Kandidat yang lolos wawancara HRD diarahkan memilih jadwal SEKALI LAGI.
+     *
+     * Kartunya ditandai jenisnya, karena satu lamaran bisa muncul dua kali di
+     * halaman jadwal - dan tanpa penanda itu kandidat memilih jam untuk
+     * wawancara yang salah lalu datang ke ruangan yang tidak menunggunya.
+     */
+    public function testKandidatDitawariJadwalInterviewUserSetelahLolosHrd(): void
+    {
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+
+        $html = (string) $this->withSession($this->sesiKandidat($aid))->get('jadwal')->getBody();
+
+        $this->assertStringContainsString('Interview User', $html);
+        $this->assertStringContainsString('name="jenis" value="user"', $html);
+    }
+
+    /** Sebelum lolos tahap HRD, tawaran itu tidak muncul. */
+    public function testTanpaLolosHrdTidakDitawariJadwalInterviewUser(): void
+    {
+        $jobId = $this->lowongan();
+        $aid   = $this->kandidat($jobId);
+        (new StageLogger())->log($aid, 'gate_1', 'passed', 'system');
+
+        $html = (string) $this->withSession($this->sesiKandidat($aid))->get('jadwal')->getBody();
+
+        $this->assertStringNotContainsString('name="jenis" value="user"', $html);
+    }
+
+    public function testMemilihSlotMembuatJadwalInterviewUserSendiri(): void
+    {
+        $this->fakeZoom();
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+        $slot  = \App\Libraries\SlotJadwal::tersedia()[0];
+
+        $this->withSession($this->sesiKandidat($aid))
+            ->post('interview/ajukan/' . $aid, ['jadwal' => $slot, 'jenis' => 'user']);
+
+        $iv = (new \App\Models\InterviewModel())->forApplication($aid, 'user');
+        $this->assertNotNull($iv);
+        $this->assertSame('approved', $iv['status']);
+        $this->assertSame('https://zoom.us/j/777', $iv['join_url']);
+    }
+
+    /**
+     * Jadwal HRD dan Interview User berdiri sendiri-sendiri.
+     *
+     * Sebelum kolom jenis ada, forApplication() mengambil baris TERBARU - dan
+     * jadwal Interview User akan muncul di ruang interview HRD, lengkap dengan
+     * tautan Zoom ke ruangan yang salah.
+     */
+    public function testJadwalHrdTidakTertimpaJadwalInterviewUser(): void
+    {
+        $this->fakeZoom();
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+
+        $model = new \App\Models\InterviewModel();
+        $model->insert(['application_id' => $aid, 'jenis' => 'hrd', 'status' => 'approved',
+            'scheduled_at' => '2020-03-03 10:00:00', 'meeting_id' => '111',
+            'join_url' => 'https://zoom.us/j/111']);
+
+        $this->withSession($this->sesiKandidat($aid))->post('interview/ajukan/' . $aid, [
+            'jadwal' => \App\Libraries\SlotJadwal::tersedia()[0], 'jenis' => 'user',
+        ]);
+
+        $this->assertSame('111', $model->forApplication($aid, 'hrd')['meeting_id']);
+        $this->assertSame('777', $model->forApplication($aid, 'user')['meeting_id']);
+    }
+
+    /** Menyembunyikan tombol bukan penjagaan: POST langsung tetap tersaring. */
+    public function testMemilihJadwalInterviewUserDitolakBilaBelumLolosHrd(): void
+    {
+        $this->fakeZoom();
+        $jobId = $this->lowongan();
+        $aid   = $this->kandidat($jobId);
+        (new StageLogger())->log($aid, 'gate_1', 'passed', 'system');
+
+        $this->withSession($this->sesiKandidat($aid))->post('interview/ajukan/' . $aid, [
+            'jadwal' => \App\Libraries\SlotJadwal::tersedia()[0], 'jenis' => 'user',
+        ]);
+
+        $this->assertNull((new \App\Models\InterviewModel())->forApplication($aid, 'user'));
+    }
+
+    /** Atasan melihat jam yang dipilih kandidat, bukan menghubungi HRD untuk itu. */
+    public function testAtasanMelihatJadwalDanTautanZoom(): void
+    {
+        $this->fakeZoom();
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+        (new \App\Models\InterviewModel())->insert([
+            'application_id' => $aid, 'jenis' => 'user', 'status' => 'approved',
+            'scheduled_at' => '2030-04-04 11:00:00', 'meeting_id' => '777',
+            'join_url' => 'https://zoom.us/j/777',
+        ]);
+
+        $html = (string) $this->withSession($this->sesiAtasan($jobId))->get('atasan')->getBody();
+
+        $this->assertStringContainsString('04 Apr 2030, 11:00', $html);
+        $this->assertStringContainsString('https://zoom.us/j/777', $html);
     }
 
     /** Callback ai-service yang menutup tahap HRD. */

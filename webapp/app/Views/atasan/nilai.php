@@ -10,8 +10,9 @@ use App\Libraries\LembarPenilaian as L;
  * Menyembunyikan itu membuatnya mewawancarai orang yang belum ia kenal sama
  * sekali, padahal datanya sudah ada di sistem.
  *
- * Skalanya 1-10, bukan 1-5 seperti lembar HRD. Bukan kekeliruan: formulir
- * Interview User BIPROO memang memakai skala itu (LembarPenilaian::MAKS_USER).
+ * Skalanya 1-5, sama dengan lembar HRD, beserta labelnya - Poor sampai
+ * Excellent. Semula 1-10; disamakan 19 Agustus 2026 supaya orang yang membaca
+ * lembar profil tidak perlu mengingat dua arti untuk angka yang sama.
  */
 $dariAi = array_filter($penilaian, static fn ($p) => ($p['sumber'] ?? '') === L::DARI_AI
     && ($p['kategori'] ?? '') === L::KAT_HRD);
@@ -133,7 +134,7 @@ $dariAi = array_filter($penilaian, static fn ($p) => ($p['sumber'] ?? '') === L:
     <div class="kartu">
       <h3>Penilaian Anda</h3>
       <p class="ket">
-        Tujuh butir, skala 1 sampai <?= L::MAKS_USER ?>. Semuanya wajib diisi -
+        Tujuh butir, skala 1 sampai <?= L::MAKS_USER ?>, sama dengan lembar HRD. Semuanya wajib diisi -
         lembar yang separuh terisi tidak bisa dipertanggungjawabkan kepada kandidat
         yang bertanya dasar keputusannya.
       </p>
@@ -141,9 +142,12 @@ $dariAi = array_filter($penilaian, static fn ($p) => ($p['sumber'] ?? '') === L:
       <table class="lembar">
         <tr>
           <th style="text-align:left">Kompetensi</th>
-          <?php for ($n = 1; $n <= L::MAKS_USER; $n++): ?>
-            <th><?= $n ?></th>
-          <?php endfor ?>
+          <?php // Labelnya ikut ditampilkan, sama dengan matriks lembar HRD:
+                // angka telanjang menuntut pewawancara mengingat sendiri mana
+                // yang bagus dan mana yang buruk. ?>
+          <?php foreach (L::SKALA as $n => $label): ?>
+            <th><?= $n ?><br><small style="font-weight:400;font-size:10px"><?= esc($label) ?></small></th>
+          <?php endforeach ?>
         </tr>
         <?php foreach (L::USER as $i => $kompetensi): ?>
           <tr>

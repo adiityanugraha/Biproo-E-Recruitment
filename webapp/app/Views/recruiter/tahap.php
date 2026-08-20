@@ -70,8 +70,8 @@ if (($stage ?? '') === 'upload_cv') {
     // Tidak ada keputusan lolos/gagal di tahap unggah - satu tab saja
     $tabs = ['uploaded' => ['Uploaded', '📥', $base]];
 } else {
-    if (($stage ?? '') === 'interview_online') {
-        // Interview HRD punya alurnya sendiri: terjadwal -> (dilepas) -> selesai.
+    if (in_array($stage ?? '', ['interview_online', 'interview_user'], true)) {
+        // Tahap wawancara punya alurnya sendiri: terjadwal -> (dilepas) -> selesai.
         // Tidak ada "Passed"/"Failed" di sini, karena interview yang terjadwal
         // belum lolos apa-apa dan jadwal yang dilepas bukan kandidat yang gugur.
         $tabs = [
@@ -139,6 +139,30 @@ foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
                   <input type="hidden" name="alasan" maxlength="200">
                   <button class="b-warn" onclick="return alasanReschedule(this)">Reschedule</button>
                 </form>
+              <?php // INTERVIEW USER. Tata letak tabnya sama persis dengan Interview
+                    // HRD, tapi tindakannya berbeda: yang mewawancarai atasan, lewat
+                    // halaman /atasan miliknya sendiri. Recruiter di sini menonton
+                    // jalannya - ia bisa melepas jadwal, tapi tidak menilai dan tidak
+                    // memutuskan. Menaruh tombol keputusan di sini akan membuat
+                    // recruiter diam-diam memutuskan hal yang justru diserahkan ke
+                    // atasan. ?>
+              <?php elseif ($stage === 'interview_user' && $status === 'progress'): ?>
+                <form method="post" action="<?= site_url('recruiter/interview/reschedule/' . $a['id']) ?>">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="jenis" value="user">
+                  <input type="hidden" name="alasan" maxlength="200">
+                  <button class="b-warn" onclick="return alasanReschedule(this)">Reschedule</button>
+                </form>
+              <?php elseif ($stage === 'interview_user' && $status === 'rescheduled'): ?>
+                <span style="font-size:11px;color:#a5771a">menunggu kandidat memilih slot baru</span>
+              <?php elseif ($stage === 'interview_user' && $status === 'completed'): ?>
+                <?php if ($a['gate2'] === 'passed'): ?>
+                  <span style="color:#1d6b3d;font-weight:700">✅ Diterima</span>
+                <?php elseif ($a['gate2'] === 'failed'): ?>
+                  <span style="color:#a12734;font-weight:700">❌ Tidak Diterima</span>
+                <?php else: ?>
+                  <span style="font-size:11px;color:#a5771a">menunggu penilaian atasan</span>
+                <?php endif ?>
               <?php elseif ($stage === 'interview_online' && $status === 'rescheduled'): ?>
                 <span style="font-size:11px;color:#a5771a">menunggu kandidat memilih slot baru</span>
               <?php elseif ($stage === 'interview_online' && $status === 'completed'): ?>

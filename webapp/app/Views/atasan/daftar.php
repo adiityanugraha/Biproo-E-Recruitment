@@ -68,7 +68,8 @@
           <th style="width:46px">No</th>
           <th>Nama</th>
           <th>Email</th>
-          <th style="width:190px">Tindakan</th>
+          <th style="width:180px">Jadwal</th>
+          <th style="width:230px">Tindakan</th>
         </tr>
         <?php foreach ($daftar as $i => $a): ?>
           <tr>
@@ -76,6 +77,17 @@
             <td><?= esc($a['nama']) ?></td>
             <td><?= esc($a['email']) ?></td>
             <td>
+              <?php if (($a['jadwal']['scheduled_at'] ?? null) !== null): ?>
+                <?= esc(date('d M Y, H:i', strtotime($a['jadwal']['scheduled_at']))) ?> WIB
+              <?php else: ?>
+                <span style="color:#a5771a">menunggu kandidat memilih</span>
+              <?php endif ?>
+            </td>
+            <td>
+              <?php if (! empty($a['jadwal']['join_url'])): ?>
+                <a href="<?= esc($a['jadwal']['join_url'], 'attr') ?>" target="_blank" rel="noopener">
+                  <button class="btn" style="background:#2D8CFF">Zoom</button></a>
+              <?php endif ?>
               <?php // Yang sudah diputus tidak menampilkan tombol menilai:
                     // keputusannya sudah dikirim ke kandidat lewat email dan
                     // tidak punya jalur pembatalan. ?>
