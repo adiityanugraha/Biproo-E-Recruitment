@@ -205,7 +205,17 @@ def _json_pertama(s: str) -> dict | None:
         return None
     try:
         d = json.loads(m.group(0))
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        # Teks aslinya sengaja TIDAK dicatat utuh: ia memuat transkrip wawancara
+        # dan isi CV orang. Yang dicatat cuma jendela di sekitar titik gagalnya,
+        # dan justru itu satu-satunya bagian yang dibutuhkan untuk menelusuri.
+        # Sebelum ini kegagalannya sama sekali tidak berjejak: yang terlihat
+        # cuma "jawaban LLM tidak bisa dibaca" di sisi recruiter.
+        teks = m.group(0)
+        logging.getLogger("uvicorn.error").warning(
+            "JSON dari LLM gagal dibaca (%s, posisi %d dari %d): ...%s...",
+            e.msg, e.pos, len(teks), teks[max(0, e.pos - 60):e.pos + 60])
+
         return None
 
     return d if isinstance(d, dict) else None

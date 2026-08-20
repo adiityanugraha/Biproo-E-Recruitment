@@ -360,3 +360,32 @@ def test_jalur_heading_tidak_pernah_menandai_tanpa_bukti():
     assert "llm_gagal" in t.flags
     assert "tanpa_riwayat_kerja" not in t.flags
     assert t.riwayat == ()
+
+
+# --- jejak saat JSON dari LLM tidak sah (20 Agustus 2026) ---
+
+def test_json_gagal_dibaca_meninggalkan_jejak(caplog):
+    """
+    Sebelum ini kegagalannya senyap: _json_pertama mengembalikan None, recruiter
+    melihat 'jawaban LLM tidak bisa dibaca', dan tidak ada apa pun yang bisa
+    ditelusuri. Menemukan sebabnya jadi menuntut panggilan API berulang.
+    """
+    rusak = '{"penilaian": [{"alasan": "dia bilang "halo" lalu pergi"}]}'
+
+    with caplog.at_level(logging.WARNING):
+        assert structure._json_pertama(rusak) is None
+
+    assert "JSON dari LLM gagal dibaca" in caplog.text
+    assert "halo" in caplog.text, "jendela di sekitar titik gagal harus ikut"
+
+
+def test_jejaknya_tidak_menumpahkan_seluruh_jawaban(caplog):
+    """Jawaban LLM memuat transkrip wawancara dan isi CV orang. Yang dicatat
+    cuma jendela di sekitar titik gagalnya, bukan seluruhnya."""
+    jauh = "RAHASIA-" + "x" * 400
+    rusak = '{"a": "' + jauh + '", "b": "dia bilang "halo""}'
+
+    with caplog.at_level(logging.WARNING):
+        assert structure._json_pertama(rusak) is None
+
+    assert "RAHASIA" not in caplog.text

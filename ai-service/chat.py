@@ -121,11 +121,36 @@ class GeminiChatProvider:
         model: str = "gemini-2.5-flash",
         client: httpx.Client | None = None,
         maks_token: int = MAKS_TOKEN_CHAT,
+        minta_json: bool = False,
     ):
         self.api_key = api_key
         self.model = model
         self.client = client or httpx.Client(timeout=30)
         self.maks_token = maks_token
+        self.minta_json = minta_json
+
+    def _konfigurasi(self) -> dict:
+        konfigurasi: dict = {
+            # suhu rendah: jawaban patuh ke data status, bukan mengarang
+            "temperature": 0.2,
+            "maxOutputTokens": self.maks_token,
+            # matikan "thinking" 2.5-flash: chatbot lookup status tak butuh
+            # reasoning panjang; cegah budget output habis dipakai thinking
+            # (jawaban terpotong/kosong) + pangkas latency & biaya
+            "thinkingConfig": {"thinkingBudget": 0},
+        }
+
+        # Dipakai untuk permintaan yang jawabannya HARUS JSON (strukturisasi CV,
+        # penilaian interview). Tanpa ini Gemini sesekali mengeluarkan JSON yang
+        # nyaris benar - satu tanda kutip salah tempat di dalam kalimat yang ia
+        # kutip dari transkrip sudah cukup - dan json.loads menolak seluruhnya.
+        # Terukur 3 gagal dari 20 panggilan nyata (15%) pada 20 Agustus 2026:
+        # transkripnya sudah jadi, lalu penilaiannya hangus tanpa jejak.
+        # JANGAN dinyalakan untuk chatbot status, jawabannya memang prosa.
+        if self.minta_json:
+            konfigurasi["responseMimeType"] = "application/json"
+
+        return konfigurasi
 
     def generate(self, system: str, history: list[dict], question: str) -> str:
         contents = [{"role": h["role"], "parts": [{"text": h["text"]}]} for h in history]
@@ -137,15 +162,7 @@ class GeminiChatProvider:
             json={
                 "system_instruction": {"parts": [{"text": system}]},
                 "contents": contents,
-                "generationConfig": {
-                    # suhu rendah: jawaban patuh ke data status, bukan mengarang
-                    "temperature": 0.2,
-                    "maxOutputTokens": self.maks_token,
-                    # matikan "thinking" 2.5-flash: chatbot lookup status tak butuh
-                    # reasoning panjang; cegah budget output habis dipakai thinking
-                    # (jawaban terpotong/kosong) + pangkas latency & biaya
-                    "thinkingConfig": {"thinkingBudget": 0},
-                },
+                "generationConfig": self._konfigurasi(),
             },
         )
         resp.raise_for_status()
@@ -158,10 +175,12 @@ class GeminiChatProvider:
         return text or _FALLBACK
 
 
-def get_chat_provider(maks_token: int = MAKS_TOKEN_CHAT) -> ChatProvider:
+def get_chat_provider(maks_token: int = MAKS_TOKEN_CHAT,
+                      minta_json: bool = False) -> ChatProvider:
     # ponytail: satu provider dulu; tambah cabang saat provider LLM kedua benar dipakai
     return GeminiChatProvider(
         api_key=os.environ["GEMINI_API_KEY"],
         model=os.environ.get("GENERATION_MODEL", "gemini-2.5-flash"),
         maks_token=maks_token,
+        minta_json=minta_json,
     )

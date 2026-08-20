@@ -161,7 +161,7 @@ async def process_jobs():
         #    sensitif SEBELUM embedding (fairness-by-design A3.2)
         # Budget keluaran BESAR, bukan default chatbot: strukturisasi menyalin isi
         # CV ke JSON, jadi jawabannya sepanjang CV-nya (lihat MAKS_TOKEN_CV).
-        llm = getattr(app.state, "chat_provider", None) or get_chat_provider(MAKS_TOKEN_CV)
+        llm = getattr(app.state, "chat_provider", None) or get_chat_provider(MAKS_TOKEN_CV, minta_json=True)
         t   = await asyncio.to_thread(strukturkan_kontekstual, hasil.teks, llm)
         cv_bidang = {
             "skill":      bersihkan(t.skill),
@@ -328,7 +328,7 @@ async def _proses_interview(job_id: str) -> None:
     # Langkah 2: teks jadi penilaian. Transkrip TETAP dikirim walau penilaian
     # gagal - ia hasil yang sudah didapat, dan recruiter masih bisa membacanya
     # lalu menilai sendiri.
-    llm = getattr(app.state, "chat_provider", None) or get_chat_provider(MAKS_TOKEN_CV)
+    llm = getattr(app.state, "chat_provider", None) or get_chat_provider(MAKS_TOKEN_CV, minta_json=True)
     n = await asyncio.to_thread(
         nilai_dari_transkrip, hasil.teks, job["kompetensi"], llm,
         job.get("riwayat", []), job.get("posisi", ""), job.get("skor_cv"),
