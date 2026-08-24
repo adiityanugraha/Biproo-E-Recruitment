@@ -4,6 +4,7 @@ namespace App\Controllers;
 
 use App\Libraries\StageLogger;
 use App\Models\ApplicationModel;
+use App\Models\JobModel;
 use App\Models\ScreeningResultModel;
 use App\Models\StageHistoryModel;
 
@@ -85,9 +86,19 @@ class Screening extends BaseController
             'score_pengalaman' => $scores['pengalaman'] ?? null,
             'extracted_json'   => json_encode($b['extracted_fields'] ?? [], JSON_UNESCAPED_UNICODE),
             'flags_json'       => json_encode($b['flags'] ?? [], JSON_UNESCAPED_UNICODE),
+            // Vektor CV disimpan supaya CV yang sama bisa dinilai terhadap
+            // lowongan LAIN tanpa embedding ulang - itulah yang membuat saran
+            // posisi tidak memakan kuota sama sekali.
+            'vektor_json'      => $this->vektorJson($b['vektor_cv'] ?? null),
             'provider'         => 'ai-service',
             'model_version'    => self::MODEL_VERSION,
         ]);
+
+        // Vektor lowongan menempel di lowongannya, bukan di lamaran: ia sama
+        // untuk semua pelamar posisi itu. Ikut tersegarkan tiap ada yang
+        // melamar, jadi lowongan yang syaratnya baru diubah tidak lama memakai
+        // vektor lama.
+        $this->simpanVektorLowongan($appId, $b['vektor_job'] ?? null);
 
         // Hasil screening masuk candidate_stage_history saat callback tiba, bukan
         // menunggu kandidat mengerjakan assessment. Tanpa ini ada balapan: kandidat
@@ -139,5 +150,60 @@ class Screening extends BaseController
         }
 
         return $this->response->setJSON(['ok' => true]);
+    }
+    /**
+     * Vektor embedding dari ai-service jadi JSON siap simpan, atau null.
+     *
+     * Daftar bidangnya TERTUTUP dan isinya wajib angka. Kolom ini kelak dipakai
+     * menghitung saran posisi; satu nilai bukan-angka yang lolos ke sana akan
+     * muncul sebagai kecocokan 0 pada posisi yang sebenarnya cocok, dan tak
+     * seorang pun akan tahu kenapa.
+     *
+     * @param mixed $vektor
+     */
+    private function vektorJson($vektor): ?string
+    {
+        if (! is_array($vektor)) {
+            return null;
+        }
+
+        $bersih = [];
+        foreach (['skill', 'pengalaman', 'pendidikan'] as $bidang) {
+            $v = $vektor[$bidang] ?? null;
+            if (! is_array($v) || $v === []) {
+                continue;
+            }
+            $angka = array_values(array_filter($v, 'is_numeric'));
+            if (count($angka) === count($v)) {
+                $bersih[$bidang] = array_map('floatval', $angka);
+            }
+        }
+
+        return $bersih === [] ? null : json_encode($bersih);
+    }
+
+    /**
+     * Simpan vektor syarat lowongan pada lowongannya sendiri.
+     *
+     * Ditulis diam-diam: kegagalannya tidak boleh menjatuhkan callback, karena
+     * yang dibawa callback ini skor CV kandidat - itu hasil yang sudah didapat
+     * dan jauh lebih penting daripada bahan saran posisi yang bisa diisi ulang
+     * kapan saja lewat `php spark vektor:isi`.
+     *
+     * @param mixed $vektor
+     */
+    private function simpanVektorLowongan(int $appId, $vektor): void
+    {
+        $json = $this->vektorJson($vektor);
+        if ($json === null) {
+            return;
+        }
+
+        $app = (new ApplicationModel())->find($appId);
+        if ($app === null) {
+            return;
+        }
+
+        (new JobModel())->update((int) $app['job_id'], ['vektor_json' => $json]);
     }
 }

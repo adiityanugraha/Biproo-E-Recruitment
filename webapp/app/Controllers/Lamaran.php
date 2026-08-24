@@ -318,7 +318,7 @@ class Lamaran extends BaseController
         // Satu lamaran tampil pada satu waktu, sama seperti stepper di dashboard.
         // Riwayat pun hanya diambil untuk yang sedang dilihat, bukan semuanya.
         $apps = (new ApplicationModel())
-            ->select('applications.id, applications.created_at, jobs.judul')
+            ->select('applications.id, applications.created_at, applications.saran_json, jobs.judul')
             ->join('jobs', 'jobs.id = applications.job_id')
             ->where('candidate_id', session('candidate_id'))
             ->orderBy('applications.id', 'DESC')
@@ -330,6 +330,11 @@ class Lamaran extends BaseController
                 ->where('application_id', $aktif['id'])->orderBy('id')->findAll();
             // assessment bisa dikerjakan bila gate_1 belum diputus utk lamaran ini
             $aktif['bisa_assessment'] = ! in_array('gate_1', array_column($aktif['riwayat'], 'stage'), true);
+            // Saran posisi DIBEKUKAN saat penolakan, bukan dihitung di sini:
+            // isinya sudah terkirim lewat email, dan daftar yang dihitung ulang
+            // bisa berbeda dari surat yang sudah dipegang kandidat.
+            $saran = json_decode((string) ($aktif['saran_json'] ?? ''), true);
+            $aktif['saran'] = is_array($saran) ? $saran : [];
         }
 
         return view('lamaran/status', ['apps' => $apps, 'aktif' => $aktif]);

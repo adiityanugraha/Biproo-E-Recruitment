@@ -16,7 +16,7 @@ class ScreeningResultModel extends Model
     protected $allowedFields = [
         'application_id', 'screening_job_id', 'status',
         'score_overall', 'score_skill', 'score_pendidikan', 'score_pengalaman',
-        'extracted_json', 'flags_json', 'provider', 'model_version',
+        'extracted_json', 'flags_json', 'provider', 'model_version', 'vektor_json',
     ];
 
     protected $validationRules = [

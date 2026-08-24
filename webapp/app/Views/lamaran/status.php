@@ -2,6 +2,16 @@
 <?= $this->extend('layout') ?>
 <?= $this->section('isi') ?>
 
+<style>
+  .saran { margin-top: 8px; border: 1px solid #FFD9A0; background: #FFF9EF;
+           border-radius: 8px; padding: 8px 12px; }
+  .saran summary { cursor: pointer; font-weight: 600; color: #8a6d1e; font-size: 13px; }
+  .saran .ket { color: #6b5626; font-size: 12px; line-height: 1.6; margin: 8px 0 4px; }
+  .saran ol { margin: 4px 0 10px; padding-left: 20px; color: #333; }
+  .saran li { margin-bottom: 3px; }
+  .saran button { padding: 6px 14px; font-size: 12.5px; }
+</style>
+
 <?php if ($aktif === null): ?>
 <div class="kartu">
   <h2>Status Lamaran</h2>
@@ -39,7 +49,38 @@
       <tr>
         <td><?= esc(Lamaran::STAGE_LABEL[$r['stage']] ?? $r['stage']) ?></td>
         <td><?= badge_status($r['status']) ?></td>
-        <td style="color:#444;font-size:13px"><?= esc((string) $r['note']) ?></td>
+        <td style="color:#444;font-size:13px">
+          <?= esc((string) $r['note']) ?>
+          <?php
+            /*
+             * Tombolnya menempel pada baris penolakan, bukan berdiri sebagai
+             * kartu tersendiri di bawah tabel: yang membacanya baru saja
+             * membaca kalimat "belum dapat melanjutkan", dan di situlah
+             * pertanyaan "lalu saya harus apa" muncul.
+             *
+             * <details> - bukan tombol berJavaScript. Ia bawaan peramban,
+             * bekerja tanpa satu baris skrip pun, dan tetap terbuka-tutup di
+             * peramban lama maupun pembaca layar.
+             */
+            $tampilkanSaran = $r['stage'] === 'gate_2' && $r['status'] === 'failed'
+                && ($aktif['saran'] ?? []) !== [];
+          ?>
+          <?php if ($tampilkanSaran): ?>
+            <details class="saran">
+              <summary>Lihat posisi lain yang mungkin cocok</summary>
+              <p class="ket">
+                Dipilih dari pengalaman kerja di CV Anda. Ini <b>saran</b>, bukan jaminan
+                diterima - Anda tetap melamar seperti biasa.
+              </p>
+              <ol>
+                <?php foreach ($aktif['saran'] as $sr): ?>
+                  <li><?= esc((string) ($sr['judul'] ?? '')) ?></li>
+                <?php endforeach ?>
+              </ol>
+              <a href="<?= site_url('lamar') ?>"><button type="button">Lamar posisi lain</button></a>
+            </details>
+          <?php endif ?>
+        </td>
         <td style="color:#666"><?= esc(substr($r['created_at'], 0, 16)) ?></td>
       </tr>
     <?php endforeach ?>

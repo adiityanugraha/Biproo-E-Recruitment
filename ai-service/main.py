@@ -113,6 +113,11 @@ async def _callback(job_id: str) -> None:
         "scores": job.get("scores", Skor(None, None, None, None).as_dict()),
         "extracted_fields": job.get("extracted", {}),
         "flags": job.get("flags", []),
+        # ponytail: vektor penuh 3.072 dimensi, ~450 KB per callback di
+        # localhost. Kalau suatu saat terasa, setel outputDimensionality
+        # embedding ke 768 - bukan memampatkannya di sini.
+        "vektor_cv": job.get("vektor_cv", {}),
+        "vektor_job": job.get("vektor_job", {}),
     }
     try:
         await asyncio.to_thread(_kirim_callback, job["callback_url"], job.get("token"), body)
@@ -181,8 +186,21 @@ async def process_jobs():
         #    Bidang yang salah satu sisinya kosong tidak di-embed (hemat kuota)
         #    dan tidak dinilai - bobotnya dinormalkan ulang di scoring.hitung().
         job_bidang = job["job_requirement"]
-        pasangan   = [b for b in BIDANG if cv_bidang[b] and job_bidang[b]]
-        job["texts"] = [cv_bidang[b] for b in pasangan] + [job_bidang[b] for b in pasangan]
+
+        # Yang di-embed SELURUH bidang terisi di tiap sisi, bukan cuma yang
+        # berpasangan (21 Agustus 2026). Skornya tidak berubah - hitung() tetap
+        # melewati bidang yang salah satu sisinya tidak ada - yang berubah cuma
+        # vektornya ikut tersimpan dan bisa dipakai ulang untuk saran posisi.
+        #
+        # Tanpa ini vektor CV selalu bolong di bidang yang lowongannya kebetulan
+        # mengosongkan syarat: 31 dari 36 lowongan tidak mengisi req_pendidikan,
+        # jadi pendidikan kandidat tidak pernah punya vektor sama sekali.
+        # Ongkosnya paling banyak dua teks tambahan per screening, dari jatah
+        # 1.000 teks sehari.
+        cv_ada   = [b for b in BIDANG if cv_bidang[b]]
+        job_ada  = [b for b in BIDANG if job_bidang[b]]
+        pasangan = [b for b in cv_ada if b in job_ada]
+        job["texts"] = [cv_bidang[b] for b in cv_ada] + [job_bidang[b] for b in job_ada]
 
         if not pasangan:
             job["status"] = "done"
@@ -200,13 +218,18 @@ async def process_jobs():
             await _callback(job_id)
             continue
 
-        n = len(pasangan)
-        vek_cv  = {b: vectors[i] for i, b in enumerate(pasangan)}
-        vek_job = {b: vectors[n + i] for i, b in enumerate(pasangan)}
+        n = len(cv_ada)
+        vek_cv  = {b: vectors[i] for i, b in enumerate(cv_ada)}
+        vek_job = {b: vectors[n + i] for i, b in enumerate(job_ada)}
         skor    = hitung(vek_cv, vek_job)
 
         job["status"] = "done"
         job["embedding_dims"] = [len(v) for v in vectors]
+        # Dikembalikan ke CI4 untuk disimpan. Dulu dibuang begitu skornya jadi,
+        # sehingga menilai CV yang sama terhadap lowongan lain menuntut embedding
+        # ulang - 108 teks untuk 36 lowongan, dan jatahnya cuma 1.000 sehari.
+        job["vektor_cv"]  = vek_cv
+        job["vektor_job"] = vek_job
         job["scores"] = skor.as_dict()
         job["flags"] += list(skor.flags)
 
@@ -630,6 +653,47 @@ def pertanyaan(req: PertanyaanRequest) -> PertanyaanReply:
         raise HTTPException(502, "LLM tidak menghasilkan pertanyaan")
 
     return PertanyaanReply(pertanyaan=bersih[:jumlah], sumber=sumber)
+
+
+class VektorRequest(BaseModel):
+    """Syarat lowongan apa adanya. Bidang kosong tidak di-embed."""
+
+    skill: str = ""
+    pendidikan: str = ""
+    pengalaman: str = ""
+
+
+class VektorReply(BaseModel):
+    vektor: dict[str, list[float]]
+
+
+@app.post("/vektor", response_model=VektorReply)
+def vektor(req: VektorRequest) -> VektorReply:
+    """
+    Embedding syarat sebuah lowongan, tanpa melibatkan CV siapa pun.
+
+    Jalur screening menghitung ini juga, tapi hanya saat ada yang melamar.
+    Lowongan yang belum pernah dilamar - atau yang syaratnya baru diubah lewat
+    halaman Settings - tidak punya vektor sama sekali, dan tanpa vektor ia tidak
+    pernah bisa muncul sebagai saran posisi untuk siapa pun.
+
+    Memakai kuota EMBEDDING (1.000 teks sehari), bukan kuota chat yang 20.
+    Mengisi seluruh 36 lowongan sekitar 100 teks, sekali seumur.
+    """
+    isi = {b: getattr(req, b).strip() for b in BIDANG}
+    isi = {b: t for b, t in isi.items() if t}
+    if not isi:
+        raise HTTPException(400, "tidak ada syarat yang terisi")
+
+    provider = getattr(app.state, "provider", None) or get_provider()
+    try:
+        vectors = provider.embed(list(isi.values()))
+    except Exception as e:
+        # JANGAN echo str(e): pesan httpx memuat URL Gemini + ?key=API_KEY
+        logging.getLogger("uvicorn.error").error("embedding lowongan gagal: %s", tanpa_kunci(e))
+        raise HTTPException(502, "embedding gagal")
+
+    return VektorReply(vektor=dict(zip(isi, vectors)))
 
 
 @app.get("/health")

@@ -787,3 +787,73 @@ def test_daftar_kosong_ditolak_bukan_dikembalikan_kosong():
     app.state.chat_provider = _LLMPertanyaan('{"pertanyaan":["", "   "]}')
     with TestClient(app) as client:
         assert client.post("/pertanyaan", json=VALID_LOWONGAN).status_code == 502
+
+
+# --- vektor embedding ikut disimpan (21 Agustus 2026) ---
+
+def test_callback_membawa_vektor_cv_dan_lowongan(wiring):
+    """
+    Vektornya dulu dibuang begitu skornya jadi, sehingga menilai CV yang sama
+    terhadap lowongan lain menuntut embedding ulang - 108 teks untuk 36
+    lowongan, dari jatah 1.000 sehari. Sekarang ia ikut pulang ke CI4.
+    """
+    app.state.provider = FakeProvider()
+    with TestClient(app) as client:
+        job_id = client.post("/screening", json=VALID_BODY).json()["screening_job_id"]
+        wait_done(client, job_id)
+
+    (_, _, body), = wiring
+
+    assert sorted(body["vektor_cv"]) == ["pendidikan", "pengalaman", "skill"]
+    assert sorted(body["vektor_job"]) == ["pendidikan", "pengalaman", "skill"]
+    assert body["vektor_cv"]["skill"] == [0.1, 0.2, 0.3]
+
+
+def test_bidang_yang_lowongannya_kosong_tetap_di_embed(wiring):
+    """
+    31 dari 36 lowongan mengosongkan req_pendidikan. Dengan aturan lama - cuma
+    bidang berpasangan yang di-embed - pendidikan kandidat tidak pernah punya
+    vektor sama sekali, dan saran posisi ke lowongan yang MENSYARATKAN
+    pendidikan jadi tidak bisa dihitung selamanya.
+    """
+    app.state.provider = FakeProvider()
+    badan = {**VALID_BODY, "job_requirement": {**VALID_BODY["job_requirement"], "pendidikan": ""}}
+
+    with TestClient(app) as client:
+        job_id = client.post("/screening", json=badan).json()["screening_job_id"]
+        wait_done(client, job_id)
+
+    (_, _, body), = wiring
+
+    assert "pendidikan" in body["vektor_cv"], "sisi CV tetap lengkap"
+    assert "pendidikan" not in body["vektor_job"], "sisi lowongan memang kosong"
+    # Skornya TIDAK berubah: bidang tanpa pasangan tetap tidak dinilai.
+    assert body["scores"]["pendidikan"] is None
+    assert "pendidikan_tidak_dinilai" in body["flags"]
+
+
+# --- endpoint /vektor (21 Agustus 2026) ---
+
+def test_vektor_lowongan_hanya_bidang_terisi():
+    """Bidang kosong tidak di-embed: ia tidak punya makna untuk dicocokkan,
+    dan tiap teks yang dikirim memakan jatah 1.000 embedding sehari."""
+    app.state.provider = FakeProvider()
+
+    with TestClient(app) as client:
+        r = client.post("/vektor", json={"skill": "Stok, surat jalan", "pengalaman": "1 tahun"})
+
+    assert r.status_code == 200
+    assert sorted(r.json()["vektor"]) == ["pengalaman", "skill"]
+    assert r.json()["vektor"]["skill"] == [0.1, 0.2, 0.3]
+
+
+def test_vektor_tanpa_syarat_ditolak():
+    """Lowongan tanpa satu pun syarat terisi tidak bisa dicocokkan dengan apa
+    pun. Menjawab 200 dengan vektor kosong membuat pemanggilnya menyimpan
+    'sudah dihitung' untuk sesuatu yang tidak pernah dihitung."""
+    app.state.provider = FakeProvider()
+
+    with TestClient(app) as client:
+        r = client.post("/vektor", json={"skill": "  ", "pendidikan": "", "pengalaman": ""})
+
+    assert r.status_code == 400

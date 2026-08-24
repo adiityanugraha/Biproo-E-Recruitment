@@ -221,6 +221,7 @@ Anda dan tidak butuh `ai-service` hidup.
 | [docs/setup-tim-ds.md](docs/setup-tim-ds.md) | Menyiapkan basis data sendiri dan menjaganya tetap sinkron lewat migrasi |
 | [docs/deploy.md](docs/deploy.md) | Checklist memindahkan aplikasi ke server |
 | [docs/kalibrasi-gate.md](docs/kalibrasi-gate.md) | Kalibrasi ambang dan metrik |
+| [docs/kalibrasi-saran-posisi.md](docs/kalibrasi-saran-posisi.md) | Mutu saran posisi: terukur 1,9x lebih baik daripada menebak |
 | [ai-service/README.md](ai-service/README.md) | Kontrak API layanan AI |
 
 **Yang perlu diketahui sebelum menilai hasil skornya:** skor kemiripan mengukur

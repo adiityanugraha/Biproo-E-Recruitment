@@ -5,10 +5,12 @@ namespace App\Controllers;
 use App\Libraries\AlurRekrutmen;
 use App\Libraries\GateTwo;
 use App\Libraries\LembarPenilaian;
+use App\Libraries\SaranPosisi;
 use App\Libraries\StageLogger;
 use App\Models\ApplicationModel;
 use App\Models\InterviewPenilaianModel;
 use App\Models\InterviewTranskripModel;
+use App\Models\JobModel;
 use App\Models\ScreeningResultModel;
 use App\Models\StageHistoryModel;
 
@@ -389,6 +391,16 @@ class Interview extends BaseController
         //
         // Rekomendasi AI-nya TIDAK hilang: ia tercatat di riwayat tahap dan
         // terbaca atasan di lembar profil sebagai bahan pertimbangan.
+        // Dihitung SEBELUM percabangan alur, bukan sesudahnya. Dua cabang di
+        // bawah sama-sama bisa berakhir 'gate_2 failed' dari keputusan AI yang
+        // sama, dan yang membedakan cuma posisinya memakai Interview User atau
+        // tidak - itu bukan alasan untuk memberi saran kepada yang satu dan
+        // tidak kepada yang lain. Versi pertama menaruhnya sesudah percabangan
+        // dan diam-diam melewatkan seluruh posisi ber-Interview User.
+        if (! $lolos) {
+            $email['saran'] = $this->bekukanSaran($appId, $kecocokan);
+        }
+
         if (AlurRekrutmen::pakaiInterviewUser($app['alur_json'] ?? null)) {
             $logger->log($appId, 'interview_online', $lolos ? 'passed' : 'failed', $actor,
                 'Tahap HRD: ' . $catat);
@@ -409,6 +421,72 @@ class Interview extends BaseController
         if ($lolos) {
             $logger->log($appId, 'berkas_kontrak', 'entered', $actor);
         }
+    }
+
+    /**
+     * Hitung dan simpan tiga posisi yang mungkin lebih cocok.
+     *
+     * HANYA untuk yang gugur karena SALAH POSISI. Kandidat yang gugur karena
+     * wawancaranya memang kurang, lalu ditawari posisi lain, akan membacanya
+     * sebagai hadiah hiburan - dan itu bukan yang mau kita kirim kepada orang
+     * yang sedang kecewa.
+     *
+     * Dibekukan, bukan dihitung ulang tiap halaman dibuka: isinya ikut terkirim
+     * di email penolakan, dan daftar yang bergeser membuat portal berbeda dari
+     * surat yang sudah diterima kandidat.
+     *
+     * Gagal DIAM-DIAM dan mengembalikan larik kosong. Yang sedang berlangsung
+     * di sini keputusan Gate 2 berikut emailnya; ia tidak boleh jatuh gara-gara
+     * bahan tambahan yang sifatnya menolong.
+     *
+     * @return list<array{id: int, judul: string, skor: float}>
+     */
+    private function bekukanSaran(int $appId, string $kecocokan): array
+    {
+        if ($kecocokan !== 'rendah') {
+            return [];
+        }
+
+        $apps = new ApplicationModel();
+        $app  = $apps->find($appId);
+        $sr   = (new ScreeningResultModel())->latestFor($appId);
+        if ($app === null || $sr === null) {
+            return [];
+        }
+
+        $vektorCv = json_decode((string) ($sr['vektor_json'] ?? ''), true);
+        if (! is_array($vektorCv) || $vektorCv === []) {
+            // Lamaran lama, dari sebelum vektor CV disimpan. Bukan kesalahan.
+            return [];
+        }
+
+        $jobs      = new JobModel();
+        $penolak   = $jobs->find((int) $app['job_id']);
+        $vektorJob = json_decode((string) ($penolak['vektor_json'] ?? ''), true);
+        if (! is_array($vektorJob)) {
+            return [];
+        }
+
+        // Ambangnya kecocokan dengan posisi yang MENOLAK, dan ia wajib dihitung
+        // dengan rumus yang sama seperti sarannya - bukan diambil dari
+        // screening_results.score_overall, yang berbobot dan karenanya berskala
+        // lain. Membandingkan keduanya menyaring dengan batas tak sebanding.
+        $ambang = SaranPosisi::skor($vektorCv, $vektorJob);
+        if ($ambang === null) {
+            return [];
+        }
+
+        // Seluruh posisi yang pernah dilamar dikecualikan, termasuk yang baru
+        // saja menolak: menawarkan pintu yang sudah tertutup bukan saran.
+        $dilamar = array_map(
+            'intval',
+            array_column($apps->where('candidate_id', $app['candidate_id'])->findAll(), 'job_id'),
+        );
+
+        $saran = SaranPosisi::untuk($vektorCv, $jobs->findAll(), $ambang, $dilamar);
+        $apps->update($appId, ['saran_json' => json_encode($saran, JSON_UNESCAPED_UNICODE)]);
+
+        return $saran;
     }
 
     private function skorCv(int $appId): ?float
