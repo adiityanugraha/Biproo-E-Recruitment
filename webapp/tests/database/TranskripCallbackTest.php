@@ -513,11 +513,14 @@ final class TranskripCallbackTest extends CIUnitTestCase
     /**
      * Sebab kecocokan ikut tercatat saat AI tidak memberi rekomendasi.
      *
-     * Transkrip wawancara gudang yang diunggah ke posisi Security System dulu
-     * tetap diloloskan dengan nilai bagus. Sekarang ai-service mengosongkan
-     * rekomendasinya, dan yang diuji di sini recruiter benar-benar diberi tahu
-     * SEBABNYA - bukan sekadar "AI tidak memberi rekomendasi", yang membuatnya
-     * mencari-cari masalah di tempat yang salah.
+     * Jalur ini tersisa untuk model yang MEMILIH tidak memutuskan (aturan 16).
+     * Kecocokan rendah sendiri tidak lagi sampai ke sini bernilai null - sejak
+     * 21 Agustus 2026 ai-service mengisinya 'not_recommended', dan itu diuji
+     * di testKecocokanRendahLangsungMenggugurkan di bawah.
+     *
+     * Yang dijaga di sini: apa pun sebab AI tidak menjawab, recruiter diberi
+     * tahu SEBABNYA - bukan sekadar "AI tidak memberi rekomendasi", yang
+     * membuatnya mencari-cari masalah di tempat yang salah.
      */
     public function testSebabKecocokanRendahIkutDicatat(): void
     {
@@ -538,6 +541,42 @@ final class TranskripCallbackTest extends CIUnitTestCase
             ->where(['application_id' => $aid, 'stage' => 'gate_2'])->first()['note'];
 
         $this->assertStringContainsString('flagged', $this->gate2($aid) ?? '');
+        $this->assertStringContainsString('Kecocokan wawancara dengan posisi: rendah', $note);
+        $this->assertStringContainsString('bukan keamanan', $note);
+    }
+
+    /**
+     * Transkrip yang tidak nyambung dengan posisinya menggugurkan sendiri
+     * (permintaan atasan 21 Agustus 2026), tidak lagi diserahkan ke recruiter.
+     *
+     * Yang ikut dijaga: catatannya menyebut kecocokan sebagai sebabnya. Tanpa
+     * itu, kandidat yang bertanya kenapa ia gugur cuma menerima kalimat yang
+     * seolah-olah menilai jawabannya buruk.
+     */
+    public function testKecocokanRendahLangsungMenggugurkan(): void
+    {
+        $aid = $this->fixture();
+
+        $this->kirim($aid, rekomendasi: 'not_recommended');
+        $this->assertSame('failed', $this->gate2($aid), 'prasyarat: rekomendasi dipakai apa adanya');
+
+        $aid2 = $this->fixture();
+        $this->withHeaders(['X-Token' => $this->token])->withBodyFormat('json')
+            ->post('interview/callback', [
+                'application_id'     => $aid2,
+                'status'             => 'selesai',
+                'teks'               => 'Kandidat: saya cek stok gudang tiap shift.',
+                'penilaian'          => [['kompetensi' => 'Adaptability', 'nilai' => 4, 'alasan' => 'a']],
+                'rekomendasi'        => 'not_recommended',
+                'alasan_rekomendasi' => 'Wawancara ini tidak menyangkut pekerjaan pada syarat posisi.',
+                'kecocokan'          => 'rendah',
+                'alasan_kecocokan'   => 'Seluruh jawabannya tentang stok gudang, bukan keamanan.',
+            ])->assertStatus(200);
+
+        $note = (new StageHistoryModel())
+            ->where(['application_id' => $aid2, 'stage' => 'gate_2'])->first()['note'];
+
+        $this->assertSame('failed', $this->gate2($aid2));
         $this->assertStringContainsString('Kecocokan wawancara dengan posisi: rendah', $note);
         $this->assertStringContainsString('bukan keamanan', $note);
     }
@@ -604,8 +643,18 @@ final class TranskripCallbackTest extends CIUnitTestCase
             ->where(['application_id' => $aid, 'sumber' => L::DARI_AI])->findAll());
     }
 
-    /** Tak satu pun kompetensi bisa dinilai: sama saja transkripnya tidak berguna. */
-    public function testSemuaKompetensiNullDiserahkanKeRecruiter(): void
+    /**
+     * Tak satu pun kompetensi bisa dinilai: kandidatnya GUGUR, bukan
+     * diserahkan ke recruiter (permintaan atasan 21 Agustus 2026).
+     *
+     * Sebelumnya lembarnya dikosongkan, LembarPenilaian::skor() mengembalikan
+     * null, dan Gate 2 ditandai 'flagged'. Sekarang keenam butir tersimpan
+     * bernilai terendah dan keputusannya diambil mesin. Rekomendasi
+     * 'not_recommended' di sini bukan karangan uji: ai-service memaksanya pada
+     * keadaan ini, justru supaya keputusannya tidak bergantung pada kalimat
+     * model yang disusun dari bahan yang tidak ada.
+     */
+    public function testSemuaKompetensiNullLangsungTidakDiloloskan(): void
     {
         $aid  = $this->fixture(0.85, mataManusia: false);
         $null = array_map(
@@ -613,9 +662,15 @@ final class TranskripCallbackTest extends CIUnitTestCase
             L::dariTranskrip()
         );
 
-        $this->kirim($aid, penilaian: $null);
+        $this->kirim($aid, penilaian: $null, rekomendasi: 'not_recommended');
 
-        $this->assertSame('flagged', $this->gate2($aid));
+        $this->assertSame('failed', $this->gate2($aid));
+
+        $ai = (new InterviewPenilaianModel())
+            ->where(['application_id' => $aid, 'sumber' => L::DARI_AI])->findAll();
+        $hrd = array_filter($ai, static fn ($b) => $b['kategori'] === L::KAT_HRD);
+        $this->assertCount(count(L::dariTranskrip()), $hrd, 'lembarnya tetap terisi, bukan dikosongkan');
+        $this->assertSame(0, L::skor($ai), 'seluruhnya terendah berarti 0 dari 100');
     }
 
     /**
@@ -722,7 +777,12 @@ final class TranskripCallbackTest extends CIUnitTestCase
         $this->assertSame('Communication Skills', $ai[0]['kompetensi']);
     }
 
-    public function testNilaiDiLuarSkalaDibuang(): void
+    /**
+     * Nilai di luar skala TIDAK dijepit ke yang terdekat - 9 bukan 5. Ia
+     * diperlakukan sama dengan butir yang tidak terjawab: jatuh ke terendah,
+     * dan catatannya menyebutkan itu datang dari angka yang tidak terbaca.
+     */
+    public function testNilaiDiLuarSkalaJadiTerendah(): void
     {
         $aid = $this->fixture();
 
@@ -734,18 +794,27 @@ final class TranskripCallbackTest extends CIUnitTestCase
 
         $ai = (new InterviewPenilaianModel())
             ->where(['application_id' => $aid, 'sumber' => L::DARI_AI])->findAll();
-        $this->assertCount(1, $ai);
-        $this->assertSame('Service Orientation', $ai[0]['kompetensi']);
+        $tingkat = array_column($ai, 'tingkat', 'kompetensi');
+
+        $this->assertCount(3, $ai);
+        $this->assertSame('1', $tingkat['Communication Skills'], '9 jangan dijepit jadi 5');
+        $this->assertSame('1', $tingkat['Adaptability']);
+        $this->assertSame('3', $tingkat['Service Orientation']);
+        $this->assertStringContainsString(
+            'tidak terbaca',
+            array_column($ai, 'catatan', 'kompetensi')['Communication Skills'],
+        );
     }
 
     /**
-     * Butir yang tidak bisa dinilai DILEWATI, bukan disimpan bernilai nol.
+     * Butir yang tidak bisa dinilai disimpan bernilai TERENDAH, bukan dilewati
+     * (permintaan atasan 21 Agustus 2026).
      *
-     * Butir kosong tidak ikut dihitung LembarPenilaian::skor(); nol akan
-     * menyeret rata-ratanya turun dan menggugurkan kandidat karena bahannya
-     * kurang, bukan karena jawabannya.
+     * Dulu butir kosong tidak ikut dihitung LembarPenilaian::skor(), jadi
+     * kandidat yang cuma menjawab dua dari enam kompetensi dinilai dari dua itu
+     * saja - dan rata-ratanya justru tinggi karena empat sisanya tidak terjawab.
      */
-    public function testButirTanpaNilaiTidakDisimpanSebagaiNol(): void
+    public function testButirTanpaNilaiDisimpanBernilaiTerendah(): void
     {
         $aid   = $this->fixture();
         $nilai = array_map(
@@ -758,8 +827,40 @@ final class TranskripCallbackTest extends CIUnitTestCase
 
         $ai = (new InterviewPenilaianModel())
             ->where(['application_id' => $aid, 'sumber' => L::DARI_AI])->findAll();
-        $this->assertCount(count(L::dariTranskrip()) - 1, $ai);
+        $tingkat = array_column($ai, 'tingkat', 'kompetensi');
+
+        $this->assertCount(count(L::dariTranskrip()), $ai, 'tidak ada butir yang hilang dari lembar');
+        $this->assertSame('1', $tingkat[L::dariTranskrip()[0]]);
         $this->assertSame([], array_filter($ai, static fn ($b) => $b['tingkat'] === '0'));
+    }
+
+    /**
+     * Inti permintaannya: butir yang tak terjawab menurunkan skor, bukan
+     * menghilang dari perhitungan.
+     *
+     * Dua dari enam kompetensi dijawab sempurna, empat sisanya kosong. Dengan
+     * aturan lama skornya 100 - sempurna, dari dua butir. Sekarang empat butir
+     * yang tidak terbukti ikut dihitung apa adanya.
+     */
+    public function testSkorTurunSaatSebagianBesarButirTakTerjawab(): void
+    {
+        $aid   = $this->fixture();
+        $semua = L::dariTranskrip();
+        $nilai = array_map(
+            static fn (string $k): array => ['kompetensi' => $k, 'nilai' => null, 'alasan' => 'Tidak ada bahan.'],
+            $semua
+        );
+        $nilai[0]['nilai'] = 5;
+        $nilai[1]['nilai'] = 5;
+
+        $this->kirim($aid, penilaian: $nilai);
+
+        $ai   = (new InterviewPenilaianModel())
+            ->where(['application_id' => $aid, 'sumber' => L::DARI_AI])->findAll();
+        $skor = L::skor($ai);
+
+        $this->assertNotSame(100, $skor, 'dua butir sempurna tidak boleh jadi nilai sempurna');
+        $this->assertSame(33, $skor, 'rata-rata (5+5+1+1+1+1)/6 = 2,33 dari skala 1-5, jadi 33 dari 100');
     }
 
     // --- unduhan rekaman untuk ai-service ---

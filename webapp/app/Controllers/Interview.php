@@ -139,10 +139,24 @@ class Interview extends BaseController
     /**
      * Simpan nilai per kompetensi beserta alasannya.
      *
-     * Kompetensi yang TIDAK bisa dinilai dari transkrip sengaja dilewati, bukan
-     * disimpan bernilai nol: butir yang tak terisi tidak ikut dihitung
-     * LembarPenilaian::skor(), sedangkan nol akan menyeret rata-ratanya turun
-     * dan menggugurkan kandidat karena bahannya kurang, bukan karena jawabannya.
+     * Kompetensi yang TIDAK bisa dinilai dari transkrip disimpan bernilai
+     * TERENDAH, bukan dilewati (permintaan atasan 21 Agustus 2026). Sebelumnya
+     * butir kosong tidak ikut dihitung LembarPenilaian::skor(), sehingga
+     * kandidat yang cuma menjawab dua dari enam kompetensi dinilai dari dua itu
+     * saja - dan rata-ratanya justru tinggi karena empat sisanya tidak terjawab.
+     *
+     * Berlaku juga saat TAK SATU PUN butir terbaca: lembarnya tetap terisi
+     * enam angka terendah dan keputusannya tetap diambil mesin. ai-service
+     * memaksa rekomendasinya jadi 'not_recommended' pada keadaan itu, jadi
+     * hasilnya gugur - bukan mengambang menunggu recruiter.
+     *
+     * Yang menetapkan nilai terendah itu ai-service, berikut kalimat yang
+     * menerangkan sebabnya. Yang di sini penjaga terakhir: angka yang tetap
+     * tidak terbaca pun tidak boleh membuat kompetensinya hilang dari lembar,
+     * karena hilang berarti kembali ke perilaku lama tanpa ada yang tahu.
+     *
+     * Nama kompetensi di luar daftar tetap DIBUANG. Itu bukan butir yang gagal
+     * dinilai, itu butir yang tidak pernah diminta.
      *
      * @param  list<array<string, mixed>>  $penilaian
      * @return list<array<string, mixed>>
@@ -153,13 +167,15 @@ class Interview extends BaseController
         $baris = [];
         foreach ($penilaian as $p) {
             $nama  = (string) ($p['kompetensi'] ?? '');
-            $nilai = $p['nilai'] ?? null;
-            if (! in_array($nama, $sah, true) || ! is_numeric($nilai)) {
+            if (! in_array($nama, $sah, true)) {
                 continue;
             }
-            $n = (int) $nilai;
+            $nilai   = $p['nilai'] ?? null;
+            $n       = is_numeric($nilai) ? (int) $nilai : 0;
+            $catatan = (string) ($p['alasan'] ?? '');
             if ($n < 1 || $n > LembarPenilaian::MAKS_SKALA) {
-                continue;
+                $n       = 1;
+                $catatan = 'Nilai dari AI tidak terbaca, dihitung sebagai nilai terendah. ' . $catatan;
             }
             $baris[] = [
                 'kompetensi' => $nama,
@@ -170,7 +186,7 @@ class Interview extends BaseController
                 // transkrip, penilaian otomatis cuma angka yang tidak bisa
                 // dibantah siapa pun, termasuk kandidat yang bertanya kenapa
                 // ia gugur.
-                'catatan'    => mb_substr((string) ($p['alasan'] ?? ''), 0, LembarPenilaian::MAKS_CATATAN),
+                'catatan'    => mb_substr($catatan, 0, LembarPenilaian::MAKS_CATATAN),
             ];
         }
 
@@ -325,11 +341,12 @@ class Interview extends BaseController
 
         [$lolos, $alasanAi, $kecocokan, $sebabKecocokan] = $rekomendasi + [null, '', '', ''];
 
-        // Wawancara yang membahas pekerjaan lain tidak pernah diputus mesin:
-        // ai-service mengosongkan rekomendasinya sendiri saat kecocokannya
-        // rendah. Yang ditambahkan di sini SEBABNYA, supaya recruiter tahu
-        // transkrip yang diunggah tidak nyambung dengan posisinya - bukan
-        // sekadar tahu bahwa AI tidak menjawab.
+        // Sejak 21 Agustus 2026 wawancara yang membahas pekerjaan lain
+        // MENGGUGURKAN: ai-service mengisi rekomendasinya 'not_recommended'
+        // sendiri saat kecocokannya rendah. Yang ditambahkan di sini SEBABNYA,
+        // supaya recruiter dan kandidat sama-sama bisa membaca bahwa yang
+        // menggugurkan adalah transkrip yang tidak nyambung dengan posisinya -
+        // bukan jawaban kandidat yang dinilai buruk.
         $catatanKec = $kecocokan === '' ? ''
             : ' Kecocokan wawancara dengan posisi: ' . $kecocokan
             . ($sebabKecocokan === '' ? '.' : ' - ' . $sebabKecocokan . '.');

@@ -148,7 +148,38 @@ belum lengkap.
 | Skor CV ada, transkrip berhasil | `gate_2 / passed atau failed / system:transkrip` | `hasil_gate` |
 | Transkripsi gagal | `gate_2 / flagged / system:transkrip` | tidak ada |
 | Skor CV tidak ada | `gate_2 / flagged / system:transkrip` | tidak ada |
+| Sebagian kompetensi tak bisa dinilai | butir itu bernilai 1, sisanya apa adanya | ikut hasil Gate 2 |
+| TAK SATU PUN kompetensi bisa dinilai | `gate_2 / failed / system:transkrip` | `hasil_gate` |
+| Wawancara tidak nyambung dengan posisinya | `gate_2 / failed / system:transkrip` | `hasil_gate` |
+| AI memilih tidak memutuskan | `gate_2 / flagged / system:transkrip` | tidak ada |
 | Keputusan manual menyusul | `gate_2 / passed atau failed / recruiter:<nama>` | `hasil_gate` |
+
+Empat baris di tengah tabel itu adalah permintaan atasan 21 Agustus 2026. Kompetensi yang tidak bisa dinilai dari transkrip dihitung
+sebagai nilai TERENDAH, bukan dikeluarkan dari perhitungan - dulu kandidat
+yang cuma menjawab dua dari enam kompetensi dinilai dari dua itu saja, dan
+rata-ratanya justru tinggi karena empat sisanya tidak terjawab. Bila tak
+satu pun butir bisa dinilai, seluruh lembar bernilai terendah dan
+kandidatnya gugur otomatis; ai-service memaksa rekomendasinya
+`not_recommended` supaya keputusannya tidak bergantung pada kalimat model
+yang disusun dari bahan yang tidak ada.
+
+Baris ketiga, `kecocokan` bernilai `rendah`, ikut menggugurkan sejak hari yang
+sama. Sampai sebelum itu ia diserahkan ke recruiter dengan alasan transkrip yang
+membahas pekerjaan lain tidak menerangkan apa pun tentang kandidat DI POSISI
+INI. Sekarang alasan itu dibalik: posisi inilah yang sedang diisi, dan wawancara
+yang tidak menyentuhnya tidak menunjukkan kesiapan apa pun untuknya.
+
+Pada dua keadaan yang menggugurkan otomatis itu, alasan penolakan yang
+ditulis model TIDAK dipakai.
+Model menyusun kalimatnya sambil masih menimbang kemungkinan meloloskan, jadi ia
+bisa memuji kandidat tepat di sebelah keputusan yang menolaknya - dan kalimat
+itulah yang dibaca perekrut saat kandidat bertanya kenapa ia gugur. Yang dipakai
+kalimat tetap dari `ALASAN_TANPA_BAHAN` atau `ALASAN_TIDAK_COCOK`, ditambah
+sebab kecocokannya.
+
+Yang tersisa sebagai `flagged` dari sisi AI cuma satu: model MEMILIH tidak
+memutuskan (aturan 16 pada `SYSTEM_NILAI`), yang dibolehkan saat transkripnya
+terlalu tipis untuk yakin.
 
 Baris `flagged` berarti DATANYA kurang, bukan kandidatnya buruk. Recruiter
 memutuskan lewat tombol Loloskan / Tidak Lolos (`Recruiter::putusGate2`), satu

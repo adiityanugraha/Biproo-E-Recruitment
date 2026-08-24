@@ -3,7 +3,7 @@
 import json
 
 import nilai
-from nilai import nilai_dari_transkrip
+from nilai import SKALA_MIN, nilai_dari_transkrip
 
 KOMPETENSI = ["Communication Skills", "Adaptability", "Problem-Solving Ability"]
 
@@ -82,18 +82,33 @@ def test_urutan_llm_yang_tertukar_tidak_menggeser_nilai():
     }
 
 
-def test_kompetensi_yang_tidak_dijawab_tetap_dikembalikan_bernilai_none():
+def test_kompetensi_yang_tidak_dijawab_jadi_nilai_terendah():
     """
-    Bukan dihilangkan: CI4 harus bisa membedakan "tidak cukup bahan" dari
-    "tidak pernah diminta", dan keduanya memang berbeda artinya.
+    21 Agustus 2026, permintaan atasan: penilaian harus tetap berjalan otomatis
+    walau modelnya tidak sanggup menilai sebagian butir.
+
+    Sebelumnya butir itu dikembalikan bernilai None lalu dilewati saat menghitung
+    skor, jadi kandidat yang cuma menjawab satu dari tiga kompetensi dinilai dari
+    satu itu saja.
     """
     llm = _LLM(_jawaban(("Communication Skills", 4, "a")))
 
     h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, llm)
 
     assert [b.kompetensi for b in h.butir] == KOMPETENSI
-    assert h.butir[1].nilai is None
-    assert "tidak mengembalikan butir ini" in h.butir[1].alasan
+    assert [b.nilai for b in h.butir] == [4, SKALA_MIN, SKALA_MIN]
+
+
+def test_nilai_terendah_menyebutkan_sebabnya():
+    """
+    Angka 1 tanpa keterangan terbaca sebagai "kandidat menjawab dengan buruk".
+    Yang benar: tidak ada yang bisa dinilai. Recruiter membaca kolom ini untuk
+    memutuskan nasib seseorang, jadi bedanya harus tertulis.
+    """
+    h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, _LLM(_jawaban(("Communication Skills", 4, "a"))))
+
+    assert "tidak memuat bahan" in h.butir[1].alasan
+    assert "tidak mengembalikan butir ini" in h.butir[1].alasan, "sebab teknisnya jangan hilang"
 
 
 def test_kompetensi_asing_dibuang():
@@ -107,10 +122,11 @@ def test_kompetensi_asing_dibuang():
     assert [b.kompetensi for b in h.butir] == KOMPETENSI
 
 
-def test_nilai_di_luar_skala_jadi_none_bukan_dijepit():
+def test_nilai_di_luar_skala_jatuh_ke_terendah_bukan_dijepit():
     """
     Menjepit 9 jadi 5 berarti diam-diam mengarang penilaian TERTINGGI dari
-    jawaban yang jelas tidak dipahami modelnya.
+    jawaban yang jelas tidak dipahami modelnya. Yang di luar skala diperlakukan
+    sama dengan tidak dijawab: jatuh ke nilai terendah, bukan ke nilai terdekat.
     """
     llm = _LLM(_jawaban(
         ("Communication Skills", 9, "a"),
@@ -120,16 +136,30 @@ def test_nilai_di_luar_skala_jadi_none_bukan_dijepit():
 
     h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, llm)
 
-    assert [b.nilai for b in h.butir] == [None, None, 3]
+    assert [b.nilai for b in h.butir] == [SKALA_MIN, SKALA_MIN, 3]
 
 
-def test_semua_null_dianggap_gagal():
-    llm = _LLM(_jawaban(*[(k, None, "tidak cukup bahan") for k in KOMPETENSI]))
+def test_semua_null_jadi_terendah_bukan_diserahkan_ke_recruiter():
+    """
+    21 Agustus 2026, permintaan atasan: penilaian yang jelek langsung tidak
+    diloloskan, tidak diserahkan ke recruiter.
+
+    Sampai hari itu keadaan ini berhenti sebagai 'gagal' dan Gate 2 ditandai
+    'flagged'. Sekarang lembarnya tetap terisi - seluruhnya bernilai terendah -
+    dan keputusannya diambil mesin.
+    """
+    llm = _LLM(json.dumps({
+        "penilaian": [{"kompetensi": k, "nilai": None, "alasan": "tidak cukup bahan"}
+                      for k in KOMPETENSI],
+        "kecocokan": "tinggi", "alasan_kecocokan": "Membahas pekerjaan yang sama.",
+    }, ensure_ascii=False))
 
     h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, llm)
 
-    assert not h.berhasil
-    assert "Tak satu pun" in h.catatan
+    assert h.berhasil
+    assert [b.nilai for b in h.butir] == [SKALA_MIN] * len(KOMPETENSI)
+    assert h.rekomendasi == "not_recommended"
+    assert "Tak satu pun kompetensi" in h.alasan_rekomendasi
 
 
 def test_transkrip_kosong_ditolak_tanpa_memanggil_llm():
@@ -264,20 +294,24 @@ def test_narasi_kepanjangan_dipotong_selebar_kolom():
 
 def test_narasi_tidak_ikut_saat_tak_satu_pun_kompetensi_dinilai():
     """
-    Kalau bahannya memang tidak ada, rangkuman yang tetap terisi akan terbaca
-    sebagai penilaian yang sah - padahal ia lolos justru karena tidak dituntut
-    angka.
+    Keputusannya sekarang tetap diambil (butir jadi terendah), tapi kalimat
+    rangkuman model TIDAK ikut. Ia merangkum dari transkrip yang tidak memberi
+    apa-apa, dan "Terdengar percaya diri" di sebelah enam angka terendah cuma
+    membuat lembar itu terbaca seperti penilaian yang punya dasar.
     """
     llm = _LLM(json.dumps({
         "penilaian": [{"kompetensi": k, "nilai": None, "alasan": "tidak cukup bahan"} for k in KOMPETENSI],
         "kekuatan": "Terdengar percaya diri.",
         "kelemahan": "",
+        "kecocokan": "tinggi",
+        "alasan_kecocokan": "Membahas pekerjaan yang sama.",
     }, ensure_ascii=False))
 
     h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, llm)
 
-    assert not h.berhasil
+    assert h.berhasil
     assert h.kekuatan == ""
+    assert h.kelemahan == ""
 
 
 def test_prompt_melarang_kelemahan_yang_dilunakkan():
@@ -343,18 +377,40 @@ def test_nilai_rekomendasi_asing_jadi_none_bukan_ditebak_paling_dekat():
         assert h.rekomendasi is None, asing
 
 
-def test_rekomendasi_tidak_ikut_saat_tak_satu_pun_kompetensi_dinilai():
-    """Keputusan yang tetap terisi dari bahan yang tidak ada akan terbaca
-    sebagai keputusan yang sah."""
+def test_rekomendasi_model_tidak_dipakai_saat_tak_ada_bahan():
+    """
+    Model bilang 'recommended' padahal tak satu pun kompetensi bisa ia nilai.
+    Yang menang aturannya, bukan kalimatnya: penilaian yang seluruhnya bernilai
+    terendah tidak diloloskan.
+    """
     llm = _LLM(json.dumps({
         "penilaian": [{"kompetensi": k, "nilai": None, "alasan": "x"} for k in KOMPETENSI],
-        "rekomendasi": "not_recommended", "alasan_rekomendasi": "Tidak meyakinkan.",
+        "rekomendasi": "recommended", "alasan_rekomendasi": "Kandidat menjanjikan.",
+        "kecocokan": "tinggi", "alasan_kecocokan": "Membahas pekerjaan yang sama.",
     }, ensure_ascii=False))
 
     h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, llm)
 
-    assert not h.berhasil
-    assert h.rekomendasi is None
+    assert h.rekomendasi == "not_recommended"
+    assert "menjanjikan" not in h.alasan_rekomendasi
+
+
+def test_dua_sebab_gugur_sekaligus_tetap_satu_keputusan():
+    """
+    Tak satu pun butir bisa dinilai DAN wawancaranya tidak nyambung. Keduanya
+    kini menggugurkan, jadi yang perlu dipastikan cuma keputusannya tidak
+    berubah jadi mengambang karena aturannya bertabrakan.
+    """
+    llm = _LLM(json.dumps({
+        "penilaian": [{"kompetensi": k, "nilai": None, "alasan": "x"} for k in KOMPETENSI],
+        "rekomendasi": "recommended", "alasan_rekomendasi": "x",
+        "kecocokan": "rendah", "alasan_kecocokan": "Seluruhnya membahas pekerjaan lain.",
+    }, ensure_ascii=False))
+
+    h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, llm)
+
+    assert h.rekomendasi == "not_recommended"
+    assert h.kecocokan == "rendah", "sebab kedua tetap terbaca di riwayat tahap"
 
 
 def test_skor_cv_ikut_jadi_bahan_keputusan():
@@ -452,7 +508,7 @@ def test_pertanyaan_yang_diajukan_ikut_dikirim():
     assert "gangguan keamanan" in llm.terakhir["question"]
 
 
-def test_kecocokan_rendah_membatalkan_rekomendasi():
+def test_kecocokan_rendah_menggugurkan():
     """
     INI perbaikan intinya. Transkrip wawancara gudang yang dimasukkan ke posisi
     Security System dulu tetap diloloskan dengan nilai bagus: jawabannya memang
@@ -460,20 +516,30 @@ def test_kecocokan_rendah_membatalkan_rekomendasi():
 
     Ditegakkan di kode, bukan cuma diminta lewat aturan prompt - model bisa saja
     mengisi 'rendah' lalu tetap merekomendasikan, dan itu persis yang terjadi.
+
+    21 Agustus 2026, permintaan atasan: keadaan ini tidak lagi diserahkan ke
+    perekrut, ia menggugurkan.
     """
     h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, _LLM(_jawaban_kecocokan("rendah", "recommended")))
 
     assert h.kecocokan == "rendah"
-    assert h.rekomendasi is None, "kecocokan rendah tidak boleh meloloskan"
+    assert h.rekomendasi == "not_recommended", "kecocokan rendah tidak boleh meloloskan"
     assert h.berhasil, "penilaian per kompetensinya tetap tersimpan"
 
 
-def test_kecocokan_rendah_juga_membatalkan_penolakan():
-    """Wawancara yang membahas pekerjaan lain tidak cukup untuk meloloskan
-    MAUPUN menggugurkan - keputusannya milik perekrut."""
-    h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, _LLM(_jawaban_kecocokan("rendah", "not_recommended")))
+def test_alasan_penolakan_tidak_memakai_kalimat_model():
+    """
+    Model menulis alasannya sambil masih menimbang kemungkinan meloloskan, jadi
+    ia bisa memuji kandidat tepat di sebelah keputusan yang menolaknya - dan
+    kalimat itulah yang dibaca perekrut saat kandidat bertanya kenapa ia gugur.
+    """
+    h = nilai_dari_transkrip(
+        TRANSKRIP, KOMPETENSI,
+        _LLM(_jawaban_kecocokan("rendah", "recommended")),
+    )
 
-    assert h.rekomendasi is None
+    assert "tidak menyangkut pekerjaan" in h.alasan_rekomendasi
+    assert "cocok dengan posisinya" not in h.alasan_rekomendasi
 
 
 def test_kecocokan_tinggi_tidak_mengganggu_rekomendasi():
@@ -490,7 +556,7 @@ def test_kecocokan_yang_tidak_dijawab_dianggap_rendah():
         h = nilai_dari_transkrip(TRANSKRIP, KOMPETENSI, _LLM(_jawaban_kecocokan(asing)))
 
         assert h.kecocokan == "rendah", asing
-        assert h.rekomendasi is None, asing
+        assert h.rekomendasi == "not_recommended", asing
 
 
 def test_tanpa_syarat_tidak_ada_blok_karangan():

@@ -28,6 +28,32 @@ SKALA_MAKS = 5
 
 MAKS_ALASAN = 500   # sama dengan lebar kolom interview_penilaian.catatan
 
+# Kalimat yang mendahului alasan butir yang tidak terjawab modelnya. Ditulis
+# di DEPAN, bukan di belakang: kolom alasan di lembar penilaian sempit, dan
+# yang membacanya perlu tahu lebih dulu bahwa angka 1 itu datang dari
+# ketiadaan bahan, bukan dari jawaban yang buruk.
+# Alasan yang menggantikan alasan model saat TAK SATU PUN kompetensi bisa
+# dinilai. Ditulis di sini, bukan diambil dari model: pada keadaan itu
+# kalimat model justru bagian yang paling tidak bisa dipercaya.
+# Alasan penolakan saat wawancaranya tidak menyangkut posisi yang dilamar.
+# Alasan model sendiri tidak dipakai: ia menyusunnya sambil menimbang
+# kemungkinan meloloskan, jadi kalimatnya bisa memuji kandidat tepat di
+# sebelah keputusan yang menolaknya.
+ALASAN_TIDAK_COCOK = (
+    "Wawancara ini tidak menyangkut pekerjaan pada syarat posisi yang dilamar, "
+    "jadi tidak ada yang menunjukkan kesiapan kandidat di posisi ini. "
+)
+
+ALASAN_TANPA_BAHAN = (
+    "Tak satu pun kompetensi bisa dinilai dari wawancara ini, jadi seluruh "
+    "butir bernilai terendah."
+)
+
+ALASAN_TERENDAH = (
+    "Diberi nilai terendah karena transkrip tidak memuat bahan untuk menilai "
+    "kompetensi ini. "
+)
+
 # Transkrip 30 menit bisa 40.000 karakter. Dipotong supaya permintaannya tidak
 # membengkak, dan yang dipotong bagian AKHIR: wawancara dibuka dengan basa-basi
 # lalu masuk ke pertanyaan inti, jadi awal transkrip justru yang paling penting.
@@ -64,6 +90,10 @@ SYSTEM_NILAI = (
     "nilai null dan tulis alasannya. JANGAN menebak, dan JANGAN memberi nilai "
     "tengah (3) sekadar supaya terisi - angka karangan lebih berbahaya daripada "
     "kolom kosong, karena ia ikut menentukan kandidat lolos atau tidak.\n"
+    "   Ketahuilah akibatnya: null DIHITUNG sebagai nilai terendah (1), bukan "
+    "dikeluarkan dari perhitungan. Jadi jangan memakainya untuk menghindari "
+    "kompetensi yang sulit dinilai - pakai hanya bila transkrip benar-benar "
+    "tidak menyentuh kompetensi itu sama sekali.\n"
     "5. JANGAN menilai berdasarkan usia, agama, suku, jenis kelamin, status "
     "pernikahan, atau kondisi kesehatan, walaupun hal itu ikut tersebut di "
     "transkrip. Ini larangan keras.\n"
@@ -114,9 +144,10 @@ SYSTEM_NILAI = (
     "'rekomendasi' dengan null. Itu bukan kegagalan - keputusannya lalu "
     "diserahkan ke perekrut, dan itu jauh lebih baik daripada menolak orang "
     "dari bahan yang tidak cukup.\n"
-    "17. Bila 'kecocokan' bernilai 'rendah', isi 'rekomendasi' dengan null "
-    "juga. Wawancara yang membahas pekerjaan lain tidak cukup untuk meloloskan "
-    "MAUPUN menggugurkan seseorang - yang benar menyerahkannya ke perekrut.\n"
+    "17. Bila 'kecocokan' bernilai 'rendah', isi 'rekomendasi' dengan "
+    "'not_recommended'. Wawancara yang tidak menyangkut pekerjaan pada SYARAT "
+    "POSISI tidak menunjukkan kesiapan apa pun DI POSISI INI, dan posisi inilah "
+    "yang sedang diisi.\n"
     "18. JANGAN memutuskan berdasarkan usia, agama, suku, jenis kelamin, status "
     "pernikahan, atau kondisi kesehatan. Ini larangan keras.\n\n"
     '19. Jawab HANYA JSON: {"penilaian": [{"kompetensi": "...", "nilai": 1-5 '
@@ -316,14 +347,26 @@ def nilai_dari_transkrip(
     def narasi(kunci: str) -> str:
         return str(d.get(kunci, "")).strip()[:MAKS_NARASI]
 
-    if all(b.nilai is None for b in hasil):
-        # Kekuatan/kelemahan DAN rekomendasi tidak ikut dikembalikan di sini.
-        # Kalau tak satu pun kompetensi bisa dinilai, bahannya memang tidak ada
-        # - dan keputusan yang tetap terisi dari bahan yang sama akan terbaca
-        # sebagai penilaian yang sah, padahal ia satu-satunya yang lolos justru
-        # karena tidak dituntut angka.
-        return Hasil(hasil, "gagal",
-                     "Tak satu pun kompetensi bisa dinilai dari transkrip ini.")
+    # Tak satu pun kompetensi terjawab. Sampai 21 Agustus 2026 keadaan ini
+    # dihentikan sebagai 'gagal' dan diserahkan ke recruiter; sejak permintaan
+    # atasan hari itu ia diperlakukan sama dengan butir yang gagal sebagian -
+    # seluruhnya bernilai terendah, dan keputusannya diambil mesin.
+    tanpa_bahan = all(b.nilai is None for b in hasil)
+
+    # Butir yang tidak terjawab dihitung sebagai nilai TERENDAH, bukan
+    # dikeluarkan dari perhitungan (permintaan 21 Agustus 2026).
+    #
+    # Sebelum ini butir kosong dilewati LembarPenilaian::skor(), jadi kandidat
+    # yang cuma menjawab dua dari enam kompetensi dinilai dari dua itu saja -
+    # rata-ratanya bisa tinggi JUSTRU karena empat sisanya tidak terjawab.
+    # Sekarang kompetensi yang tidak terbukti dihitung apa adanya. Alasannya
+    # ikut menyebutkan sebabnya supaya recruiter tidak membaca angka itu
+    # sebagai jawaban yang buruk.
+    hasil = tuple(
+        b if b.nilai is not None
+        else b._replace(nilai=SKALA_MIN, alasan=(ALASAN_TERENDAH + b.alasan)[:MAKS_ALASAN])
+        for b in hasil
+    )
 
     # Nilai di luar dua yang diakui - termasuk ejaan karangan seperti "Hire"
     # atau "recommend" - jadi None, bukan ditebak paling dekat. Menebak di sini
@@ -337,13 +380,28 @@ def nilai_dari_transkrip(
     kec = d.get("kecocokan")
     kec = kec if kec in KECOCOKAN else "rendah"
 
-    # DITEGAKKAN DI KODE, bukan cuma diminta lewat aturan 17. Transkrip yang
-    # membahas pekerjaan lain tidak cukup untuk meloloskan MAUPUN
-    # menggugurkan seseorang; keputusannya milik perekrut. Sisi CI4 sudah
-    # memperlakukan rekomendasi kosong sebagai 'flagged', jadi jalurnya ada
-    # dan tidak perlu aturan baru di sana.
+    # DUA keadaan menggugurkan sendiri, DITEGAKKAN DI KODE dan bukan sekadar
+    # diminta lewat aturan 17 (permintaan atasan 21 Agustus 2026). Keduanya
+    # dulu diserahkan ke perekrut; sekarang tidak.
+    #
+    # Pada kedua keadaan itu kalimat model TIDAK dipakai sebagai alasan. Ia
+    # menyusunnya sambil masih menimbang kemungkinan meloloskan, jadi ia bisa
+    # memuji kandidat tepat di sebelah keputusan yang menolaknya - dan kalimat
+    # itulah yang dibaca perekrut saat kandidat bertanya kenapa ia gugur.
+    if tanpa_bahan:
+        # Kekuatan/kelemahan ikut dikosongkan. "Terdengar percaya diri" di
+        # sebelah enam angka terendah cuma membuat lembar itu terbaca seperti
+        # penilaian yang punya dasar.
+        return Hasil(hasil, "selesai", "", "", "",
+                     "not_recommended", ALASAN_TANPA_BAHAN, kec, narasi("alasan_kecocokan"))
+
     if kec == "rendah":
-        rek = None
+        return Hasil(
+            hasil, "selesai", "", narasi("kekuatan"), narasi("kelemahan"),
+            "not_recommended",
+            (ALASAN_TIDAK_COCOK + narasi("alasan_kecocokan"))[:MAKS_NARASI],
+            kec, narasi("alasan_kecocokan"),
+        )
 
     return Hasil(hasil, "selesai", "", narasi("kekuatan"), narasi("kelemahan"),
                  rek, narasi("alasan_rekomendasi"), kec, narasi("alasan_kecocokan"))
