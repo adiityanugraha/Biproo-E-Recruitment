@@ -1,8 +1,14 @@
 # E-REQ - Sistem E-Recruitment BIPROO
 
-Aplikasi rekrutmen dengan penilaian kemiripan CV berbantuan AI. Kandidat melamar
-dan mengunggah CV, sistem membaca CV lalu menghitung kemiripannya terhadap
-lowongan, recruiter meninjau dan menjadwalkan interview Zoom.
+Sistem rekrutmen berbantuan AI, dari pelamar mengunggah CV sampai keputusan
+diterima atau tidak.
+
+Alurnya: kandidat melamar dan mengunggah CV, sistem membaca CV lalu menghitung
+kemiripannya terhadap lowongan, kandidat mengerjakan assessment, memilih jadwal,
+lalu diwawancara lewat Zoom. Rekaman wawancara ditranskripsi dan dinilai
+otomatis, dan AI memberi rekomendasi diterima atau tidak. Untuk posisi tertentu
+ada tahap Interview User, yaitu wawancara dengan calon atasan yang memakai akun
+tersendiri, dan di situlah keputusan akhirnya.
 
 Isi repo:
 
@@ -13,6 +19,48 @@ Isi repo:
 | `kalibrasi/` | Skrip analisis mutu model, tidak dipakai saat aplikasi berjalan |
 | `docs/` | Catatan teknis dan hasil pengukuran |
 | `db/` | Berkas SQL pendukung |
+
+---
+
+## Status serah terima (24 Agustus 2026)
+
+Dikerjakan selama magang 13 Juli sampai 24 Agustus 2026. **Sistemnya berjalan
+utuh di lingkungan lokal dan belum pernah di-deploy ke server.**
+
+### Yang sudah berjalan ujung ke ujung
+
+Kandidat mendaftar, mengunggah CV, CV dibaca dan diskor AI, assessment, Gate 1,
+memilih jadwal, ruang Zoom dibuat otomatis, recruiter mewawancara dan mengunggah
+rekaman, rekaman ditranskripsi lalu dinilai AI, AI memutuskan rekomendasi, Gate
+2 menutup sendiri, dan untuk posisi ber-Interview User keputusan akhir pindah ke
+akun atasan. Kandidat yang gugur karena salah posisi diberi tiga saran lowongan
+lain. Tiap perpindahan tahap tercatat dan sebagian memicu email otomatis.
+
+**551 uji PHP dan 208 uji Python, seluruhnya lulus.**
+
+### Yang SENGAJA belum selesai, dan perlu diputuskan penerusnya
+
+| Perkara | Keterangan |
+|---|---|
+| Assessment masih placeholder | Satu pertanyaan ya/tidak yang sama untuk semua posisi. Assessment sungguhan (TIU, DISC, Excel Test) di luar cakupan magang ini |
+| Delapan tahap opsional belum bisa ditandai selesai | Excel Test, Training Class, dan sejenisnya bisa dipasang di alur lewat Settings, tapi belum ada aksi untuk menutupnya. Kandidat akan melihatnya terkunci selamanya |
+| Belum ada lupa sandi dan verifikasi email | Kandidat yang lupa sandi terkunci permanen, dan siapa pun bisa mendaftar memakai email orang lain |
+| Belum ada pembatasan percobaan login | Tiga halaman login tidak dibatasi |
+| Lowongan belum punya penanda buka/tutup | Ke-34 lowongan selalu dianggap menerima pelamar |
+| Saran posisi baru terukur pada 52 kandidat | Perlu diukur ulang setelah ada cukup kandidat sungguhan, lihat `docs/kalibrasi-saran-posisi.md` |
+
+### Sebelum dipakai sungguhan
+
+1. **Ganti sandi recruiter bawaan** (`recruiter123` dari `RecruiterSeeder`).
+2. **Putar ulang kredensial** `GEMINI_API_KEY`, `zoom.clientSecret`, dan
+   `email.SMTPPass` bila berkas `.env` pernah berpindah tangan. `.env` sengaja
+   tidak ikut di git.
+3. **Naikkan kuota Gemini** dari tier gratis. Batas 20 permintaan sehari cukup
+   untuk uji coba, tidak untuk rekrutmen sungguhan. Lihat bagian batas kuota
+   di bawah.
+4. **Jalankan checklist** di [docs/deploy.md](docs/deploy.md).
+5. Baca [docs/kalibrasi-gate.md](docs/kalibrasi-gate.md) sebelum mengubah
+   ambang apa pun. Beberapa angka yang tampak wajar sudah diuji dan gagal.
 
 ---
 
@@ -183,6 +231,48 @@ Untuk Gmail, `email.SMTPPass` harus **App Password**, bukan sandi akun biasa.
 
 ---
 
+## Yang harus jalan sehari-hari
+
+Empat hal. Kalau salah satu mati, yang hilang cuma bagiannya - sistemnya tidak
+tumbang.
+
+| Yang dijalankan | Cara | Kalau mati |
+|---|---|---|
+| SQL Server | layanan Windows | seluruh aplikasi berhenti |
+| Aplikasi web | `cd webapp && php spark serve` | web tidak terbuka |
+| Layanan AI | klik dua kali `ai-service/ai-service.bat` | skor CV, transkripsi, dan penilaian wawancara berhenti; sisanya jalan |
+| Pengirim email | klik dua kali `webapp/kirim-email-otomatis.bat` | email menumpuk di tabel `email_queue`, tidak hilang |
+
+Dua `.bat` itu punya gelung penyalaan ulang: kalau layanannya mati sendiri, ia
+dinyalakan lagi. Biarkan jendelanya terbuka.
+
+**Yang tersangkut bisa dikejar, bukan hilang.** Skor CV yang tidak sampai bisa
+dikirim ulang, rekaman yang gagal ditranskripsi bisa dikirim ulang, dan email
+yang belum terkirim tetap menunggu di antrian.
+
+---
+
+## Perintah pemeliharaan
+
+Dijalankan dari folder `webapp`. Semuanya punya mode kering untuk melihat
+dampaknya lebih dulu.
+
+| Perintah | Gunanya |
+|---|---|
+| `php spark screening:resend --dry` | Kirim ulang screening CV yang belum berskor. `--paksa` menilai ulang yang sudah punya skor |
+| `php spark transkrip:resend --kering` | Kirim ulang rekaman yang transkripsinya tersangkut. `--gagal` menyertakan yang berstatus gagal |
+| `php spark vektor:isi --kering` | Hitung vektor syarat lowongan, bahan saran posisi. Perlu dijalankan setelah menambah lowongan lewat impor |
+| `php spark lamaran:hapus --email X --kering` | Hapus seluruh lamaran satu orang beserta ruang Zoom dan berkasnya. **Akunnya tidak disentuh** |
+| `php spark email:send` | Kosongkan antrian email sekali jalan |
+| `php spark lowongan:impor` | Impor posisi dan bank pertanyaan dari CSV tim DS |
+
+> **Hati-hati dengan `lamaran:hapus`.** Ia mencabut ruang Zoom di server Zoom
+> dan menghapus rekaman wawancara dari disk. Rekaman adalah berkas paling peka
+> di sistem ini. Perintahnya membuat cadangan lebih dulu, tapi periksa mode
+> kering sebelum menjalankannya sungguhan.
+
+---
+
 ## Menjalankan uji
 
 ```bash
@@ -224,8 +314,23 @@ Anda dan tidak butuh `ai-service` hidup.
 | [docs/kalibrasi-saran-posisi.md](docs/kalibrasi-saran-posisi.md) | Mutu saran posisi: terukur 1,9x lebih baik daripada menebak |
 | [ai-service/README.md](ai-service/README.md) | Kontrak API layanan AI |
 
-**Yang perlu diketahui sebelum menilai hasil skornya:** skor kemiripan mengukur
-tumpang tindih makna antara CV dan teks lowongan, **bukan kompetensi kandidat**.
-Ia tidak menentukan kelulusan tahap mana pun sendirian - keputusan selalu di
-tangan recruiter. Alasannya beserta angkanya ada di
+---
+
+## Dua hal yang wajib dimengerti penerus proyek ini
+
+**Skor kemiripan CV mengukur tumpang tindih makna antara CV dan teks lowongan,
+bukan kompetensi kandidat.** Ia sudah diukur atas 7.815 kandidat berlabel:
+ROC-AUC 0,589, dan di dalam satu posisi 0,499 yaitu setara lempar koin. Karena
+itu skor CV **dicabut dari Gate 1** dan tidak pernah menggugurkan siapa pun
+sendirian. Jangan dikembalikan tanpa mengukur ulang. Angkanya di
+[docs/kalibrasi-gate.md](docs/kalibrasi-gate.md) dan
 [docs/pipeline-screening-cv.md](docs/pipeline-screening-cv.md).
+
+**Sejak 24 Agustus 2026, AI memutuskan sendiri di Gate 2** atas permintaan
+manajemen: kandidat digugurkan otomatis berikut email penolakannya, tanpa
+recruiter menyentuh apa pun. Yang menahan keputusan itu tinggal tiga hal -
+transkripsi gagal, skor CV tidak tersedia, dan model memilih tidak memutuskan.
+Aturan lengkapnya beserta kapan mesin menolak memutuskan ada di
+[docs/gate-logic.md](docs/gate-logic.md). **Baca bagian itu sebelum mengubah
+apa pun di jalur penilaian wawancara**, karena yang berubah di sana langsung
+menyangkut orang yang menerima surat penolakan.

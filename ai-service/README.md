@@ -3,10 +3,18 @@
 Microservice screening CV untuk sistem E-REQ. Stateless, komunikasi async
 dengan aplikasi utama (CodeIgniter 4) via pola **202 + callback** (Blueprint A3.1).
 
-Status: **Fase 0 Day 3.** Endpoint `/screening` membalas 202 + `screening_job_id`,
-lalu worker background memanggil API embedding (3 field job requirement sebagai
-data dummy) lewat antrian + retry backoff (A3.3). Ekstraksi CV asli, skor, dan
-callback dibangun di Fase 1. Progres job bisa dicek via `GET /screening/{id}`.
+Status per 24 Agustus 2026: **berjalan penuh**. Lima endpoint hidup:
+
+| Endpoint | Gunanya |
+|---|---|
+| `POST /screening` | Baca CV, strukturkan, skor kemiripan terhadap lowongan |
+| `POST /interview` | Transkripsi rekaman wawancara lalu nilai enam kompetensi |
+| `POST /chat` | Chatbot status lamaran untuk kandidat |
+| `POST /pertanyaan` | Susun pertanyaan interview dari riwayat kerja kandidat |
+| `POST /vektor` | Embedding syarat lowongan, bahan saran posisi |
+
+Yang panjang (`/screening`, `/interview`) memakai pola **202 + callback**;
+sisanya sinkron. Progres job bisa dicek via `GET /screening/{id}`.
 
 ## Cara Menjalankan
 
