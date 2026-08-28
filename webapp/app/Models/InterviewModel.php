@@ -85,6 +85,26 @@ class InterviewModel extends Model
     }
 
     /**
+     * Jumlah pemakai tiap slot, dipetakan waktu => berapa orang.
+     *
+     * Menggantikan pemakaian slotTerpakai() untuk keperluan kuota. Sejak slot
+     * punya kuota (28 Agustus 2026), pertanyaannya bukan lagi "jam ini sudah
+     * dipakai atau belum" melainkan "sudah dipakai berapa orang" - dan daftar
+     * datar tidak bisa menjawab itu.
+     *
+     * @return array<string, int>
+     */
+    public function hitungPerSlot(string $jenis = self::JENIS_HRD): array
+    {
+        $hitung = [];
+        foreach ($this->slotTerpakai($jenis) as $waktu) {
+            $hitung[$waktu] = ($hitung[$waktu] ?? 0) + 1;
+        }
+
+        return $hitung;
+    }
+
+    /**
      * Apakah link Zoom kandidat masih boleh dipakai pada waktu $now.
      * Fungsi murni (tanpa DB, waktu bisa disuntik) supaya langsung bisa dites.
      *

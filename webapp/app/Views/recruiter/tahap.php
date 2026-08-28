@@ -64,35 +64,7 @@
 <?= $this->endSection() ?>
 
 <?= $this->section('sidebar') ?>
-<?php
-$base = site_url('recruiter/tahap/' . $stage);
-if (($stage ?? '') === 'upload_cv') {
-    // Tidak ada keputusan lolos/gagal di tahap unggah - satu tab saja
-    $tabs = ['uploaded' => ['Uploaded', '📥', $base]];
-} else {
-    if (in_array($stage ?? '', ['interview_online', 'interview_user'], true)) {
-        // Tahap wawancara punya alurnya sendiri: terjadwal -> (dilepas) -> selesai.
-        // Tidak ada "Passed"/"Failed" di sini, karena interview yang terjadwal
-        // belum lolos apa-apa dan jadwal yang dilepas bukan kandidat yang gugur.
-        $tabs = [
-            'progress'    => ['On Progress', '🔄', $base],
-            'rescheduled' => ['Rescheduled', '🔁', $base . '?status=rescheduled'],
-            'completed'   => ['Completed', '🏁', $base . '?status=completed'],
-        ];
-    } else {
-        $tabs = [
-            'progress' => ['On Progress', '🔄', $base],
-            'passed'   => ['Passed', '✅', $base . '?status=passed'],
-            'failed'   => ['Failed', '❌', $base . '?status=failed'],
-        ];
-    }
-}
-foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
-  <a href="<?= $url ?>" class="<?= $status === $k ? 'on' : '' ?>">
-    <span class="l"><span><?= $ic ?></span><span><?= $lbl ?></span></span><span><?= $status === $k ? '»' : '' ?></span></a>
-<?php endforeach ?>
-<a href="#" onclick="segera('Settings');return false"><span class="l"><span>⚙️</span><span>Settings</span></span></a>
-<a href="#" onclick="segera('Upload History');return false"><span class="l"><span>🕘</span><span>Upload History</span></span></a>
+<?= $this->include('recruiter/sisi_tahap') ?>
 <?= $this->endSection() ?>
 
 <?= $this->section('isi') ?>

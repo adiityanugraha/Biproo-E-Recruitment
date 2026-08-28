@@ -80,7 +80,7 @@ use App\Libraries\AlurRekrutmen as A;
   <div class="kunci-warna">
     <span class="k"><i class="k-ass"></i> Assessment</span>
     <span class="k"><i class="k-sel"></i> Selection</span>
-    <span style="margin-left:auto">
+    <span style="margin-left:auto;display:flex;gap:8px">
       <a href="<?= site_url('recruiter/pengaturan/lowongan') ?>?bingkai=1"
          onclick="return bukaJendela(this.href, 'Lowongan Baru')">
         <button class="btn-tambah">+ Tambah Lowongan</button></a>

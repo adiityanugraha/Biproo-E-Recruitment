@@ -95,7 +95,10 @@ $adaSesiTerbuka = (bool) array_filter($apps, static fn (array $a): bool => $a['l
       <?php // Slotnya per JENIS wawancara: pewawancaranya orang yang berbeda,
             // jadi jam yang penuh untuk HRD belum tentu penuh untuk Interview User. ?>
       <?php $slotJenis = $slot[$app['jenis']] ?? []; ?>
-      <?php $adaSlot = false; foreach ($slotJenis as $isi) { foreach ($isi as $s) { if (! $s['terpakai']) { $adaSlot = true; break 2; } } } ?>
+      <?php // 'penuh', BUKAN 'terpakai'. Sejak slot punya kuota (28 Agustus
+            // 2026) 'terpakai' berisi JUMLAH pemakai, bukan benar/salah - dan
+            // slot berkuota 2 yang baru diambil satu orang masih boleh dipilih. ?>
+      <?php $adaSlot = false; foreach ($slotJenis as $isi) { foreach ($isi as $s) { if (! $s['penuh']) { $adaSlot = true; break 2; } } } ?>
 
       <?php if (! $adaSlot): ?>
         <p style="color:#666;font-size:14px">Semua slot dalam 7 hari kerja ke depan sudah terisi. Silakan cek lagi besok.</p>
@@ -113,7 +116,7 @@ $adaSesiTerbuka = (bool) array_filter($apps, static fn (array $a): bool => $a['l
               </div>
               <div style="display:flex;flex-wrap:wrap;gap:8px">
                 <?php foreach ($jamJam as $s): ?>
-                  <?php if ($s['terpakai']): ?>
+                  <?php if ($s['penuh']): ?>
                     <span title="Sudah dipilih kandidat lain"
                           style="padding:8px 14px;border:1px solid #eef0f5;border-radius:10px;background:#f4f4f6;color:#aaa;font-size:13px;text-decoration:line-through">
                       <?= esc($s['jam']) ?>
@@ -125,6 +128,13 @@ $adaSesiTerbuka = (bool) array_filter($apps, static fn (array $a): bool => $a['l
                             // sehingga HTML-nya tidak terbaca tanpa menambah keamanan ?>
                       <input type="radio" name="jadwal" value="<?= esc($s['waktu']) ?>" required style="width:auto;margin:0">
                       <?= esc($s['jam']) ?>
+                      <?php // Sisa kursi disebutkan hanya bila jamnya memang
+                            // menampung lebih dari satu orang. Menuliskan
+                            // "sisa 1" di slot yang kuotanya memang 1 cuma
+                            // menambah kata tanpa menambah keterangan. ?>
+                      <?php if ($s['kuota'] > 1): ?>
+                        <small style="color:#888">sisa <?= (int) ($s['kuota'] - $s['terpakai']) ?></small>
+                      <?php endif ?>
                     </label>
                   <?php endif ?>
                 <?php endforeach ?>

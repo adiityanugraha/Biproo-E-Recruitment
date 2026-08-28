@@ -1,6 +1,7 @@
 <?php
 
 use App\Libraries\SlotJadwal;
+use App\Models\SlotInterviewModel;
 use App\Libraries\LembarPenilaian as L;
 use App\Libraries\StageLogger;
 use App\Libraries\ZoomException;
@@ -80,12 +81,40 @@ final class InterviewScheduleTest extends CIUnitTestCase
     }
 
     /**
-     * Slot sah ke-$ke. Diambil dari sumber yang sama dengan yang dipakai
-     * controller, jadi uji ini tetap benar hari apa pun ia dijalankan.
+     * Slot sah ke-$ke, disiapkan di basis data lebih dulu.
+     *
+     * Sejak 28 Agustus 2026 slot BUKAN lagi dihasilkan kode melainkan baris di
+     * tabel slot_interview yang dikelola recruiter. Uji ini menyiapkan pola
+     * yang dulu terkunci di kode - 10.00-16.00, hari kerja - supaya tetap benar
+     * dijalankan hari apa pun.
      */
-    private function slot(int $ke = 0): string
+    private function slot(int $ke = 0, int $kuota = 1): string
     {
-        return SlotJadwal::tersedia()[$ke];
+        $model = new SlotInterviewModel();
+
+        // Migrasi SlotJadwalDikelola sudah mengisi tabel ini dengan pola lama
+        // (10.00-16.00, 7 hari kerja, kuota 1). Pengisian di bawah cuma jaring
+        // pengaman bila suatu saat migrasinya berhenti melakukan itu.
+        if ($model->countAllResults() === 0) {
+            $baris = [];
+            foreach (SlotJadwal::hariKerja(SlotJadwal::HARI_KERJA) as $tanggal) {
+                for ($jam = 10; $jam <= 16; $jam++) {
+                    $baris[] = [
+                        'scheduled_at' => $tanggal . ' ' . sprintf('%02d:00:00', $jam),
+                        'kuota'        => 1,
+                        'created_at'   => date('Y-m-d H:i:s'),
+                    ];
+                }
+            }
+            $model->insertBatch($baris);
+        }
+
+        $waktu = (string) $model->tersedia()[$ke]['scheduled_at'];
+        if ($kuota !== 1) {
+            $model->where('scheduled_at', $waktu)->set('kuota', $kuota)->update();
+        }
+
+        return $waktu;
     }
 
     /** Kandidat memilih slot lewat HTTP, seperti menekan tombol di halaman jadwal. */
@@ -221,19 +250,91 @@ final class InterviewScheduleTest extends CIUnitTestCase
         $this->assertStringNotContainsString('value="' . $slot . '"', $html);
     }
 
-    public function testIndeksUnikMenolakSlotGandaWalaupunPengecekanDilewati(): void
+    /**
+     * Slot penuh ditolak controller, dan itu SATU-SATUNYA penjaga yang tersisa.
+     *
+     * Sampai 28 Agustus 2026 penjaganya indeks unik di basis data: satu slot
+     * satu orang, ditegakkan mesin. Indeks itu dibuang karena slot sekarang
+     * punya kuota, dan tidak ada indeks yang bisa menyatakan "paling banyak N".
+     *
+     * ponytail: tersisa celah balapan antara "dicek belum penuh" dan
+     * "disimpan" - dua kandidat yang menekan tombol pada detik yang sama bisa
+     * sama-sama lolos. Untuk volume KP ini tidak terjadi; kalau suatu hari
+     * pelamarnya ratusan sekaligus, kuncinya transaksi SELECT ... FOR UPDATE
+     * pada baris slotnya, bukan indeks unik yang tidak bisa menghitung.
+     */
+    public function testSlotPenuhDitolak(): void
     {
-        // Pengecekan controller punya celah antara "dicek kosong" dan "disimpan".
-        // Uji ini melewati controller dan menulis langsung ke tabel, memastikan
-        // database sendiri yang menolak, bukan cuma sopan santun aplikasi.
-        [, $aid]  = $this->fixture('passed');
-        [, $aid2] = $this->fixture('passed', 'budi@example.com');
+        $this->fakeZoom();
+        [$cid, $aid]   = $this->fixture('passed');
+        [$cid2, $aid2] = $this->fixture('passed', 'budi@example.com');
         $slot = $this->slot();
-        $iv   = new InterviewModel();
-        $iv->insert(['application_id' => $aid, 'status' => 'approved', 'scheduled_at' => $slot]);
 
-        $this->expectException(DatabaseException::class);
-        $iv->insert(['application_id' => $aid2, 'status' => 'approved', 'scheduled_at' => $slot]);
+        $this->pilihSlot($cid, $aid, $slot);
+        $this->pilihSlot($cid2, $aid2, $slot);
+
+        $this->assertSame(
+            1,
+            (new InterviewModel())->where('scheduled_at', $slot)->countAllResults(),
+            'kuota 1 hanya boleh diambil satu orang',
+        );
+    }
+
+    /**
+     * Slot berkuota 2 yang baru diambil satu orang MASIH ditawarkan di halaman.
+     *
+     * Bug yang ini lolos seluruh uji lain: halaman kandidat dulu memakai
+     * 'terpakai' sebagai benar/salah, padahal sejak ada kuota ia berisi JUMLAH
+     * pemakai. Slot berkuota 2 yang terisi satu jadi hilang dari layar.
+     */
+    public function testSlotBerkuotaSisaMasihDitawarkan(): void
+    {
+        $this->fakeZoom();
+        $slot = $this->slot(0, 2);
+        [$cid, $aid]   = $this->fixture('passed');
+        [$cid2, $aid2] = $this->fixture('passed', 'budi@example.com');
+        $this->pilihSlot($cid, $aid, $slot);
+
+        $html = (string) $this->withSession($this->sesiKandidat($cid2))->get('jadwal')->getBody();
+
+        $this->assertStringContainsString('value="' . $slot . '"', $html, 'kuota 2 terisi 1 harus tetap bisa dipilih');
+        $this->assertStringContainsString('sisa 1', $html);
+    }
+
+    /**
+     * INTI PERUBAHAN 28 Agustus 2026: kuota 2 berarti dua kandidat boleh
+     * mengambil jam yang sama, dan yang ketiga ditolak.
+     */
+    public function testKuotaDuaMenerimaDuaKandidat(): void
+    {
+        $this->fakeZoom();
+        $slot = $this->slot(0, 2);
+
+        [$cid, $aid]   = $this->fixture('passed');
+        [$cid2, $aid2] = $this->fixture('passed', 'budi@example.com');
+        [$cid3, $aid3] = $this->fixture('passed', 'cici@example.com');
+
+        $this->pilihSlot($cid, $aid, $slot);
+        $this->pilihSlot($cid2, $aid2, $slot);
+        $this->pilihSlot($cid3, $aid3, $slot);
+
+        $this->assertSame(
+            2,
+            (new InterviewModel())->where('scheduled_at', $slot)->countAllResults(),
+            'yang ketiga harus ditolak',
+        );
+    }
+
+    /** Slot yang tidak terdaftar di tabel ditolak, walau formatnya benar. */
+    public function testSlotTidakTerdaftarDitolak(): void
+    {
+        $this->fakeZoom();
+        [$cid, $aid] = $this->fixture('passed');
+        $this->slot();   // siapkan tabel slotnya
+
+        $this->pilihSlot($cid, $aid, '2030-01-02 09:00:00');
+
+        $this->assertSame(0, (new InterviewModel())->countAllResults());
     }
 
     /** interview yang sudah di-acc & jadwalnya lewat (siap dinilai di tab Completed). */
@@ -371,7 +472,11 @@ final class InterviewScheduleTest extends CIUnitTestCase
         preg_match_all('/name="jadwal" value="([^"]+)"/', $html, $m);
         $this->assertNotEmpty($m[1], 'harus ada slot yang bisa dipilih');
         foreach ($m[1] as $slot) {
-            $this->assertTrue(SlotJadwal::sah($slot), "slot {$slot} dirender padahal tidak sah");
+            $this->assertContains(
+                $slot,
+                array_column((new SlotInterviewModel())->tersedia(), 'scheduled_at'),
+                "slot {$slot} dirender padahal tidak terdaftar atau sudah lewat",
+            );
         }
     }
 

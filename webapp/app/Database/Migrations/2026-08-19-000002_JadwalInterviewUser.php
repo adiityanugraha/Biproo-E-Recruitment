@@ -58,9 +58,18 @@ class JadwalInterviewUser extends Migration
      */
     private function buangIndeks(): void
     {
-        $this->db->query($this->db->DBDriver === 'SQLSRV'
-            ? 'DROP INDEX ' . self::NAMA . ' ON ' . $this->db->prefixTable('interviews')
-            : 'DROP INDEX ' . self::NAMA);
+        // Ketiadaan indeksnya BUKAN kegagalan. Sejak migrasi SlotJadwalDikelola
+        // (28 Agustus 2026) indeks ini memang dibuang - kuota per slot membuat
+        // "satu slot satu orang" tidak berlaku lagi - jadi saat basis data
+        // digulung mundur, ia sudah tidak ada di sini. Tanpa penjagaan ini
+        // seluruh migrate:refresh gagal, dan bersamanya seluruh uji database.
+        try {
+            $this->db->query($this->db->DBDriver === 'SQLSRV'
+                ? 'DROP INDEX ' . self::NAMA . ' ON ' . $this->db->prefixTable('interviews')
+                : 'DROP INDEX ' . self::NAMA);
+        } catch (\Throwable $e) {
+            // sudah dibuang migrasi yang lebih baru
+        }
     }
 
     public function down(): void
@@ -73,9 +82,18 @@ class JadwalInterviewUser extends Migration
         // gagal di seluruh berkas uji.
         $this->buangIndeks();
         $this->forge->dropColumn('interviews', 'jenis');
-        $this->db->query(
-            'CREATE UNIQUE INDEX ' . self::NAMA . ' ON ' . $this->db->prefixTable('interviews')
-            . " (scheduled_at) WHERE status IN ('requested', 'approved')"
-        );
+
+        // Bisa gagal wajar, dan kegagalannya tidak boleh menghentikan
+        // pemunduran: sejak slot punya kuota (28 Agustus 2026) satu jam boleh
+        // dipegang lebih dari satu kandidat, jadi data yang sah hari ini
+        // memang melanggar indeks unik yang berlaku dulu.
+        try {
+            $this->db->query(
+                'CREATE UNIQUE INDEX ' . self::NAMA . ' ON ' . $this->db->prefixTable('interviews')
+                . " (scheduled_at) WHERE status IN ('requested', 'approved')"
+            );
+        } catch (\Throwable $e) {
+            // datanya sudah tidak memenuhi aturan lama
+        }
     }
 }

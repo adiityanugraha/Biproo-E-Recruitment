@@ -13,6 +13,7 @@ use App\Models\CandidateModel;
 use App\Models\InterviewModel;
 use App\Models\JobModel;
 use App\Models\ScreeningResultModel;
+use App\Models\SlotInterviewModel;
 use App\Models\StageHistoryModel;
 use CodeIgniter\Database\Exceptions\DatabaseException;
 use DateTime;
@@ -375,6 +376,10 @@ class Lamaran extends BaseController
             }
         }
 
+        // Daftar slotnya dibaca SEKALI lalu dipakai kedua jenis: yang berbeda
+        // antara HRD dan Interview User cuma siapa yang sudah mengambilnya.
+        $tersedia = (new SlotInterviewModel())->tersedia();
+
         return view('lamaran/jadwal', [
             'apps' => $lolos,
             // slot yang sudah dipegang kandidat lain ikut ditampilkan tapi mati,
@@ -383,10 +388,10 @@ class Lamaran extends BaseController
             //
             // Dipisah per jenis: pewawancaranya orang yang berbeda, jadi jam
             // yang penuh untuk wawancara HRD belum tentu penuh untuk Interview
-            // User.
+            // User. Daftar slotnya sendiri satu, dikelola recruiter di Settings.
             'slot' => [
-                InterviewModel::JENIS_HRD  => SlotJadwal::perTanggal($interview->slotTerpakai(InterviewModel::JENIS_HRD)),
-                InterviewModel::JENIS_USER => SlotJadwal::perTanggal($interview->slotTerpakai(InterviewModel::JENIS_USER)),
+                InterviewModel::JENIS_HRD  => SlotJadwal::perTanggal($tersedia, $interview->hitungPerSlot(InterviewModel::JENIS_HRD)),
+                InterviewModel::JENIS_USER => SlotJadwal::perTanggal($tersedia, $interview->hitungPerSlot(InterviewModel::JENIS_USER)),
             ],
         ]);
     }
@@ -446,14 +451,22 @@ class Lamaran extends BaseController
             return redirect()->to('/jadwal')->with('error', 'Sudah ada jadwal interview untuk lamaran ini.');
         }
 
-        // Satu pemeriksaan menutup format, jam, hari kerja, dan waktu lampau.
-        // Kandidat yang mem-POST langsung tanpa lewat halaman tetap tersaring.
-        $slot = (string) $this->request->getPost('jadwal');
-        if (! SlotJadwal::sah($slot)) {
+        // Slotnya harus TERDAFTAR dan belum lewat. Kandidat yang mem-POST
+        // langsung tanpa lewat halaman tetap tersaring di sini.
+        $slot  = (string) $this->request->getPost('jadwal');
+        $slots = new SlotInterviewModel();
+        $sah   = in_array($slot, array_column($slots->tersedia(), 'scheduled_at'), true);
+        if (! $sah) {
             return redirect()->to('/jadwal')->with('error', 'Slot itu tidak tersedia. Silakan pilih dari daftar.');
         }
-        if (in_array($slot, $interview->slotTerpakai($jenis), true)) {
-            return redirect()->to('/jadwal')->with('error', 'Slot itu baru saja diambil kandidat lain. Silakan pilih jam lain.');
+
+        // Kuota, bukan sekadar "sudah dipakai atau belum". Slot berkuota 2 yang
+        // baru diambil satu orang masih boleh dipilih. Dicek ulang DI SINI,
+        // bukan cuma disembunyikan di halaman: dua kandidat bisa menekan tombol
+        // pada slot terakhir dalam detik yang sama.
+        $terpakai = (int) ($interview->hitungPerSlot($jenis)[$slot] ?? 0);
+        if ($terpakai >= $slots->kuota($slot)) {
+            return redirect()->to('/jadwal')->with('error', 'Slot itu baru saja penuh. Silakan pilih jam lain.');
         }
 
         $dt = new DateTime($slot);

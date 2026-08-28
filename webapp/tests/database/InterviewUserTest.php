@@ -4,7 +4,9 @@ use App\Libraries\AlurRekrutmen as A;
 use App\Libraries\LembarPenilaian as L;
 use App\Libraries\StageLogger;
 use App\Models\AkunAtasanModel;
+use App\Libraries\SlotJadwal;
 use App\Models\ApplicationModel;
+use App\Models\SlotInterviewModel;
 use App\Models\CandidateModel;
 use App\Models\EmailQueueModel;
 use App\Models\InterviewPenilaianModel;
@@ -68,6 +70,43 @@ final class InterviewUserTest extends CIUnitTestCase
         }
         $this->berkasUji = [];
         parent::tearDown();
+    }
+
+    /**
+     * Slot sah ke-$ke, disiapkan di basis data lebih dulu.
+     *
+     * Sejak 28 Agustus 2026 slot BUKAN lagi dihasilkan kode melainkan baris di
+     * tabel slot_interview yang dikelola recruiter. Uji ini menyiapkan pola
+     * yang dulu terkunci di kode - 10.00-16.00, hari kerja - supaya tetap benar
+     * dijalankan hari apa pun.
+     */
+    private function slot(int $ke = 0, int $kuota = 1): string
+    {
+        $model = new SlotInterviewModel();
+
+        // Migrasi SlotJadwalDikelola sudah mengisi tabel ini dengan pola lama
+        // (10.00-16.00, 7 hari kerja, kuota 1). Pengisian di bawah cuma jaring
+        // pengaman bila suatu saat migrasinya berhenti melakukan itu.
+        if ($model->countAllResults() === 0) {
+            $baris = [];
+            foreach (SlotJadwal::hariKerja(SlotJadwal::HARI_KERJA) as $tanggal) {
+                for ($jam = 10; $jam <= 16; $jam++) {
+                    $baris[] = [
+                        'scheduled_at' => $tanggal . ' ' . sprintf('%02d:00:00', $jam),
+                        'kuota'        => 1,
+                        'created_at'   => date('Y-m-d H:i:s'),
+                    ];
+                }
+            }
+            $model->insertBatch($baris);
+        }
+
+        $waktu = (string) $model->tersedia()[$ke]['scheduled_at'];
+        if ($kuota !== 1) {
+            $model->where('scheduled_at', $waktu)->set('kuota', $kuota)->update();
+        }
+
+        return $waktu;
     }
 
     /** Akun atasan siap pakai, beserta sesinya. */
@@ -751,7 +790,7 @@ final class InterviewUserTest extends CIUnitTestCase
         $this->fakeZoom();
         $jobId = $this->lowongan();
         $aid   = $this->menungguAtasan($jobId);
-        $slot  = \App\Libraries\SlotJadwal::tersedia()[0];
+        $slot  = $this->slot();
 
         $this->withSession($this->sesiKandidat($aid))
             ->post('interview/ajukan/' . $aid, ['jadwal' => $slot, 'jenis' => 'user']);
@@ -781,7 +820,7 @@ final class InterviewUserTest extends CIUnitTestCase
             'join_url' => 'https://zoom.us/j/111']);
 
         $this->withSession($this->sesiKandidat($aid))->post('interview/ajukan/' . $aid, [
-            'jadwal' => \App\Libraries\SlotJadwal::tersedia()[0], 'jenis' => 'user',
+            'jadwal' => $this->slot(), 'jenis' => 'user',
         ]);
 
         $this->assertSame('111', $model->forApplication($aid, 'hrd')['meeting_id']);
@@ -797,7 +836,7 @@ final class InterviewUserTest extends CIUnitTestCase
         (new StageLogger())->log($aid, 'gate_1', 'passed', 'system');
 
         $this->withSession($this->sesiKandidat($aid))->post('interview/ajukan/' . $aid, [
-            'jadwal' => \App\Libraries\SlotJadwal::tersedia()[0], 'jenis' => 'user',
+            'jadwal' => $this->slot(), 'jenis' => 'user',
         ]);
 
         $this->assertNull((new \App\Models\InterviewModel())->forApplication($aid, 'user'));

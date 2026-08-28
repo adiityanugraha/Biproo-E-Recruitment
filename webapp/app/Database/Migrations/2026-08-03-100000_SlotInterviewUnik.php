@@ -40,9 +40,16 @@ class SlotInterviewUnik extends Migration
 
     public function down(): void
     {
-        // CREATE-nya sama, DROP-nya beda: SQL Server butuh "ON <tabel>", SQLite tidak
-        $this->db->query($this->db->DBDriver === 'SQLSRV'
-            ? 'DROP INDEX ' . self::NAMA . ' ON ' . $this->db->prefixTable('interviews')
-            : 'DROP INDEX ' . self::NAMA);
+        // Ketiadaan indeksnya BUKAN kegagalan. Sejak migrasi SlotJadwalDikelola
+        // (28 Agustus 2026) ia memang dibuang, karena slot berkuota membuat
+        // "satu slot satu orang" tidak berlaku lagi.
+        try {
+            // CREATE-nya sama, DROP-nya beda: SQL Server butuh "ON <tabel>", SQLite tidak
+            $this->db->query($this->db->DBDriver === 'SQLSRV'
+                ? 'DROP INDEX ' . self::NAMA . ' ON ' . $this->db->prefixTable('interviews')
+                : 'DROP INDEX ' . self::NAMA);
+        } catch (\Throwable $e) {
+            // sudah dibuang migrasi yang lebih baru
+        }
     }
 }

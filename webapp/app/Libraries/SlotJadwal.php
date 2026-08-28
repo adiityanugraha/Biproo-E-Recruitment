@@ -6,90 +6,80 @@ use DateTimeImmutable;
 use DateTimeInterface;
 
 /**
- * Daftar slot interview yang boleh dipilih kandidat.
+ * Urusan TANGGAL untuk slot interview. Tidak menyentuh basis data sama sekali.
  *
- * Kandidat TIDAK lagi mengetik waktu bebas: ia memilih dari daftar slot tetap
- * yang disiapkan sistem. Alasannya bukan pembatasan demi pembatasan - waktu
- * bebas berarti recruiter harus menilai tiap ajuan satu per satu, dan dua
- * kandidat bisa mengajukan jam yang sama.
+ * Sampai 28 Agustus 2026 kelas ini juga yang MENENTUKAN slot apa saja yang ada:
+ * 10.00-16.00, hari kerja, 7 hari kerja ke depan, satu slot satu orang. Aturan
+ * itu terkunci di kode, sehingga libur nasional, hari recruiter berhalangan,
+ * atau jam yang ingin ditutup semuanya menuntut perubahan kode.
  *
- * Aturan (arahan atasan, 3 Agustus 2026):
- *   - 7 slot per hari: 10.00, 11.00, 12.00, 13.00, 14.00, 15.00, 16.00
- *     (slot terakhir mulai 16.00 dan berakhir 17.00)
- *   - hanya hari kerja, 7 hari kerja ke depan
- *   - slot yang jamnya sudah lewat tidak ditawarkan lagi
+ * Sekarang daftarnya ada di tabel slot_interview dan dikelola recruiter lewat
+ * Settings. Yang tersisa di sini dua hal yang memang murni perhitungan tanggal:
+ * menghitung hari kerja untuk tombol "ulangi 7 hari kerja", dan mengelompokkan
+ * slot per tanggal untuk ditampilkan.
  *
  * Fungsi murni: "sekarang" bisa disuntik, jadi batas-batasnya bisa diuji tepat
- * di detiknya tanpa menunggu waktu nyata. Keterpakaian slot oleh kandidat lain
- * BUKAN urusan kelas ini - itu dicek ke database (InterviewModel::slotTerpakai).
+ * di detiknya tanpa menunggu waktu nyata.
  */
 final class SlotJadwal
 {
-    /** Jam mulai slot pertama dan terakhir dalam sehari. */
-    public const JAM_PERTAMA = 10;
-    public const JAM_TERAKHIR = 16;
-
-    /** Berapa hari KERJA ke depan yang ditawarkan (akhir pekan dilewati). */
-    public const HARI_KERJA = 7;
-
     public const FORMAT = 'Y-m-d H:i:s';
 
-    /**
-     * Semua slot yang sah pada waktu $now, terurut dari yang terdekat.
-     *
-     * @return list<string> masing-masing 'Y-m-d H:i:s'
-     */
-    public static function tersedia(?DateTimeInterface $now = null): array
-    {
-        $now  = $now === null ? new DateTimeImmutable() : DateTimeImmutable::createFromInterface($now);
-        $hari = $now->setTime(0, 0);
+    /** Bawaan tombol ulangi, sama dengan pola yang dulu terkunci di kode. */
+    public const HARI_KERJA = 7;
 
-        $slot = [];
-        for ($terkumpul = 0; $terkumpul < self::HARI_KERJA;) {
+    /**
+     * Tanggal hari kerja berturut-turut mulai dari $mulai, akhir pekan dilewati.
+     *
+     * $mulai ikut dihitung bila ia hari kerja. Dipakai tombol "ulangi untuk 7
+     * hari kerja ke depan" di halaman pengaturan jadwal.
+     *
+     * @return list<string> masing-masing 'Y-m-d'
+     */
+    public static function hariKerja(int $jumlah, ?DateTimeInterface $mulai = null): array
+    {
+        $hari = ($mulai === null ? new DateTimeImmutable() : DateTimeImmutable::createFromInterface($mulai))
+            ->setTime(0, 0);
+
+        $tanggal = [];
+        while (count($tanggal) < max(0, $jumlah)) {
             // 6 = Sabtu, 7 = Minggu (ISO-8601)
             if ((int) $hari->format('N') <= 5) {
-                $terkumpul++;
-                for ($jam = self::JAM_PERTAMA; $jam <= self::JAM_TERAKHIR; $jam++) {
-                    $s = $hari->setTime($jam, 0);
-                    // slot yang sudah dimulai tidak ditawarkan lagi
-                    if ($s > $now) {
-                        $slot[] = $s->format(self::FORMAT);
-                    }
-                }
+                $tanggal[] = $hari->format('Y-m-d');
             }
             $hari = $hari->modify('+1 day');
         }
 
-        return $slot;
+        return $tanggal;
     }
 
     /**
-     * Apakah $scheduledAt salah satu slot yang sah pada waktu $now?
+     * Slot dikelompokkan per tanggal untuk ditampilkan ke kandidat.
      *
-     * Sekaligus menutup empat hal dalam satu pemeriksaan: format benar, jamnya
-     * termasuk daftar, harinya hari kerja, dan waktunya belum lewat. Kandidat
-     * yang mengirim POST langsung tanpa lewat halaman tetap tersaring di sini.
+     * KUOTA DIBANDINGKAN DENGAN JUMLAH PEMAKAI, bukan sekadar ada atau tidak.
+     * Slot berkuota 2 yang baru diambil satu orang masih boleh dipilih, dan
+     * kandidat perlu melihat sisanya - "1 dari 2 terisi" jauh lebih berguna
+     * daripada tombol yang entah kenapa masih menyala.
+     *
+     * @param list<array<string, mixed>> $slot     baris slot_interview
+     * @param array<string, int>         $terpakai jumlah pemakai per waktu
+     *
+     * @return array<string, list<array{waktu: string, jam: string, kuota: int, terpakai: int, penuh: bool}>>
      */
-    public static function sah(string $scheduledAt, ?DateTimeInterface $now = null): bool
-    {
-        return in_array($scheduledAt, self::tersedia($now), true);
-    }
-
-    /**
-     * Slot dikelompokkan per tanggal untuk ditampilkan.
-     *
-     * @param list<string> $terpakai slot yang sudah diambil kandidat lain
-     *
-     * @return array<string, list<array{waktu: string, jam: string, terpakai: bool}>>
-     */
-    public static function perTanggal(array $terpakai = [], ?DateTimeInterface $now = null): array
+    public static function perTanggal(array $slot, array $terpakai = []): array
     {
         $keluar = [];
-        foreach (self::tersedia($now) as $s) {
-            $keluar[substr($s, 0, 10)][] = [
-                'waktu'    => $s,
-                'jam'      => substr($s, 11, 5),
-                'terpakai' => in_array($s, $terpakai, true),
+        foreach ($slot as $s) {
+            $waktu = (new DateTimeImmutable((string) $s['scheduled_at']))->format(self::FORMAT);
+            $kuota = max(0, (int) ($s['kuota'] ?? 1));
+            $pakai = (int) ($terpakai[$waktu] ?? 0);
+
+            $keluar[substr($waktu, 0, 10)][] = [
+                'waktu'    => $waktu,
+                'jam'      => substr($waktu, 11, 5),
+                'kuota'    => $kuota,
+                'terpakai' => $pakai,
+                'penuh'    => $pakai >= $kuota,
             ];
         }
 
