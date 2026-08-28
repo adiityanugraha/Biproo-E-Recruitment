@@ -23,6 +23,10 @@ class StageLogger
         'penjadwalan:entered' => 'undangan_interview',
         // recruiter melepas jadwal, kandidat diminta memilih slot lain
         'penjadwalan:failed'  => 'jadwal_reschedule',
+        // Interview User punya tahap penjadwalannya sendiri (28 Agustus 2026);
+        // emailnya sama, yang berbeda cuma wawancara mana yang dijadwalkan.
+        'penjadwalan_user:entered' => 'undangan_interview',
+        'penjadwalan_user:failed'  => 'jadwal_reschedule',
     ];
 
     /**

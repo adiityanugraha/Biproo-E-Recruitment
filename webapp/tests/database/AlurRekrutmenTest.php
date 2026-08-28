@@ -136,6 +136,55 @@ final class AlurRekrutmenTest extends CIUnitTestCase
         $this->assertNotContains('interview_user', $tanpaUser);
     }
 
+    /**
+     * Interview User punya tahap PENJADWALANNYA SENDIRI (28 Agustus 2026).
+     *
+     * Sebelumnya jadwal wawancara atasan dipilih lewat tahap Penjadwalan
+     * Interview yang sama dengan HRD, sehingga stepper kandidat terlihat
+     * mundur: orang yang sudah selesai diwawancara HRD menyala kembali di
+     * tahap penjadwalan, seolah kemajuannya dibatalkan.
+     */
+    public function testInterviewUserMembawaTahapPenjadwalannyaSendiri(): void
+    {
+        // Seperti yang dikirim halaman Settings: rangkaian utuh, dengan
+        // Interview User disisipkan sesudah Interview HRD.
+        $pilihan = A::wajib();
+        array_splice($pilihan, (int) array_search('interview_online', $pilihan, true) + 1, 0, ['interview_user']);
+        $alur = A::untukLowongan(A::keJson($pilihan));
+
+        $jadwalUser = array_search('penjadwalan_user', $alur, true);
+        $wawancara  = array_search('interview_user', $alur, true);
+        $hrd        = array_search('interview_online', $alur, true);
+
+        $this->assertNotFalse($jadwalUser, 'penjadwalan Interview User harus ikut');
+        $this->assertSame($wawancara - 1, $jadwalUser, 'letaknya tepat sebelum wawancaranya');
+        $this->assertGreaterThan($hrd, $jadwalUser, 'dan sesudah Interview HRD - bukan mundur');
+    }
+
+    /** Posisi tanpa Interview User tidak kebagian penjadwalannya. */
+    public function testTanpaInterviewUserTidakAdaPenjadwalanUser(): void
+    {
+        $this->assertNotContains('penjadwalan_user', A::untukLowongan(null));
+        $this->assertNotContains('penjadwalan_user', A::untukLowongan(A::keJson(['disc'])));
+    }
+
+    /**
+     * Penjadwalannya TIDAK bisa dipilih sendiri, dan tidak bisa dicabut sendiri.
+     *
+     * Keduanya menghasilkan alur yang mustahil: jam wawancara tanpa wawancara,
+     * atau wawancara yang jamnya tidak pernah bisa dipilih kandidat.
+     */
+    public function testPenjadwalanUserTidakBerdiriSendiri(): void
+    {
+        $this->assertNotContains('penjadwalan_user', A::opsional());
+        $this->assertNotContains('penjadwalan_user', A::untukLowongan(A::keJson(['penjadwalan_user'])));
+        $this->assertContains(
+            'penjadwalan_user',
+            A::untukLowongan(A::keJson(['interview_user'])),
+            'dicabut sendiri pun harus kembali selama Interview User dipakai',
+        );
+    }
+
     public function testDipecahKeDuaKelompok(): void
     {
         $grup = A::perKelompok(A::untukLowongan(A::keJson(['disc', 'interview_user'])));

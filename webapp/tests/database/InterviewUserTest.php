@@ -37,12 +37,29 @@ final class InterviewUserTest extends CIUnitTestCase
     private array $sesiRec = ['recruiter_id' => 1, 'recruiter_nama' => 'Irpan'];
     private int $urut      = 0;
 
+    /**
+     * Rangkaian utuh dengan Interview User sesudah Interview HRD - persis yang
+     * dikirim halaman Settings.
+     *
+     * Menyebut 'interview_user' sendirian membuatnya mendarat di DEPAN seluruh
+     * alur, dan stepper yang diuji jadi tidak menggambarkan posisi mana pun.
+     *
+     * @return list<string>
+     */
+    private static function alurBerUser(): array
+    {
+        $alur = A::wajib();
+        array_splice($alur, (int) array_search('interview_online', $alur, true) + 1, 0, ['interview_user']);
+
+        return $alur;
+    }
+
     private function lowongan(bool $pakaiUser = true): int
     {
         return (int) (new JobModel())->insert([
             'judul'          => 'Backend Developer ' . ++$this->urut,
             'req_skill'      => 'PHP', 'req_pendidikan' => 'S1', 'req_pengalaman' => '2th',
-            'alur_json'      => $pakaiUser ? A::keJson(['interview_user']) : null,
+            'alur_json'      => $pakaiUser ? A::keJson(self::alurBerUser()) : null,
         ]);
     }
 
@@ -745,6 +762,12 @@ final class InterviewUserTest extends CIUnitTestCase
                 return ['meeting_id' => '777', 'join_url' => 'https://zoom.us/j/777',
                     'start_url' => 'https://zoom.us/s/777?zak=x'];
             }
+
+            // Tiruannya harus LENGKAP. Mock yang cuma menutup createMeeting
+            // tetap jatuh ke ZoomService asli saat reschedule menghapus ruang,
+            // dan konstruktor kosong ini membuatnya mati di $cfg - kegagalan
+            // yang muncul hanya kalau urutan tesnya kebetulan pas.
+            public function hapusMeeting(string $meetingId): void {}
         });
     }
 
@@ -840,6 +863,117 @@ final class InterviewUserTest extends CIUnitTestCase
         ]);
 
         $this->assertNull((new \App\Models\InterviewModel())->forApplication($aid, 'user'));
+    }
+
+    // --- tahap penjadwalannya sendiri (28 Agustus 2026) ---
+
+    /**
+     * Keadaan tiap tahap di stepper kandidat, label => 'done'|'current'|...
+     *
+     * @return array<string, string>
+     */
+    private function stepper(int $aid): array
+    {
+        $html = (string) $this->withSession($this->sesiKandidat($aid))->get('dashboard')->getBody();
+        preg_match_all('#<div class="step (\w+)">.*?<span class="nm">([^<]+)</span>#s', $html, $m, PREG_SET_ORDER);
+
+        $out = [];
+        foreach ($m as [, $keadaan, $label]) {
+            $out[html_entity_decode($label)] = $keadaan;
+        }
+
+        return $out;
+    }
+
+    /**
+     * INI keluhannya: memilih jadwal Interview User dicatat di tahapnya
+     * sendiri, bukan di tahap Penjadwalan Interview milik HRD.
+     *
+     * Dulu keduanya menulis 'penjadwalan', sehingga riwayat kandidat yang sudah
+     * lewat wawancara HRD berakhir di tahap yang sudah jauh dilewatinya.
+     */
+    public function testMemilihJadwalUserDicatatDiTahapnyaSendiri(): void
+    {
+        $this->fakeZoom();
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+
+        $this->withSession($this->sesiKandidat($aid))
+            ->post('interview/ajukan/' . $aid, ['jadwal' => $this->slot(), 'jenis' => 'user']);
+
+        $peta = (new StageHistoryModel())->latestStatusMap($aid);
+        $this->assertSame('entered', $peta['penjadwalan_user'] ?? null);
+        $this->assertArrayNotHasKey('penjadwalan', $peta, 'tahap HRD tidak boleh ikut tertulis');
+    }
+
+    /** Undangan emailnya tetap terkirim - tahapnya berganti, kabarnya tidak. */
+    public function testUndanganEmailTetapTerkirimUntukJadwalUser(): void
+    {
+        $this->fakeZoom();
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+
+        $this->withSession($this->sesiKandidat($aid))
+            ->post('interview/ajukan/' . $aid, ['jadwal' => $this->slot(), 'jenis' => 'user']);
+
+        $this->assertNotNull(
+            (new EmailQueueModel())->where('template', 'undangan_interview')->first(),
+            'kandidat harus tetap menerima undangan Interview User',
+        );
+    }
+
+    /** Melepas jadwal Interview User memerahkan tahapnya sendiri, bukan tahap HRD. */
+    public function testRescheduleUserMenulisTahapPenjadwalanUser(): void
+    {
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+        (new \App\Models\InterviewModel())->insert([
+            'application_id' => $aid, 'jenis' => 'user', 'status' => 'approved',
+            'scheduled_at' => '2030-04-04 11:00:00', 'meeting_id' => '777',
+        ]);
+
+        $this->withSession($this->sesiRec)->post('recruiter/interview/reschedule/' . $aid, [
+            'jenis' => 'user', 'alasan' => 'atasan berhalangan',
+        ]);
+
+        $peta = (new StageHistoryModel())->latestStatusMap($aid);
+        $this->assertSame('failed', $peta['penjadwalan_user'] ?? null);
+        $this->assertArrayNotHasKey('penjadwalan', $peta);
+    }
+
+    /**
+     * Steppernya MAJU, bukan mundur.
+     *
+     * Kandidat yang baru lolos wawancara HRD berdiri di Penjadwalan Interview
+     * User - tahap yang letaknya sesudah Interview HRD - dan tahap penjadwalan
+     * milik HRD tidak menyala lagi.
+     */
+    public function testStepperMajuKePenjadwalanUserBukanKembaliKePenjadwalanHrd(): void
+    {
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+        (new StageLogger())->log($aid, 'penjadwalan', 'entered', 'system');
+
+        $tahap = $this->stepper($aid);
+
+        $this->assertSame('current', $tahap['Penjadwalan Interview User'] ?? null);
+        $this->assertNotSame('current', $tahap['Penjadwalan Interview'] ?? null,
+            'tahap penjadwalan HRD tidak boleh menyala lagi');
+    }
+
+    /** Setelah jamnya terkunci, penjadwalannya selesai dan giliran wawancaranya. */
+    public function testPenjadwalanUserSelesaiSetelahSlotDipilih(): void
+    {
+        $this->fakeZoom();
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+
+        $this->withSession($this->sesiKandidat($aid))
+            ->post('interview/ajukan/' . $aid, ['jadwal' => $this->slot(), 'jenis' => 'user']);
+
+        $tahap = $this->stepper($aid);
+
+        $this->assertSame('done', $tahap['Penjadwalan Interview User'] ?? null);
     }
 
     /** Atasan melihat jam yang dipilih kandidat, bukan menghubungi HRD untuk itu. */

@@ -53,6 +53,7 @@ class AlurRekrutmen
         // --- Selection ---
         'penjadwalan'       => ['Penjadwalan Interview', self::SELECTION, true, '📅'],
         'interview_online'  => ['Interview HRD', self::SELECTION, true, '🎥'],
+        'penjadwalan_user'  => ['Penjadwalan Interview User', self::SELECTION, false, '📅'],
         'interview_user'    => ['Interview User', self::SELECTION, false, '👔'],
         'gate_2'            => ['Keputusan Akhir', self::SELECTION, true, '✅'],
         'training_class'    => ['Training Class', self::SELECTION, false, '🎓'],
@@ -68,6 +69,20 @@ class AlurRekrutmen
      * untuk audit, cuma tidak ikut digambar sebagai tahap yang dilalui kandidat.
      */
     public const TERSEMBUNYI = ['ai_verification'];
+
+    /**
+     * Tahap yang MENGIKUT tahap lain: pengikut => tahap yang diikutinya.
+     *
+     * Ada persis kalau induknya ada, dan selalu tepat sebelumnya. Recruiter
+     * tidak memilihnya sendiri - memilih Interview User sudah berarti
+     * kandidatnya harus memilih jam untuk wawancara itu.
+     *
+     * Sebelum 28 Agustus 2026 jadwal wawancara atasan dipilih lewat tahap
+     * Penjadwalan Interview yang sama dengan HRD. Akibatnya stepper kandidat
+     * terlihat MUNDUR: orang yang sudah selesai diwawancara HRD kembali
+     * menyala di tahap penjadwalan, seolah kemajuannya dibatalkan.
+     */
+    public const MENGIKUT = ['penjadwalan_user' => 'interview_user'];
 
     /**
      * Kunci tahap wajib, berurutan sesuai katalog.
@@ -86,7 +101,13 @@ class AlurRekrutmen
      */
     public static function opsional(): array
     {
-        return array_keys(array_filter(self::KATALOG, static fn (array $t): bool => ! $t[2]));
+        $opsional = array_keys(array_filter(self::KATALOG, static fn (array $t): bool => ! $t[2]));
+
+        // Tahap pengikut tidak ikut ditawarkan: ia menempel pada induknya.
+        return array_values(array_filter(
+            $opsional,
+            static fn (string $kunci): bool => ! isset(self::MENGIKUT[$kunci]),
+        ));
     }
 
     /**
@@ -185,7 +206,34 @@ class AlurRekrutmen
             $out   = array_merge($out, $slot[$i + 1]);
         }
 
-        return $out;
+        return self::pasangkan($out);
+    }
+
+    /**
+     * Tahap pengikut ditaruh ulang tepat sebelum induknya, atau dibuang kalau
+     * induknya tidak dipakai posisi ini.
+     *
+     * Letaknya tidak diserahkan kepada recruiter: memilih jam wawancara SETELAH
+     * wawancaranya berlangsung bukan alur lain, melainkan alur yang mustahil.
+     *
+     * @param  list<string> $alur
+     * @return list<string>
+     */
+    private static function pasangkan(array $alur): array
+    {
+        foreach (self::MENGIKUT as $pengikut => $induk) {
+            $alur = array_values(array_filter(
+                $alur,
+                static fn (string $k): bool => $k !== $pengikut,
+            ));
+
+            $i = array_search($induk, $alur, true);
+            if ($i !== false) {
+                array_splice($alur, $i, 0, [$pengikut]);
+            }
+        }
+
+        return $alur;
     }
 
     /**

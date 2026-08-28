@@ -760,7 +760,9 @@ class Recruiter extends BaseController
         // penjadwalan/failed memicu email jadwal_reschedule lewat StageLogger,
         // sekaligus membuat tahap Penjadwalan menyala merah di stepper kandidat
         // supaya ia tahu harus memilih ulang tanpa menunggu membaca email
-        (new StageLogger())->log($appId, 'penjadwalan', 'failed', 'recruiter:' . session('recruiter_nama'),
+        $tahapJadwal = $jenis === InterviewModel::JENIS_USER ? 'penjadwalan_user' : 'penjadwalan';
+
+        (new StageLogger())->log($appId, $tahapJadwal, 'failed', 'recruiter:' . session('recruiter_nama'),
             'Diminta jadwal ulang: ' . $alasan, [
                 'to'     => $app['email'],
                 'nama'   => $app['nama'],

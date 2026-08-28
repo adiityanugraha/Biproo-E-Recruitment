@@ -32,6 +32,8 @@ class Lamaran extends BaseController
         'gate_1'            => 'Keputusan Tahap 1',
         'penjadwalan'       => 'Penjadwalan Interview',
         'interview_online'  => 'Interview',
+        'penjadwalan_user'  => 'Penjadwalan Interview User',
+        'interview_user'    => 'Interview User',
         'gate_2'            => 'Keputusan Akhir',
         'berkas_kontrak'    => 'Berkas & Kontrak',
     ];
@@ -152,6 +154,16 @@ class Lamaran extends BaseController
         // skor interview supaya tetap benar bila kelak kedua langkah dipisah.
         $gate2Terbuka = isset($statusMap['interview_online']) || isset($statusMap['gate_2']);
 
+        // Interview User punya tahap penjadwalannya SENDIRI (28 Agustus 2026).
+        // Pembukanya baris interview_user yang ditulis Interview::putuskan,
+        // penutupnya jadwal yang sudah terkunci - dibaca dari tabel interviews,
+        // bukan dari riwayat, supaya lamaran yang terlanjur mencatat jadwal
+        // atasannya sebagai 'penjadwalan' juga terbaca benar.
+        $userTerbuka     = isset($statusMap['interview_user']);
+        $jadwalUser      = $appId > 0 ? (new InterviewModel())->forApplication($appId, InterviewModel::JENIS_USER) : null;
+        $userDijadwalkan = ($jadwalUser['status'] ?? null) === 'approved';
+        $ivUser          = InterviewModel::siapDimasuki($jadwalUser);
+
         // halaman tujuan per tahap; null = belum ada halaman (modal "segera hadir").
         // Status Lamaran menampilkan satu lamaran pada satu waktu, jadi ?app= harus
         // ikut - tanpa itu kandidat dengan beberapa lamaran mendarat di posisi lain.
@@ -162,10 +174,12 @@ class Lamaran extends BaseController
             'gate_1'            => $status,
             'penjadwalan'       => $gate1Passed ? site_url('jadwal') : null,
             'interview_online'  => $ivAktif ? site_url('jadwal') : null,
+            'penjadwalan_user'  => $userTerbuka ? site_url('jadwal') : null,
+            'interview_user'    => $ivUser ? site_url('jadwal') : null,
             'gate_2'            => $gate2Terbuka ? $status : null,
         ];
-        $build = static function (array $list) use ($statusMap, $urutan, $maxIdx, $urlStage, $gate1Passed, $bisaAssessment, $ivAktif, $gate2Terbuka): array {
-            return array_map(static function (array $s) use ($statusMap, $urutan, $maxIdx, $urlStage, $gate1Passed, $bisaAssessment, $ivAktif, $gate2Terbuka): array {
+        $build = static function (array $list) use ($statusMap, $urutan, $maxIdx, $urlStage, $gate1Passed, $bisaAssessment, $ivAktif, $gate2Terbuka, $userTerbuka, $userDijadwalkan, $ivUser): array {
+            return array_map(static function (array $s) use ($statusMap, $urutan, $maxIdx, $urlStage, $gate1Passed, $bisaAssessment, $ivAktif, $gate2Terbuka, $userTerbuka, $userDijadwalkan, $ivUser): array {
                 [$stage, $label, $icon] = $s;
                 $i   = array_search($stage, $urutan, true);
                 $st  = ! isset($statusMap[$stage]) ? ($i > $maxIdx ? 'locked' : 'done')
@@ -198,6 +212,18 @@ class Lamaran extends BaseController
                 $mati = false;
                 if ($stage === 'interview_online' && ! isset($statusMap[$stage])) {
                     $ivAktif ? $st = 'current' : $mati = true;
+                }
+                // Penjadwalan Interview User: menyala begitu wawancara atasan
+                // dibuka, padam lagi setelah jamnya terkunci.
+                if ($stage === 'penjadwalan_user' && ! isset($statusMap[$stage])) {
+                    $st = $userDijadwalkan ? 'done' : ($userTerbuka ? 'current' : 'locked');
+                }
+                // Wawancara atasannya sendiri menyala hanya saat ruangnya buka -
+                // aturan yang sama dengan Interview HRD. Tanpa ini ia menyala
+                // sejak diputus lolos HRD, bersamaan dengan penjadwalannya, dan
+                // kandidat melihat dua tahap berjalan sekaligus.
+                if ($stage === 'interview_user' && ($statusMap[$stage] ?? null) === 'entered') {
+                    $ivUser ? $st = 'current' : $mati = true;
                 }
                 // Keputusan Akhir: mati sampai skor interview keluar, lalu menyala
                 // dan mengarah ke Status Lamaran tempat rincian keputusannya ada.
@@ -508,7 +534,12 @@ class Lamaran extends BaseController
             return redirect()->to('/jadwal')->with('error', 'Slot itu baru saja diambil kandidat lain. Silakan pilih jam lain.');
         }
 
-        (new StageLogger())->log($appId, 'penjadwalan', 'entered', 'system', 'kandidat memilih slot ' . $slot, [
+        // Wawancara atasan dicatat di tahapnya SENDIRI. Dulu keduanya menulis
+        // 'penjadwalan', sehingga kandidat yang sudah lewat wawancara HRD
+        // terlihat mundur ke tahap penjadwalan di steppernya.
+        $tahapJadwal = $jenis === InterviewModel::JENIS_USER ? 'penjadwalan_user' : 'penjadwalan';
+
+        (new StageLogger())->log($appId, $tahapJadwal, 'entered', 'system', 'kandidat memilih slot ' . $slot, [
             'to'     => $app['email'],
             'nama'   => $app['nama'],
             'posisi' => $app['judul'],

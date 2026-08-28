@@ -24,7 +24,9 @@ $bingkai = $bingkai ?? false;
 // Yang belum dipakai, dikelompokkan seperti kotak kanan di sistem lama.
 $tersedia = [];
 foreach (array_keys(A::KATALOG) as $kunci) {
-    if (! in_array($kunci, $terpilih, true)) {
+    // Tahap pengikut - Penjadwalan Interview User - tidak pernah ditawarkan
+    // sendiri: ia ikut begitu induknya dipakai. Lihat AlurRekrutmen::MENGIKUT.
+    if (! in_array($kunci, $terpilih, true) && ! isset(A::MENGIKUT[$kunci])) {
         $tersedia[] = $kunci;
     }
 }
@@ -170,6 +172,9 @@ foreach (array_keys(A::KATALOG) as $kunci) {
               <div class="kotak pakai" data-grup="<?= esc($grup) ?>">
                 <?php foreach ($terpilih as $kunci): ?>
                   <?php [$label, $g, $wajib] = A::KATALOG[$kunci]; ?>
+                  <?php // Pengikut ikut terkunci: mencabutnya sendiri akan
+                        // menyisakan wawancara yang jamnya tidak bisa dipilih. ?>
+                  <?php $wajib = $wajib || isset(A::MENGIKUT[$kunci]); ?>
                   <?php if ($g !== $grup) {
                       continue;
                   } ?>
