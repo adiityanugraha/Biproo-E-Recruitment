@@ -2,6 +2,7 @@
 
 namespace App\Controllers;
 
+use App\Libraries\BerkasCv;
 use App\Libraries\LembarPenilaian;
 use App\Libraries\StageLogger;
 use App\Models\AkunAtasanModel;
@@ -245,6 +246,26 @@ class Atasan extends BaseController
      *
      * @return array<string, mixed>|null
      */
+    /**
+     * Atasan membuka CV kandidat yang akan ia wawancarai.
+     *
+     * Dibatasi kandidat pada POSISINYA SENDIRI lewat kandidat(), sama seperti
+     * seluruh halaman atasan lain. Tanpa itu, satu akun atasan bisa membaca CV
+     * seluruh pelamar di semua posisi cuma dengan menebak nomor lamaran - dan
+     * CV memuat alamat, nomor telepon, serta tanggal lahir orang.
+     */
+    public function cv(int $appId)
+    {
+        $app = $this->kandidat($appId);
+        if ($app === null) {
+            return redirect()->to('/atasan')->with('error', 'Kandidat tidak ditemukan pada posisi Anda.');
+        }
+
+        $keluaran = BerkasCv::sajikan($this->response, (string) $app['cv_path'], (string) $app['nama']);
+
+        return $keluaran ?? redirect()->to('/atasan')->with('error', 'Berkas CV tidak ditemukan di server.');
+    }
+
     private function kandidat(int $appId): ?array
     {
         return (new ApplicationModel())

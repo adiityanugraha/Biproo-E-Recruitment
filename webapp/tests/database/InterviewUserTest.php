@@ -56,6 +56,20 @@ final class InterviewUserTest extends CIUnitTestCase
         ]);
     }
 
+    /** @var list<string> berkas uji yang dibuat di disk, dihapus di tearDown */
+    private array $berkasUji = [];
+
+    protected function tearDown(): void
+    {
+        foreach ($this->berkasUji as $f) {
+            if (is_file($f)) {
+                unlink($f);
+            }
+        }
+        $this->berkasUji = [];
+        parent::tearDown();
+    }
+
     /** Akun atasan siap pakai, beserta sesinya. */
     private function sesiAtasan(int $jobId, string $email = 'head@example.com'): array
     {
@@ -362,6 +376,108 @@ final class InterviewUserTest extends CIUnitTestCase
 
         $this->withSession($this->sesiAtasan($punyaSaya))
             ->get('atasan/nilai/' . $milikOrang)->assertRedirect();
+    }
+
+    // --- CV kandidat untuk pewawancara (28 Agustus 2026) ---
+
+    /**
+     * Tautan CV tampil di daftar kandidat dan di lembar penilaian.
+     *
+     * Atasan mewawancarai orang yang belum pernah ia temui. Riwayat kerja hasil
+     * pembacaan AI sudah tampil, tapi yang tidak terbaca mesin - sertifikat,
+     * ijazah, penjelasan proyek - hanya ada di berkas aslinya.
+     */
+    public function testTautanCvTampilDiDuaHalamanAtasan(): void
+    {
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+        $sesi  = $this->sesiAtasan($jobId);
+
+        $daftar = (string) $this->withSession($sesi)->get('atasan')->getBody();
+        $lembar = (string) $this->withSession($sesi)->get('atasan/nilai/' . $aid)->getBody();
+
+        $this->assertStringContainsString('atasan/cv/' . $aid, $daftar);
+        $this->assertStringContainsString('atasan/cv/' . $aid, $lembar);
+    }
+
+    /**
+     * Berkas CV sungguhan di disk, dibersihkan lagi sesudahnya.
+     *
+     * Dipakai tes keamanan di bawah: tanpa berkas nyata, jawabannya redirect
+     * apa pun yang terjadi - termasuk kalau penjagaan job_id dicabut - dan tes
+     * yang lulus karena sebab yang salah lebih buruk daripada tidak ada.
+     */
+    private function berkasCv(int $appId): string
+    {
+        $nama = 'uji-' . $appId . '.pdf';
+        $dir  = WRITEPATH . 'uploads/cv';
+        if (! is_dir($dir)) {
+            mkdir($dir, 0777, true);
+        }
+        file_put_contents($dir . '/' . $nama, "%PDF-1.4\n% berkas uji\n");
+        (new ApplicationModel())->update($appId, ['cv_path' => 'uploads/cv/' . $nama]);
+        $this->berkasUji[] = $dir . '/' . $nama;
+
+        return $nama;
+    }
+
+    /** Atasan membuka CV kandidatnya sendiri: berkasnya benar-benar keluar. */
+    public function testCvKandidatSendiriTerbuka(): void
+    {
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+        $this->berkasCv($aid);
+
+        $hasil = $this->withSession($this->sesiAtasan($jobId))->get('atasan/cv/' . $aid);
+
+        $hasil->assertStatus(200);
+        $hasil->assertHeader('Content-Type', 'application/pdf');
+    }
+
+    /**
+     * INI yang paling penting dari fitur ini.
+     *
+     * CV memuat alamat, nomor telepon, dan tanggal lahir orang. Tanpa penjagaan
+     * job_id dari SESI, satu akun atasan bisa membaca CV seluruh pelamar di
+     * semua posisi cuma dengan menebak nomor lamaran di alamat peramban.
+     *
+     * Berkasnya SENGAJA dibuat sungguhan: kalau penjagaannya dicabut, tes ini
+     * akan menerima PDF berstatus 200, bukan redirect.
+     */
+    public function testTidakBisaMembukaCvKandidatLowonganLain(): void
+    {
+        $punyaSaya  = $this->lowongan();
+        $punyaOrang = $this->lowongan();
+        $milikOrang = $this->menungguAtasan($punyaOrang);
+        $this->berkasCv($milikOrang);
+
+        $this->withSession($this->sesiAtasan($punyaSaya))
+            ->get('atasan/cv/' . $milikOrang)->assertRedirect();
+    }
+
+    /** Tanpa sesi atasan sama sekali, CV tidak terbuka. */
+    public function testTanpaLoginCvTidakTerbuka(): void
+    {
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+
+        $this->get('atasan/cv/' . $aid)->assertRedirect();
+    }
+
+    /**
+     * Berkasnya tidak ada di disk: pesan galat, bukan halaman rusak.
+     *
+     * Lamaran uji memakai cv_path yang berkasnya memang tidak pernah dibuat,
+     * jadi keadaan ini justru yang paling sering terjadi di lingkungan uji -
+     * dan di produksi ia terjadi pada lamaran lama yang berkasnya sudah dihapus.
+     */
+    public function testBerkasCvHilangTidakMerusakHalaman(): void
+    {
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+
+        $this->withSession($this->sesiAtasan($jobId))
+            ->get('atasan/cv/' . $aid)->assertRedirect();
     }
 
     public function testKandidatYangBelumLolosHrdTidakMuncul(): void

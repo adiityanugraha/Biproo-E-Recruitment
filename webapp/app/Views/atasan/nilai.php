@@ -83,7 +83,18 @@ $dariAi = array_filter($penilaian, static fn ($p) => ($p['sumber'] ?? '') === L:
   <?php endif ?>
 
   <div class="kartu">
-    <h3>Riwayat Kerja</h3>
+    <?php /*
+      * Tautan CV DI SEBELAH judul riwayat kerja, bukan di kartu tersendiri.
+      * Yang tampil di bawah ini hasil pembacaan AI atas CV-nya; ketika atasan
+      * meragukan atau butuh yang tidak terbaca mesin - sertifikat, ijazah,
+      * penjelasan proyek - berkas aslinya harus ada dalam satu jangkauan mata,
+      * bukan dicari di halaman lain.
+      */ ?>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+      <h3 style="margin:0">Riwayat Kerja</h3>
+      <a href="<?= site_url('atasan/cv/' . $app['id']) ?>" target="_blank" rel="noopener"
+         style="margin-left:auto;font-size:12.5px;color:#2D8CFF;font-weight:600">Buka CV asli</a>
+    </div>
     <?php if ($riwayat === []): ?>
       <p class="ket" style="margin:0">CV kandidat tidak mencantumkan riwayat kerja.</p>
     <?php else: ?>

@@ -26,11 +26,26 @@
   .pesan-sukses { background: #E8F7EE; color: #1d6b3d; }
   .pesan-error { background: #FFE9E3; color: #a53a1c; }
 
-  table { border-collapse: collapse; width: 100%; }
-  th, td { border: 1px solid #eef0f5; padding: 10px 12px; font-size: 13px; text-align: left; }
-  th { background: #FAFBFD; font-weight: 600; }
-  .btn { padding: 6px 16px; border: none; border-radius: 7px; cursor: pointer;
-         font-family: inherit; font-weight: 600; font-size: 12.5px; background: #2F6FED; color: #fff; }
+  /* Tata letak tabel disamakan dengan tabel tahap di dashboard recruiter,
+     yang mengikuti halaman Interview HRD BIPROO yang asli: kepala biru, garis
+     kisi penuh, isi rata tengah. Kolom dan isinya tidak berubah. */
+  table { white-space: nowrap; border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #cfd8e3; padding: 7px 12px; font-size: 13px;
+           text-align: center; vertical-align: middle; }
+  th { background: #1E88E5; color: #fff; font-weight: 700; font-size: 12px;
+       letter-spacing: .2px; border-color: #1877cc; }
+  tbody tr:hover td { background: #f7fafd; }
+  .scroll-x { overflow-x: auto; border: 1px solid #cfd8e3; border-radius: 8px; }
+
+  /* Semua tombol dalam sel bertinggi sama, supaya barisnya rata. */
+  .btn { padding: 0 14px; height: 30px; border: 1px solid transparent; border-radius: 6px;
+         cursor: pointer; font-family: inherit; font-weight: 600; font-size: 12px;
+         line-height: 28px; background: #1E88E5; color: #fff; }
+  .b-file { background: #E8F2FE; color: #1E88E5; border-color: #A8CFF5; }
+  .b-zoom { background: #2D8CFF; color: #fff; }
+  /* nowrap: kolom Tindakan memuat sampai tiga tombol, dan kalau dibiarkan
+     membungkus, barisnya jadi jauh lebih tinggi daripada baris lain. */
+  .aksi { display: flex; flex-wrap: nowrap; gap: 5px; justify-content: center; }
   .sudah { font-weight: 700; font-size: 12.5px; }
   .s-passed { color: #1d6b3d; } .s-failed { color: #a12734; }
   .kosong { color: #999; padding: 26px 0; text-align: center; font-size: 13px; }
@@ -63,13 +78,14 @@
         Kandidat muncul di sini setelah lolos wawancara dengan tim HRD.
       </p>
     <?php else: ?>
+      <div class="scroll-x">
       <table>
         <tr>
           <th style="width:46px">No</th>
           <th>Nama</th>
           <th>Email</th>
           <th style="width:180px">Jadwal</th>
-          <th style="width:230px">Tindakan</th>
+          <th style="width:290px">Tindakan</th>
         </tr>
         <?php foreach ($daftar as $i => $a): ?>
           <tr>
@@ -84,9 +100,18 @@
               <?php endif ?>
             </td>
             <td>
+              <div class="aksi">
+              <?php /*
+                * CV dibuka di tab baru, bukan menggantikan halaman ini: atasan
+                * membacanya sambil menyiapkan pertanyaan, lalu kembali ke sini
+                * untuk masuk Zoom. Menutup daftar kandidat di tengah persiapan
+                * cuma memaksanya menekan tombol kembali.
+                */ ?>
+              <a href="<?= site_url('atasan/cv/' . $a['id']) ?>" target="_blank" rel="noopener">
+                <button class="btn b-file">CV</button></a>
               <?php if (! empty($a['jadwal']['join_url'])): ?>
                 <a href="<?= esc($a['jadwal']['join_url'], 'attr') ?>" target="_blank" rel="noopener">
-                  <button class="btn" style="background:#2D8CFF">Zoom</button></a>
+                  <button class="btn b-zoom">Zoom</button></a>
               <?php endif ?>
               <?php // Yang sudah diputus tidak menampilkan tombol menilai:
                     // keputusannya sudah dikirim ke kandidat lewat email dan
@@ -99,10 +124,12 @@
                 <a href="<?= site_url('atasan/nilai/' . $a['id']) ?>">
                   <button class="btn">Wawancara &amp; Nilai</button></a>
               <?php endif ?>
+              </div>
             </td>
           </tr>
         <?php endforeach ?>
       </table>
+      </div>
     <?php endif ?>
   </div>
 </div>
