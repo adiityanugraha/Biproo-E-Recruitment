@@ -570,6 +570,89 @@ class Recruiter extends BaseController
         return $keluaran ?? redirect()->back()->with('error', 'Berkas CV tidak ditemukan di server.');
     }
 
+    /**
+     * Peringkat kandidat menurut skor akhir, bisa disaring per posisi.
+     *
+     * SKOR AKHIR DI SINI = rumus Gate 2, yaitu skor kemiripan CV 40% ditambah
+     * skor interview 60%, memakai bobot milik lowongannya sendiri
+     * (jobs.bobot_json). Angka yang sama tercatat di riwayat tahap sebagai
+     * "Skor akhir rumus 76,6/100", jadi yang membaca halaman ini dan yang
+     * membaca riwayat melihat angka yang sama.
+     *
+     * DUA HAL YANG HARUS DISEBUT KEPADA YANG MEMBACANYA, dan karena itu
+     * keduanya tertulis di halamannya:
+     *
+     *   1. Rumus ini TIDAK lagi memutuskan kelulusan. Sejak 24 Agustus 2026
+     *      Gate 2 diputus rekomendasi AI, dan rumusnya cuma dicatat sebagai
+     *      pembanding. Peringkat di sini bahan pertimbangan manusia, bukan
+     *      urutan siapa yang diterima.
+     *   2. Membandingkan skor ANTAR POSISI menyesatkan. Komponen CV-nya diukur
+     *      terhadap teks lowongan yang berbeda-beda, jadi 0,80 di satu posisi
+     *      bukan hal yang sama dengan 0,80 di posisi lain. Karena itu penyaring
+     *      posisi ada di paling atas halaman.
+     *
+     * Kandidat yang belum punya salah satu komponennya tidak dibuang, melainkan
+     * dikumpulkan di bawah tanpa peringkat - kalau dibuang, recruiter mengira
+     * kandidatnya hilang dari sistem.
+     */
+    public function peringkat()
+    {
+        $jobId = (int) ($this->request->getGet('job') ?? 0);
+
+        $q = (new ApplicationModel())
+            ->select('applications.id, applications.job_id, candidates.nama, candidates.email,'
+                . ' jobs.judul AS posisi, jobs.bobot_json, jobs.threshold_json')
+            ->join('candidates', 'candidates.id = applications.candidate_id')
+            ->join('jobs', 'jobs.id = applications.job_id');
+        if ($jobId > 0) {
+            $q->where('applications.job_id', $jobId);
+        }
+        $daftar = $q->orderBy('applications.id')->findAll();
+
+        $history   = new StageHistoryModel();
+        $penilaian = new InterviewPenilaianModel();
+
+        foreach ($daftar as &$a) {
+            $aid = (int) $a['id'];
+            $a['skor_cv']        = $this->skorCv($aid);
+            $a['skor_interview'] = LembarPenilaian::skor($penilaian->untukLamaran($aid));
+
+            // Rumusnya baru bisa dihitung kalau KEDUA komponennya ada. Mengisi
+            // yang kosong dengan nol akan menempatkan kandidat yang datanya
+            // belum lengkap di dasar peringkat seolah-olah ia yang terburuk.
+            $a['skor_akhir'] = null;
+            if ($a['skor_cv'] !== null && $a['skor_interview'] !== null) {
+                $config = GateTwo::configFromJob($a['bobot_json'] ?? null, $a['threshold_json'] ?? null);
+                $a['skor_akhir'] = GateTwo::recommend($a['skor_cv'], $a['skor_interview'] / 100, $config)['score'];
+            }
+
+            $terakhir       = $history->where('application_id', $aid)->orderBy('id', 'DESC')->first();
+            $a['tahap']     = $terakhir['stage'] ?? '-';
+            $a['status']    = $terakhir['status'] ?? '-';
+            $a['gate2']     = $history->latestStatus($aid, 'gate_2');
+        }
+        unset($a);
+
+        // Yang berskor lebih dulu, urut menurun. Yang belum berskor berkumpul
+        // di bawah, urut menurut nomor lamaran supaya urutannya tidak berubah
+        // tiap halaman dimuat.
+        usort($daftar, static function (array $x, array $y): int {
+            if ($x['skor_akhir'] === null || $y['skor_akhir'] === null) {
+                return ($x['skor_akhir'] === null ? 1 : 0) <=> ($y['skor_akhir'] === null ? 1 : 0)
+                    ?: ((int) $x['id'] <=> (int) $y['id']);
+            }
+
+            return [$y['skor_akhir'], (int) $x['id']] <=> [$x['skor_akhir'], (int) $y['id']];
+        });
+
+        return view('recruiter/peringkat', [
+            'judul'    => 'Candidate Ranking',
+            'daftar'   => $daftar,
+            'lowongan' => (new JobModel())->select('id, judul')->orderBy('judul')->findAll(),
+            'jobId'    => $jobId,
+        ]);
+    }
+
     /** Daftar SEMUA kandidat lintas posisi: stage terkini + skor + flag + label posisi. */
     public function kandidat()
     {

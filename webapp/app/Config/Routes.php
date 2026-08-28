@@ -45,6 +45,7 @@ $routes->group('recruiter', ['filter' => 'recruiterauth'], static function ($rou
     $routes->get('', 'Recruiter::index');
     $routes->get('tahap/(:segment)', 'Recruiter::tahap/$1');
     $routes->get('kandidat', 'Recruiter::kandidat');
+    $routes->get('peringkat', 'Recruiter::peringkat');
     $routes->get('cv/(:num)', 'Recruiter::cvKandidat/$1');
     $routes->post('interview/reschedule/(:num)', 'Recruiter::rescheduleInterview/$1');
     // ruang interview per kandidat: tautan Zoom, tiga pertanyaan, unggah rekaman

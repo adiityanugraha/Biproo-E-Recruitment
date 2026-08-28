@@ -3,7 +3,19 @@
 <?= $this->section('isi') ?>
 
 <div class="kartu">
-  <h2>Semua Kandidat</h2>
+  <?php /*
+    * Tombol Candidate Ranking di sebelah judul, bukan di sidebar: halaman
+    * peringkat membaca kandidat yang sama dengan tabel di bawah ini, cuma
+    * disusun menurut skor. Menaruhnya jauh dari sini membuat keduanya terbaca
+    * seperti dua daftar yang berbeda isinya.
+    */ ?>
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+    <h2 style="margin:0">Semua Kandidat</h2>
+    <a href="<?= site_url('recruiter/peringkat') ?>" style="margin-left:auto">
+      <button type="button" style="height:34px;padding:0 16px;border:none;border-radius:7px;
+        background:#1E88E5;color:#fff;font-family:inherit;font-weight:600;font-size:13px;cursor:pointer">
+        🏆 Candidate Ranking</button></a>
+  </div>
   <?php if ($daftar === []): ?>
     <p>Belum ada pelamar.</p>
   <?php else: ?>
