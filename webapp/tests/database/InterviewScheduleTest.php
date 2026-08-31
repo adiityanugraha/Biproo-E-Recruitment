@@ -92,15 +92,18 @@ final class InterviewScheduleTest extends CIUnitTestCase
     {
         $model = new SlotInterviewModel();
 
-        // Migrasi SlotJadwalDikelola sudah mengisi tabel ini dengan pola lama
-        // (10.00-16.00, 7 hari kerja, kuota 1). Pengisian di bawah cuma jaring
-        // pengaman bila suatu saat migrasinya berhenti melakukan itu.
+        // Sejak 31 Agustus 2026 slot dipisah per jenis wawancara, dan tabelnya
+        // TIDAK lagi diisi migrasi - yang membukanya recruiter (untuk HRD) dan
+        // atasan (untuk Interview User). Uji ini menyiapkan pola yang dulu
+        // terkunci di kode: 10.00-16.00, hari kerja.
         if ($model->countAllResults() === 0) {
             $baris = [];
             foreach (SlotJadwal::hariKerja(SlotJadwal::HARI_KERJA) as $tanggal) {
                 for ($jam = 10; $jam <= 16; $jam++) {
                     $baris[] = [
                         'scheduled_at' => $tanggal . ' ' . sprintf('%02d:00:00', $jam),
+                        'jenis'        => InterviewModel::JENIS_HRD,
+                        'job_id'       => SlotInterviewModel::TANPA_POSISI,
                         'kuota'        => 1,
                         'created_at'   => date('Y-m-d H:i:s'),
                     ];
@@ -109,7 +112,7 @@ final class InterviewScheduleTest extends CIUnitTestCase
             $model->insertBatch($baris);
         }
 
-        $waktu = (string) $model->tersedia()[$ke]['scheduled_at'];
+        $waktu = (string) $model->tersedia(InterviewModel::JENIS_HRD)[$ke]['scheduled_at'];
         if ($kuota !== 1) {
             $model->where('scheduled_at', $waktu)->set('kuota', $kuota)->update();
         }
@@ -530,6 +533,7 @@ final class InterviewScheduleTest extends CIUnitTestCase
 
     public function testHalamanJadwalMenampilkanDaftarSlot(): void
     {
+        $this->slot();   // recruiter sudah membuka jam wawancara HRD
         [$cid] = $this->fixture('passed');
 
         $res = $this->withSession($this->sesiKandidat($cid))->get('jadwal');
@@ -542,6 +546,7 @@ final class InterviewScheduleTest extends CIUnitTestCase
 
     public function testSemuaSlotYangDirenderMemangSah(): void
     {
+        $this->slot();
         [$cid] = $this->fixture('passed');
 
         $html = (string) $this->withSession($this->sesiKandidat($cid))->get('jadwal')->getBody();
@@ -551,7 +556,7 @@ final class InterviewScheduleTest extends CIUnitTestCase
         foreach ($m[1] as $slot) {
             $this->assertContains(
                 $slot,
-                array_column((new SlotInterviewModel())->tersedia(), 'scheduled_at'),
+                array_column((new SlotInterviewModel())->tersedia(InterviewModel::JENIS_HRD), 'scheduled_at'),
                 "slot {$slot} dirender padahal tidak terdaftar atau sudah lewat",
             );
         }

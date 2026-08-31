@@ -4,6 +4,7 @@ namespace App\Controllers;
 
 use App\Libraries\BerkasCv;
 use App\Libraries\LembarPenilaian;
+use App\Libraries\PengaturanSlot;
 use App\Libraries\StageLogger;
 use App\Models\AkunAtasanModel;
 use App\Models\ApplicationModel;
@@ -104,6 +105,35 @@ class Atasan extends BaseController
         return view('atasan/daftar', [
             'judul'  => 'Interview User',
             'daftar' => $daftar,
+        ]);
+    }
+
+    /**
+     * Atasan mengatur jam wawancaranya sendiri (31 Agustus 2026).
+     *
+     * Sebelum ini jam Interview User dibuka recruiter, dari daftar yang sama
+     * dengan wawancara HRD. Dua hal yang salah di situ: recruiter menebak kapan
+     * atasan tiap unit senggang - dan tebakan yang meleset berakhir jadi
+     * wawancara yang tidak dihadiri - lalu jam yang dibuka berlaku untuk semua
+     * posisi sekaligus, padahal pewawancara tiap posisi orang yang berbeda.
+     *
+     * job_id diambil dari SESI, seperti seluruh kueri di berkas ini. Atasan
+     * yang mengetik id slot posisi lain tetap ditolak di PengaturanSlot.
+     */
+    public function jadwal()
+    {
+        $slot = new PengaturanSlot(InterviewModel::JENIS_USER, (int) session('atasan_job_id'));
+
+        if ($this->request->is('post')) {
+            [$ok, $pesan] = $slot->tangani((array) $this->request->getPost());
+
+            return redirect()->to('/atasan/jadwal')->with($ok ? 'sukses' : 'error', $pesan);
+        }
+
+        return view('atasan/slot', [
+            'judul'  => 'Jadwal Interview User',
+            'daftar' => $slot->daftar(),
+            'aksi'   => site_url('atasan/jadwal'),
         ]);
     }
 

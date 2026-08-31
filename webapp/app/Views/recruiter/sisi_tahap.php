@@ -34,17 +34,16 @@ if (($stage ?? '') === 'upload_cv') {
     ];
 }
 
-$wawancara = in_array($stage ?? '', ['interview_online', 'interview_user'], true);
-
 foreach ($tabs as $k => [$lbl, $ic, $url]): ?>
   <a href="<?= $url ?>" class="<?= $aktif === $k ? 'on' : '' ?>">
     <span class="l"><span><?= $ic ?></span><span><?= $lbl ?></span></span><span><?= $aktif === $k ? '»' : '' ?></span></a>
 <?php endforeach ?>
-<?php // Settings di tahap wawancara membuka pengaturan slot jadwal: itu
-      // satu-satunya setelan yang memang milik tahap ini. Tahap lain belum
-      // punya apa-apa untuk diatur, jadi tombolnya tetap sekadar pemberitahuan. ?>
-<?php if ($wawancara): ?>
-  <a href="<?= site_url('recruiter/pengaturan/jadwal') ?>?tahap=<?= esc($stage, 'url') ?>"
+<?php // Settings HANYA di tahap Interview HRD, karena hanya jam wawancara
+      // HRD yang diatur recruiter. Jam Interview User diatur atasan tiap posisi
+      // lewat akunnya sendiri (31 Agustus 2026), jadi menaruh tombolnya di
+      // tahap itu cuma menjanjikan setelan yang bukan miliknya. ?>
+<?php if ($stage === 'interview_online'): ?>
+  <a href="<?= site_url('recruiter/pengaturan/jadwal') ?>"
      class="<?= $aktif === 'settings' ? 'on' : '' ?>">
     <span class="l"><span>⚙️</span><span>Settings</span></span><span><?= $aktif === 'settings' ? '»' : '' ?></span></a>
 <?php else: ?>

@@ -20,6 +20,7 @@
   .atas .kiri { font-weight: 700; font-size: 16px; }
   .atas .kiri small { display: block; font-weight: 400; font-size: 12px; opacity: .9; }
   .atas a { color: #fff; font-size: 13px; text-decoration: underline; }
+  .atas .kanan { display: flex; gap: 16px; align-items: center; }
   .isi { max-width: 1000px; margin: 22px auto; padding: 0 20px; }
   .kartu { background: #fff; border-radius: 12px; padding: 20px 22px; box-shadow: 0 3px 12px rgba(0,0,0,.04); }
   .pesan { padding: 12px 16px; border-radius: 10px; margin-bottom: 16px; font-size: 14px; }
@@ -56,7 +57,13 @@
     Interview User
     <small><?= esc(session('atasan_posisi')) ?> &middot; <?= esc(session('atasan_nama')) ?></small>
   </div>
-  <a href="<?= site_url('atasan/logout') ?>">Keluar</a>
+  <div class="kanan">
+    <?php // Jam wawancara diatur atasan sendiri sejak 31 Agustus 2026. Tanpa
+          // tautan ini halamannya tidak pernah ditemukan, dan kandidat berhenti
+          // di "Jadwal belum tersedia" tanpa ada yang tahu sebabnya. ?>
+    <a href="<?= site_url('atasan/jadwal') ?>">Atur jadwal</a>
+    <a href="<?= site_url('atasan/logout') ?>">Keluar</a>
+  </div>
 </div>
 
 <div class="isi">

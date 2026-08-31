@@ -33,14 +33,6 @@ final class PengaturanJadwalTest extends CIUnitTestCase
 
     private array $sesi = ['recruiter_id' => 1, 'recruiter_nama' => 'Irpan'];
 
-    protected function setUp(): void
-    {
-        parent::setUp();
-        // Migrasi mengisi tabelnya dengan pola lama; dikosongkan supaya tiap
-        // tes berangkat dari keadaan yang ia tentukan sendiri.
-        (new SlotInterviewModel())->truncate();
-    }
-
     private function kirim(array $data)
     {
         return $this->withSession($this->sesi)->post('recruiter/pengaturan/jadwal', $data);
@@ -49,7 +41,9 @@ final class PengaturanJadwalTest extends CIUnitTestCase
     private function slot(string $waktu, int $kuota = 1): int
     {
         return (int) (new SlotInterviewModel())->insert([
-            'scheduled_at' => $waktu, 'kuota' => $kuota, 'created_at' => date('Y-m-d H:i:s'),
+            'scheduled_at' => $waktu, 'jenis' => InterviewModel::JENIS_HRD,
+            'job_id' => SlotInterviewModel::TANPA_POSISI,
+            'kuota' => $kuota, 'created_at' => date('Y-m-d H:i:s'),
         ]);
     }
 
@@ -58,7 +52,7 @@ final class PengaturanJadwalTest extends CIUnitTestCase
     {
         return array_map(
             static fn (array $r): string => substr((string) $r['scheduled_at'], 0, 16),
-            (new SlotInterviewModel())->semua(),
+            (new SlotInterviewModel())->semua(InterviewModel::JENIS_HRD),
         );
     }
 
@@ -69,7 +63,7 @@ final class PengaturanJadwalTest extends CIUnitTestCase
         $this->kirim(['aksi' => 'tambah', 'tanggal' => '2026-09-07', 'jam' => '10:00', 'kuota' => 2]);
 
         $this->assertSame(['2026-09-07 10:00'], $this->waktuTersimpan());
-        $this->assertSame(2, (new SlotInterviewModel())->kuota('2026-09-07 10:00:00'));
+        $this->assertSame(2, (new SlotInterviewModel())->kuota('2026-09-07 10:00:00', InterviewModel::JENIS_HRD));
     }
 
     /**
@@ -130,7 +124,7 @@ final class PengaturanJadwalTest extends CIUnitTestCase
         $this->kirim(['aksi' => 'tambah', 'tanggal' => '2026-09-07', 'jam' => '10:00', 'kuota' => 1]);
 
         $this->assertCount(1, $this->waktuTersimpan());
-        $this->assertSame(5, (new SlotInterviewModel())->kuota('2026-09-07 10:00:00'), 'kuota lama dipertahankan');
+        $this->assertSame(5, (new SlotInterviewModel())->kuota('2026-09-07 10:00:00', InterviewModel::JENIS_HRD), 'kuota lama dipertahankan');
     }
 
     public function testTanggalNgawurDitolak(): void
@@ -157,7 +151,7 @@ final class PengaturanJadwalTest extends CIUnitTestCase
 
         $this->kirim(['aksi' => 'kuota', 'id' => $id, 'kuota' => 3]);
 
-        $this->assertSame(3, (new SlotInterviewModel())->kuota('2026-09-07 10:00:00'));
+        $this->assertSame(3, (new SlotInterviewModel())->kuota('2026-09-07 10:00:00', InterviewModel::JENIS_HRD));
     }
 
     /**
@@ -172,7 +166,7 @@ final class PengaturanJadwalTest extends CIUnitTestCase
 
         $this->kirim(['aksi' => 'kuota', 'id' => $id, 'kuota' => 0]);
 
-        $this->assertSame(0, (new SlotInterviewModel())->kuota('2026-09-07 10:00:00'));
+        $this->assertSame(0, (new SlotInterviewModel())->kuota('2026-09-07 10:00:00', InterviewModel::JENIS_HRD));
         $this->assertCount(1, $this->waktuTersimpan(), 'slotnya tetap ada');
     }
 
@@ -223,25 +217,32 @@ final class PengaturanJadwalTest extends CIUnitTestCase
         $this->slot('2026-09-07 10:00:00', 2);
 
         $halaman = (string) $this->withSession($this->sesi)->get('recruiter/pengaturan/jadwal')->getBody();
-
         $this->assertStringContainsString('07 Sep 2026', $halaman);
 
-        // Jalan masuknya lewat Settings di tahap wawancara, bukan halaman
-        // Pengaturan: slot jadwal cuma dipakai dua tahap itu.
-        foreach (['interview_online', 'interview_user'] as $tahap) {
-            $tabel = (string) $this->withSession($this->sesi)->get('recruiter/tahap/' . $tahap)->getBody();
-            $this->assertStringContainsString('pengaturan/jadwal', $tabel, $tahap);
+        // Jalan masuknya lewat Settings tahap Interview HRD - dan HANYA di
+        // situ. Jam Interview User diatur atasan tiap posisi lewat akunnya
+        // sendiri, jadi tombol di tahap itu akan menjanjikan setelan yang bukan
+        // milik recruiter.
+        $hrd = (string) $this->withSession($this->sesi)->get('recruiter/tahap/interview_online')->getBody();
+        $this->assertStringContainsString('pengaturan/jadwal', $hrd);
+
+        foreach (['interview_user', 'upload_cv'] as $tahap) {
+            $lain = (string) $this->withSession($this->sesi)->get('recruiter/tahap/' . $tahap)->getBody();
+            $this->assertStringNotContainsString('pengaturan/jadwal', $lain, $tahap);
         }
+    }
 
-        $lain = (string) $this->withSession($this->sesi)->get('recruiter/tahap/upload_cv')->getBody();
-        $this->assertStringNotContainsString('pengaturan/jadwal', $lain, 'tahap lain tidak punya slot');
+    /** Halaman recruiter TIDAK menampilkan slot Interview User milik posisi mana pun. */
+    public function testSlotInterviewUserTidakIkutDiHalamanRecruiter(): void
+    {
+        (new SlotInterviewModel())->insert([
+            'scheduled_at' => '2026-09-08 15:00:00', 'jenis' => InterviewModel::JENIS_USER,
+            'job_id' => 7, 'kuota' => 1, 'created_at' => date('Y-m-d H:i:s'),
+        ]);
 
-        // Sidebarnya sidebar tahap yang sama, bukan menu lain: menekan Settings
-        // tidak boleh terasa seperti terlempar ke aplikasi lain.
-        $dariUser = (string) $this->withSession($this->sesi)
-            ->get('recruiter/pengaturan/jadwal?tahap=interview_user')->getBody();
-        $this->assertStringContainsString('recruiter/tahap/interview_user?status=completed', $dariUser);
-        $this->assertStringContainsString('On Progress', $dariUser);
+        $halaman = (string) $this->withSession($this->sesi)->get('recruiter/pengaturan/jadwal')->getBody();
+
+        $this->assertStringNotContainsString('08 Sep 2026', $halaman);
     }
 
     /** Tanpa slot sama sekali, halamannya menyebutkan akibatnya. */

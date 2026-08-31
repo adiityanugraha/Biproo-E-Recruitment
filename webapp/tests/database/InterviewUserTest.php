@@ -97,20 +97,23 @@ final class InterviewUserTest extends CIUnitTestCase
      * yang dulu terkunci di kode - 10.00-16.00, hari kerja - supaya tetap benar
      * dijalankan hari apa pun.
      */
-    private function slot(int $ke = 0, int $kuota = 1): string
+    private function slot(int $jobId, int $ke = 0, int $kuota = 1): string
     {
         $model = new SlotInterviewModel();
 
-        // Migrasi SlotJadwalDikelola sudah mengisi tabel ini dengan pola lama
-        // (10.00-16.00, 7 hari kerja, kuota 1). Pengisian di bawah cuma jaring
-        // pengaman bila suatu saat migrasinya berhenti melakukan itu.
-        if ($model->countAllResults() === 0) {
+        // Slot Interview User MILIK SATU POSISI sejak 31 Agustus 2026, dan
+        // dibuka atasannya sendiri - tidak ada lagi migrasi yang mengisinya.
+        // Uji ini menyiapkan pola yang dulu terkunci di kode: 10.00-16.00,
+        // hari kerja.
+        if ($model->where('jenis', 'user')->where('job_id', $jobId)->countAllResults() === 0) {
             $baris = [];
             foreach (SlotJadwal::hariKerja(SlotJadwal::HARI_KERJA) as $tanggal) {
                 for ($jam = 10; $jam <= 16; $jam++) {
                     $baris[] = [
                         'scheduled_at' => $tanggal . ' ' . sprintf('%02d:00:00', $jam),
-                        'kuota'        => 1,
+                        'jenis'        => 'user',
+                        'job_id'       => $jobId,
+                        'kuota'        => $kuota,
                         'created_at'   => date('Y-m-d H:i:s'),
                     ];
                 }
@@ -118,12 +121,7 @@ final class InterviewUserTest extends CIUnitTestCase
             $model->insertBatch($baris);
         }
 
-        $waktu = (string) $model->tersedia()[$ke]['scheduled_at'];
-        if ($kuota !== 1) {
-            $model->where('scheduled_at', $waktu)->set('kuota', $kuota)->update();
-        }
-
-        return $waktu;
+        return (string) $model->tersedia('user', $jobId)[$ke]['scheduled_at'];
     }
 
     /** Akun atasan siap pakai, beserta sesinya. */
@@ -788,6 +786,7 @@ final class InterviewUserTest extends CIUnitTestCase
     public function testKandidatDitawariJadwalInterviewUserSetelahLolosHrd(): void
     {
         $jobId = $this->lowongan();
+        $this->slot($jobId);   // atasan posisi ini sudah membuka jamnya
         $aid   = $this->menungguAtasan($jobId);
 
         $html = (string) $this->withSession($this->sesiKandidat($aid))->get('jadwal')->getBody();
@@ -813,7 +812,7 @@ final class InterviewUserTest extends CIUnitTestCase
         $this->fakeZoom();
         $jobId = $this->lowongan();
         $aid   = $this->menungguAtasan($jobId);
-        $slot  = $this->slot();
+        $slot  = $this->slot($jobId);
 
         $this->withSession($this->sesiKandidat($aid))
             ->post('interview/ajukan/' . $aid, ['jadwal' => $slot, 'jenis' => 'user']);
@@ -843,7 +842,7 @@ final class InterviewUserTest extends CIUnitTestCase
             'join_url' => 'https://zoom.us/j/111']);
 
         $this->withSession($this->sesiKandidat($aid))->post('interview/ajukan/' . $aid, [
-            'jadwal' => $this->slot(), 'jenis' => 'user',
+            'jadwal' => $this->slot($jobId), 'jenis' => 'user',
         ]);
 
         $this->assertSame('111', $model->forApplication($aid, 'hrd')['meeting_id']);
@@ -859,7 +858,7 @@ final class InterviewUserTest extends CIUnitTestCase
         (new StageLogger())->log($aid, 'gate_1', 'passed', 'system');
 
         $this->withSession($this->sesiKandidat($aid))->post('interview/ajukan/' . $aid, [
-            'jadwal' => $this->slot(), 'jenis' => 'user',
+            'jadwal' => $this->slot($jobId), 'jenis' => 'user',
         ]);
 
         $this->assertNull((new \App\Models\InterviewModel())->forApplication($aid, 'user'));
@@ -899,7 +898,7 @@ final class InterviewUserTest extends CIUnitTestCase
         $aid   = $this->menungguAtasan($jobId);
 
         $this->withSession($this->sesiKandidat($aid))
-            ->post('interview/ajukan/' . $aid, ['jadwal' => $this->slot(), 'jenis' => 'user']);
+            ->post('interview/ajukan/' . $aid, ['jadwal' => $this->slot($jobId), 'jenis' => 'user']);
 
         $peta = (new StageHistoryModel())->latestStatusMap($aid);
         $this->assertSame('entered', $peta['penjadwalan_user'] ?? null);
@@ -914,7 +913,7 @@ final class InterviewUserTest extends CIUnitTestCase
         $aid   = $this->menungguAtasan($jobId);
 
         $this->withSession($this->sesiKandidat($aid))
-            ->post('interview/ajukan/' . $aid, ['jadwal' => $this->slot(), 'jenis' => 'user']);
+            ->post('interview/ajukan/' . $aid, ['jadwal' => $this->slot($jobId), 'jenis' => 'user']);
 
         $this->assertNotNull(
             (new EmailQueueModel())->where('template', 'undangan_interview')->first(),
@@ -969,11 +968,141 @@ final class InterviewUserTest extends CIUnitTestCase
         $aid   = $this->menungguAtasan($jobId);
 
         $this->withSession($this->sesiKandidat($aid))
-            ->post('interview/ajukan/' . $aid, ['jadwal' => $this->slot(), 'jenis' => 'user']);
+            ->post('interview/ajukan/' . $aid, ['jadwal' => $this->slot($jobId), 'jenis' => 'user']);
 
         $tahap = $this->stepper($aid);
 
         $this->assertSame('done', $tahap['Penjadwalan Interview User'] ?? null);
+    }
+
+    // --- jam wawancara dipisah dan dimiliki posisi (31 Agustus 2026) ---
+
+    /** Jam yang dibuka recruiter untuk HRD tidak otomatis jadi jam atasan. */
+    public function testSlotHrdTidakDitawarkanUntukInterviewUser(): void
+    {
+        $jobId = $this->lowongan();
+        $aid   = $this->menungguAtasan($jobId);
+
+        // Recruiter membuka jam HRD, atasan belum membuka apa pun.
+        (new SlotInterviewModel())->insert([
+            'scheduled_at' => (new DateTimeImmutable('+3 days'))->setTime(9, 30)->format('Y-m-d H:i:s'),
+            'jenis' => 'hrd', 'job_id' => SlotInterviewModel::TANPA_POSISI,
+            'kuota' => 1, 'created_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        $html = (string) $this->withSession($this->sesiKandidat($aid))->get('jadwal')->getBody();
+
+        $this->assertStringContainsString('Jadwal belum tersedia', $html,
+            'jam HRD bukan jam atasan - pewawancaranya orang yang berbeda');
+    }
+
+    /**
+     * INTI PEMISAHAN: jam Interview User milik SATU posisi.
+     *
+     * Kandidat posisi A yang mengambil jam 10.00 tidak boleh ikut menutup jam
+     * 10.00 untuk kandidat posisi B - atasan posisi B orang yang berbeda dan
+     * sedang senggang.
+     */
+    public function testJamPosisiLainTidakSalingMenutup(): void
+    {
+        $this->fakeZoom();
+        $jobA = $this->lowongan();
+        $jobB = $this->lowongan();
+        $aidA = $this->menungguAtasan($jobA);
+        $aidB = $this->menungguAtasan($jobB);
+
+        $waktu = $this->slot($jobA);          // atasan A membuka jamnya
+        $this->slot($jobB);                   // atasan B membuka jam yang sama
+        $this->withSession($this->sesiKandidat($aidA))
+            ->post('interview/ajukan/' . $aidA, ['jadwal' => $waktu, 'jenis' => 'user']);
+
+        $this->withSession($this->sesiKandidat($aidB))
+            ->post('interview/ajukan/' . $aidB, ['jadwal' => $waktu, 'jenis' => 'user']);
+
+        $iv = new \App\Models\InterviewModel();
+        $this->assertNotNull($iv->forApplication($aidA, 'user'));
+        $this->assertNotNull($iv->forApplication($aidB, 'user'), 'posisi lain tidak ikut terkunci');
+    }
+
+    /** Jam posisi lain tidak ditawarkan, walau jamnya sama persis. */
+    public function testJamPosisiLainTidakDitawarkan(): void
+    {
+        $jobA = $this->lowongan();
+        $jobB = $this->lowongan();
+        $aidB = $this->menungguAtasan($jobB);
+
+        $this->slot($jobA);   // hanya posisi A yang punya jam
+
+        $html = (string) $this->withSession($this->sesiKandidat($aidB))->get('jadwal')->getBody();
+
+        $this->assertStringContainsString('Jadwal belum tersedia', $html);
+    }
+
+    // --- atasan mengatur jamnya sendiri ---
+
+    public function testAtasanMembukaJamnyaSendiri(): void
+    {
+        $jobId = $this->lowongan();
+
+        $this->withSession($this->sesiAtasan($jobId))->post('atasan/jadwal', [
+            'aksi' => 'tambah', 'tanggal' => '2026-09-07', 'jam' => '14:00', 'kuota' => 2,
+        ]);
+
+        $slot = (new SlotInterviewModel())->semua('user', $jobId);
+
+        $this->assertCount(1, $slot);
+        $this->assertSame(2, (int) $slot[0]['kuota']);
+        $this->assertSame('2026-09-07 14:00:00', $slot[0]['scheduled_at']);
+    }
+
+    /**
+     * Atasan posisi lain TIDAK bisa menghapus jam yang bukan miliknya.
+     *
+     * Yang membatasi bukan tombol yang ia lihat: id slot diketik di formulir,
+     * jadi penjagaannya harus ada di sisi yang menerima.
+     */
+    public function testAtasanTidakBisaMenghapusJamPosisiLain(): void
+    {
+        $jobA = $this->lowongan();
+        $jobB = $this->lowongan();
+
+        $model = new SlotInterviewModel();
+        $id    = (int) $model->insert([
+            'scheduled_at' => '2026-09-07 14:00:00', 'jenis' => 'user', 'job_id' => $jobA,
+            'kuota' => 1, 'created_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        $this->withSession($this->sesiAtasan($jobB, 'lain@example.com'))
+            ->post('atasan/jadwal', ['aksi' => 'hapus', 'id' => $id]);
+
+        $this->assertCount(1, $model->semua('user', $jobA), 'jam posisi A harus bertahan');
+    }
+
+    /** Halaman atasan hanya menampilkan jam posisinya sendiri. */
+    public function testHalamanAtasanHanyaMenampilkanJamPosisinya(): void
+    {
+        $jobA = $this->lowongan();
+        $jobB = $this->lowongan();
+        $model = new SlotInterviewModel();
+        $model->insert(['scheduled_at' => '2026-09-07 14:00:00', 'jenis' => 'user',
+            'job_id' => $jobA, 'kuota' => 1, 'created_at' => date('Y-m-d H:i:s')]);
+        $model->insert(['scheduled_at' => '2026-09-08 15:00:00', 'jenis' => 'user',
+            'job_id' => $jobB, 'kuota' => 1, 'created_at' => date('Y-m-d H:i:s')]);
+
+        $html = (string) $this->withSession($this->sesiAtasan($jobA))->get('atasan/jadwal')->getBody();
+
+        $this->assertStringContainsString('07 Sep 2026', $html);
+        $this->assertStringNotContainsString('08 Sep 2026', $html);
+    }
+
+    /** Tautan ke halaman jadwal ada di daftar kandidat - tanpa itu ia tidak ditemukan. */
+    public function testTautanAturJadwalAdaDiHalamanAtasan(): void
+    {
+        $jobId = $this->lowongan();
+
+        $html = (string) $this->withSession($this->sesiAtasan($jobId))->get('atasan')->getBody();
+
+        $this->assertStringContainsString('atasan/jadwal', $html);
     }
 
     /** Atasan melihat jam yang dipilih kandidat, bukan menghubungi HRD untuk itu. */

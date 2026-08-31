@@ -38,6 +38,7 @@ $routes->get('atasan/logout', 'Atasan::logout');
 $routes->group('atasan', ['filter' => 'atasanauth'], static function ($routes) {
     $routes->get('', 'Atasan::index');
     $routes->match(['GET', 'POST'], 'nilai/(:num)', 'Atasan::nilai/$1');
+    $routes->match(['GET', 'POST'], 'jadwal', 'Atasan::jadwal');
     $routes->get('cv/(:num)', 'Atasan::cv/$1');
 });
 

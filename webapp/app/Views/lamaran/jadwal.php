@@ -92,9 +92,10 @@ $adaSesiTerbuka = (bool) array_filter($apps, static fn (array $a): bool => $a['l
         </div>
       <?php endif ?>
 
-      <?php // Slotnya per JENIS wawancara: pewawancaranya orang yang berbeda,
-            // jadi jam yang penuh untuk HRD belum tentu penuh untuk Interview User. ?>
-      <?php $slotJenis = $slot[$app['jenis']] ?? []; ?>
+      <?php // Slotnya menempel di baris ini: jam Interview HRD dan Interview
+            // User berdiri sendiri-sendiri, dan jam Interview User milik posisi
+            // lamaran ini saja (31 Agustus 2026). ?>
+      <?php $slotJenis = $app['slot'] ?? []; ?>
       <?php // 'penuh', BUKAN 'terpakai'. Sejak slot punya kuota (28 Agustus
             // 2026) 'terpakai' berisi JUMLAH pemakai, bukan benar/salah - dan
             // slot berkuota 2 yang baru diambil satu orang masih boleh dipilih. ?>

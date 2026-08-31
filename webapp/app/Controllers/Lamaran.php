@@ -374,7 +374,7 @@ class Lamaran extends BaseController
     public function jadwalInterview()
     {
         $apps = (new ApplicationModel())
-            ->select('applications.id, jobs.judul')
+            ->select('applications.id, applications.job_id, jobs.judul')
             ->join('jobs', 'jobs.id = applications.job_id')
             ->where('candidate_id', session('candidate_id'))
             ->orderBy('applications.id')
@@ -402,24 +402,10 @@ class Lamaran extends BaseController
             }
         }
 
-        // Daftar slotnya dibaca SEKALI lalu dipakai kedua jenis: yang berbeda
-        // antara HRD dan Interview User cuma siapa yang sudah mengambilnya.
-        $tersedia = (new SlotInterviewModel())->tersedia();
-
-        return view('lamaran/jadwal', [
-            'apps' => $lolos,
-            // slot yang sudah dipegang kandidat lain ikut ditampilkan tapi mati,
-            // supaya kandidat tahu jam itu memang sudah terisi - bukan hilang
-            // begitu saja seolah sistemnya tidak menawarkan jam tersebut.
-            //
-            // Dipisah per jenis: pewawancaranya orang yang berbeda, jadi jam
-            // yang penuh untuk wawancara HRD belum tentu penuh untuk Interview
-            // User. Daftar slotnya sendiri satu, dikelola recruiter di Settings.
-            'slot' => [
-                InterviewModel::JENIS_HRD  => SlotJadwal::perTanggal($tersedia, $interview->hitungPerSlot(InterviewModel::JENIS_HRD)),
-                InterviewModel::JENIS_USER => SlotJadwal::perTanggal($tersedia, $interview->hitungPerSlot(InterviewModel::JENIS_USER)),
-            ],
-        ]);
+        // Daftar slotnya menempel di tiap baris, bukan satu daftar bersama:
+        // sejak 31 Agustus 2026 jam Interview HRD dan Interview User berdiri
+        // sendiri-sendiri, dan jam Interview User bahkan milik satu posisi.
+        return view('lamaran/jadwal', ['apps' => $lolos]);
     }
 
     /**
@@ -444,7 +430,32 @@ class Lamaran extends BaseController
         $app['interview']  = $iv;
         $app['link_aktif'] = InterviewModel::siapDimasuki($iv);
 
+        // Slot yang ditawarkan mengikuti jenis wawancaranya, dan untuk
+        // Interview User juga POSISINYA - jamnya milik atasan posisi ini,
+        // bukan daftar bersama seluruh lowongan.
+        //
+        // Slot yang sudah penuh tetap ditampilkan tapi mati, supaya kandidat
+        // tahu jam itu memang terisi - bukan hilang begitu saja seolah
+        // sistemnya tidak pernah menawarkan jam tersebut.
+        $jobId       = self::posisiSlot($app, $jenis);
+        $app['slot'] = SlotJadwal::perTanggal(
+            (new SlotInterviewModel())->tersedia($jenis, $jobId),
+            $interview->hitungPerSlot($jenis, $jobId),
+        );
+
         return $app;
+    }
+
+    /**
+     * Posisi pemilik slot: lowongan sendiri untuk Interview User, umum untuk HRD.
+     *
+     * @param array<string, mixed> $app
+     */
+    private static function posisiSlot(array $app, string $jenis): int
+    {
+        return $jenis === InterviewModel::JENIS_USER
+            ? (int) ($app['job_id'] ?? 0)
+            : SlotInterviewModel::TANPA_POSISI;
     }
 
     public function ajukanInterview(int $appId)
@@ -481,7 +492,8 @@ class Lamaran extends BaseController
         // langsung tanpa lewat halaman tetap tersaring di sini.
         $slot  = (string) $this->request->getPost('jadwal');
         $slots = new SlotInterviewModel();
-        $sah   = in_array($slot, array_column($slots->tersedia(), 'scheduled_at'), true);
+        $jobId = self::posisiSlot($app, $jenis);
+        $sah   = in_array($slot, array_column($slots->tersedia($jenis, $jobId), 'scheduled_at'), true);
         if (! $sah) {
             return redirect()->to('/jadwal')->with('error', 'Slot itu tidak tersedia. Silakan pilih dari daftar.');
         }
@@ -490,8 +502,8 @@ class Lamaran extends BaseController
         // baru diambil satu orang masih boleh dipilih. Dicek ulang DI SINI,
         // bukan cuma disembunyikan di halaman: dua kandidat bisa menekan tombol
         // pada slot terakhir dalam detik yang sama.
-        $terpakai = (int) ($interview->hitungPerSlot($jenis)[$slot] ?? 0);
-        if ($terpakai >= $slots->kuota($slot)) {
+        $terpakai = (int) ($interview->hitungPerSlot($jenis, $jobId)[$slot] ?? 0);
+        if ($terpakai >= $slots->kuota($slot, $jenis, $jobId)) {
             return redirect()->to('/jadwal')->with('error', 'Slot itu baru saja penuh. Silakan pilih jam lain.');
         }
 
@@ -566,7 +578,7 @@ class Lamaran extends BaseController
     private function lamaranDetailMilikSendiri(int $appId): ?array
     {
         return (new ApplicationModel())
-            ->select('applications.id, candidates.nama, candidates.email, jobs.judul')
+            ->select('applications.id, applications.job_id, candidates.nama, candidates.email, jobs.judul')
             ->join('candidates', 'candidates.id = applications.candidate_id')
             ->join('jobs', 'jobs.id = applications.job_id')
             ->where('applications.id', $appId)

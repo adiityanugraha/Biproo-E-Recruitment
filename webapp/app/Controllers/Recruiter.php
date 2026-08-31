@@ -10,7 +10,7 @@ use App\Libraries\KategoriPosisi;
 use App\Libraries\KirimRekaman;
 use App\Libraries\LembarPenilaian;
 use App\Libraries\PertanyaanKandidat;
-use App\Libraries\SlotJadwal;
+use App\Libraries\PengaturanSlot;
 use App\Libraries\StageLogger;
 use App\Libraries\ZoomException;
 use App\Models\AkunAtasanModel;
@@ -21,7 +21,6 @@ use App\Models\InterviewPenilaianModel;
 use App\Models\InterviewTranskripModel;
 use App\Models\JobModel;
 use App\Models\ScreeningResultModel;
-use App\Models\SlotInterviewModel;
 use App\Models\StageHistoryModel;
 use CodeIgniter\Database\RawSql;
 use DateTime;
@@ -1436,140 +1435,23 @@ class Recruiter extends BaseController
      */
     public function jadwalSlot()
     {
-        $slots = new SlotInterviewModel();
+        $slot = new PengaturanSlot(InterviewModel::JENIS_HRD);
 
         if ($this->request->is('post')) {
-            return $this->simpanSlot($slots);
-        }
+            [$ok, $pesan] = $slot->tangani((array) $this->request->getPost());
 
-        $daftar = $slots->semua();
-        $pakai  = (new InterviewModel())->hitungPerSlot(InterviewModel::JENIS_HRD);
-        $pakaiU = (new InterviewModel())->hitungPerSlot(InterviewModel::JENIS_USER);
-        foreach ($daftar as &$d) {
-            $waktu        = (new DateTime($d['scheduled_at']))->format(SlotInterviewModel::FORMAT);
-            $d['waktu']   = $waktu;
-            $d['hrd']     = (int) ($pakai[$waktu] ?? 0);
-            $d['user']    = (int) ($pakaiU[$waktu] ?? 0);
-            $d['terpakai'] = $d['hrd'] + $d['user'];
-            $d['lewat']   = $waktu <= date(SlotInterviewModel::FORMAT);
-        }
-        unset($d);
-
-        // Halaman ini anak dari Settings tahap wawancara, jadi sidebarnya
-        // sidebar tahap itu - lihat views/recruiter/sisi_tahap.php. Tahapnya
-        // ikut di query supaya tab yang ditampilkan sesuai pintu masuknya.
-        $stage = (string) $this->request->getGet('tahap');
-        if (! in_array($stage, ['interview_online', 'interview_user'], true)) {
-            $stage = 'interview_online';
+            return redirect()->to('/recruiter/pengaturan/jadwal')->with($ok ? 'sukses' : 'error', $pesan);
         }
 
         return view('recruiter/slot', [
-            'judul'  => 'Pengaturan Jadwal Interview',
-            'daftar' => $daftar,
-            'stage'  => $stage,
+            'judul'  => 'Pengaturan Jadwal Interview HRD',
+            'daftar' => $slot->daftar(),
+            'aksi'   => site_url('recruiter/pengaturan/jadwal'),
+            // Halaman ini anak dari Settings tahap Interview HRD, jadi
+            // sidebarnya sidebar tahap itu - lihat views/recruiter/sisi_tahap.
+            'stage'  => 'interview_online',
             'aktif'  => 'settings',
         ]);
-    }
-
-    /**
-     * Tiga aksi halaman slot dalam satu POST, dibedakan field 'aksi'.
-     *
-     * Satu method karena ketiganya berakhir di tempat yang sama dan berbagi
-     * seluruh penjagaannya; dipisah jadi tiga route cuma menggandakan redirect
-     * dan pesan galat yang sama persis.
-     */
-    private function simpanSlot(SlotInterviewModel $slots)
-    {
-        $kembali = redirect()->to('/recruiter/pengaturan/jadwal');
-        $aksi    = (string) $this->request->getPost('aksi');
-
-        if ($aksi === 'hapus') {
-            $id   = (int) $this->request->getPost('id');
-            $slot = $slots->find($id);
-            if ($slot === null) {
-                return $kembali->with('error', 'Slot tidak ditemukan.');
-            }
-
-            $waktu = (new DateTime($slot['scheduled_at']))->format(SlotInterviewModel::FORMAT);
-            $iv    = new InterviewModel();
-            $dipakai = (int) ($iv->hitungPerSlot(InterviewModel::JENIS_HRD)[$waktu] ?? 0)
-                + (int) ($iv->hitungPerSlot(InterviewModel::JENIS_USER)[$waktu] ?? 0);
-            if ($dipakai > 0) {
-                return $kembali->with('error',
-                    'Slot itu sudah dipegang ' . $dipakai . ' kandidat, jadi tidak bisa dihapus. '
-                    . 'Turunkan kuotanya ke 0 bila ingin menutupnya untuk pendaftar baru.');
-            }
-
-            $slots->delete($id);
-
-            return $kembali->with('sukses', 'Slot dihapus.');
-        }
-
-        if ($aksi === 'kuota') {
-            $id    = (int) $this->request->getPost('id');
-            $kuota = (int) $this->request->getPost('kuota');
-            if ($slots->find($id) === null) {
-                return $kembali->with('error', 'Slot tidak ditemukan.');
-            }
-            if ($kuota < 0 || $kuota > SlotInterviewModel::MAKS_KUOTA) {
-                return $kembali->with('error', 'Kuota harus 0 sampai ' . SlotInterviewModel::MAKS_KUOTA . '.');
-            }
-
-            $slots->update($id, ['kuota' => $kuota]);
-
-            return $kembali->with('sukses', 'Kuota diperbarui.');
-        }
-
-        // --- tambah ---
-        $tanggal = (string) $this->request->getPost('tanggal');
-        $jam     = (string) $this->request->getPost('jam');
-        $kuota   = (int) $this->request->getPost('kuota');
-        $ulangi  = $this->request->getPost('ulangi') === '1';
-
-        if (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $tanggal) || ! preg_match('/^\d{2}:\d{2}$/', $jam)) {
-            return $kembali->with('error', 'Tanggal atau jamnya tidak sah.');
-        }
-        if ($kuota < 1 || $kuota > SlotInterviewModel::MAKS_KUOTA) {
-            return $kembali->with('error', 'Kuota harus 1 sampai ' . SlotInterviewModel::MAKS_KUOTA . '.');
-        }
-
-        // Tombol ulangi memakai TANGGAL YANG DIPILIH sebagai titik mulai, bukan
-        // hari ini: recruiter yang menyiapkan jadwal pekan depan ingin tujuh
-        // hari kerja dari pekan depan, bukan dari hari ia mengetik.
-        $tanggalIsi = [$tanggal];
-        if ($ulangi) {
-            $tanggalIsi = SlotJadwal::hariKerja(SlotJadwal::HARI_KERJA, new DateTime($tanggal));
-
-            // TANGGAL YANG DIPILIH SELALU IKUT, walau ia akhir pekan.
-            // hariKerja() melompati akhir pekan, jadi recruiter yang memilih
-            // Sabtu lalu mencentang "ulangi" kehilangan Sabtu itu sendiri -
-            // slot yang justru ia minta hilang tanpa sepatah kata, sementara
-            // tanpa centang slotnya dibuat. Centang tidak boleh membatalkan
-            // permintaan yang lebih tegas.
-            if (! in_array($tanggal, $tanggalIsi, true)) {
-                array_unshift($tanggalIsi, $tanggal);
-            }
-        }
-
-        $dibuat = $dilewati = 0;
-        foreach ($tanggalIsi as $t) {
-            $waktu = $t . ' ' . $jam . ':00';
-            // Sudah ada = dilewati, bukan ditimpa. Menimpa berarti mengubah
-            // kuota slot yang mungkin sudah dipegang kandidat tanpa diminta.
-            if ($slots->where('scheduled_at', $waktu)->countAllResults() > 0) {
-                $dilewati++;
-                continue;
-            }
-            $slots->insert([
-                'scheduled_at' => $waktu,
-                'kuota'        => $kuota,
-                'created_at'   => date(SlotInterviewModel::FORMAT),
-            ]);
-            $dibuat++;
-        }
-
-        return $kembali->with('sukses', $dibuat . ' slot dibuat'
-            . ($dilewati > 0 ? ', ' . $dilewati . ' dilewati karena jamnya sudah ada' : '') . '.');
     }
 
     /**
