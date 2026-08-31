@@ -46,8 +46,6 @@
   /* nowrap: kolom Tindakan memuat sampai tiga tombol, dan kalau dibiarkan
      membungkus, barisnya jadi jauh lebih tinggi daripada baris lain. */
   .aksi { display: flex; flex-wrap: nowrap; gap: 5px; justify-content: center; }
-  .sudah { font-weight: 700; font-size: 12.5px; }
-  .s-passed { color: #1d6b3d; } .s-failed { color: #a12734; }
   .kosong { color: #999; padding: 26px 0; text-align: center; font-size: 13px; }
 </style>
 </head>
@@ -117,9 +115,9 @@
                     // keputusannya sudah dikirim ke kandidat lewat email dan
                     // tidak punya jalur pembatalan. ?>
               <?php if ($a['diputus'] === 'passed'): ?>
-                <span class="sudah s-passed">✅ Diterima</span>
+                <span class="badge badge-lolos">Diterima</span>
               <?php elseif ($a['diputus'] === 'failed'): ?>
-                <span class="sudah s-failed">❌ Tidak diterima</span>
+                <span class="badge badge-gagal">Tidak diterima</span>
               <?php else: ?>
                 <a href="<?= site_url('atasan/nilai/' . $a['id']) ?>">
                   <button class="btn">Wawancara &amp; Nilai</button></a>

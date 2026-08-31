@@ -102,6 +102,26 @@ final class PengaturanJadwalTest extends CIUnitTestCase
         }
     }
 
+    /**
+     * Tanggal akhir pekan yang dipilih TIDAK boleh hilang gara-gara centang ulangi.
+     *
+     * hariKerja() melompati akhir pekan, jadi memilih Sabtu lalu mencentang
+     * "ulangi" dulu menghasilkan tujuh hari kerja tanpa Sabtu itu sendiri -
+     * slot yang justru diminta hilang tanpa sepatah kata, padahal tanpa centang
+     * slotnya dibuat.
+     */
+    public function testTanggalAkhirPekanTetapDibuatWalauDiulangi(): void
+    {
+        // 2026-09-05 adalah hari Sabtu
+        $this->kirim(['aksi' => 'tambah', 'tanggal' => '2026-09-05', 'jam' => '10:00',
+            'kuota' => 1, 'ulangi' => '1']);
+
+        $waktu = $this->waktuTersimpan();
+
+        $this->assertContains('2026-09-05 10:00', $waktu, 'Sabtu yang dipilih harus ikut dibuat');
+        $this->assertContains('2026-09-07 10:00', $waktu, 'dan pengulangannya tetap hari kerja');
+    }
+
     /** Jam yang sudah ada dilewati, bukan ditimpa - kuotanya bisa saja sudah diatur. */
     public function testJamYangSudahAdaTidakDitimpa(): void
     {

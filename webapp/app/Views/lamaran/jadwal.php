@@ -100,8 +100,19 @@ $adaSesiTerbuka = (bool) array_filter($apps, static fn (array $a): bool => $a['l
             // slot berkuota 2 yang baru diambil satu orang masih boleh dipilih. ?>
       <?php $adaSlot = false; foreach ($slotJenis as $isi) { foreach ($isi as $s) { if (! $s['penuh']) { $adaSlot = true; break 2; } } } ?>
 
-      <?php if (! $adaSlot): ?>
-        <p style="color:#666;font-size:14px">Semua slot dalam 7 hari kerja ke depan sudah terisi. Silakan cek lagi besok.</p>
+      <?php // DUA keadaan kosong yang berbeda, dan kandidat perlu tahu ia
+            // sedang menghadapi yang mana. Recruiter belum memasang jam sama
+            // sekali bukan "semua sudah terisi" - tidak ada yang terisi, dan
+            // menyuruhnya kembali besok memberi janji yang belum tentu ditepati
+            // siapa pun. ?>
+      <?php if ($slotJenis === []): ?>
+        <div style="padding:14px;background:#F7F8FA;border:1px solid #e2e6ee;border-radius:10px">
+          <b style="color:#555">🗓️ Jadwal belum tersedia</b>
+          <p style="margin:6px 0 0;font-size:14px;color:#666">Recruiter belum membuka jam wawancara untuk tahap ini.
+            <b>Lamaran Anda tetap berjalan</b> - Anda akan bisa memilih jam di halaman ini begitu jadwalnya dibuka.</p>
+        </div>
+      <?php elseif (! $adaSlot): ?>
+        <p style="color:#666;font-size:14px">Semua jam yang dibuka recruiter sudah terisi. Silakan cek lagi nanti.</p>
       <?php else: ?>
         <p style="color:#666;font-size:14px;margin:0 0 10px">Pilih satu slot. Sesi berlangsung 30 menit, dan slot yang sudah
           dipilih kandidat lain tidak bisa diambil lagi.</p>
@@ -117,7 +128,12 @@ $adaSesiTerbuka = (bool) array_filter($apps, static fn (array $a): bool => $a['l
               <div style="display:flex;flex-wrap:wrap;gap:8px">
                 <?php foreach ($jamJam as $s): ?>
                   <?php if ($s['penuh']): ?>
-                    <span title="Sudah dipilih kandidat lain"
+                    <?php // Kuota 0 berarti recruiter MENUTUP jam itu, bukan
+                          // kandidat lain merebutnya. Menyebutnya "sudah
+                          // dipilih kandidat lain" membuat kandidat mengira ia
+                          // kalah cepat, lalu menunggui jam yang memang tidak
+                          // akan pernah dibuka. ?>
+                    <span title="<?= $s['kuota'] === 0 ? 'Jam ini tidak dibuka' : 'Sudah dipilih kandidat lain' ?>"
                           style="padding:8px 14px;border:1px solid #eef0f5;border-radius:10px;background:#f4f4f6;color:#aaa;font-size:13px;text-decoration:line-through">
                       <?= esc($s['jam']) ?>
                     </span>

@@ -25,9 +25,6 @@
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid #eef0f5; }
   th { color: #8a6d1e; background: #FFF6E6; }
-  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
-  .badge-lolos { background: #E8F7EE; color: #1d6b3d; }
-  .badge-gagal { background: #FDECEC; color: #a12734; }
-  .badge-flag { background: #FFF6E6; color: #a5771a; border: 1px solid #F3B94A; }
-  .badge-netral { background: #F2F4F8; color: #555; }
+  /* Lencana status pindah ke partials/gaya_badge (28 Agustus 2026), supaya
+     halaman recruiter yang memakai badge_status() ikut kebagian aturannya. */
 </style>

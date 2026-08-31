@@ -68,19 +68,25 @@ class InterviewModel extends Model
      *
      * @return list<string>
      */
-    public function slotTerpakai(string $jenis = self::JENIS_HRD): array
+    public function slotTerpakai(string $jenis = self::JENIS_HRD, int $jobId = 0): array
     {
         // Disaring per JENIS: pewawancaranya orang yang berbeda, jadi wawancara
-        // HRD pukul 10.00 tidak menghalangi Interview User pukul 10.00. Indeks
-        // uniknya di basis data memakai pasangan kolom yang sama.
-        $baris = $this->select('scheduled_at')
-            ->where('jenis', $jenis)
-            ->whereIn('status', ['requested', 'approved'])
-            ->findAll();
+        // HRD pukul 10.00 tidak menghalangi Interview User pukul 10.00.
+        $q = $this->select('interviews.scheduled_at')
+            ->where('interviews.jenis', $jenis)
+            ->whereIn('interviews.status', ['requested', 'approved']);
+
+        // Dan per POSISI bila diminta (31 Agustus 2026). Jam Interview User
+        // milik atasan satu posisi; wawancara posisi lain tidak memakainya,
+        // karena yang mewawancarai orang yang berbeda.
+        if ($jobId > 0) {
+            $q = $q->join('applications', 'applications.id = interviews.application_id')
+                ->where('applications.job_id', $jobId);
+        }
 
         return array_map(
             static fn (array $r): string => (new DateTimeImmutable($r['scheduled_at']))->format('Y-m-d H:i:s'),
-            $baris
+            $q->findAll()
         );
     }
 
@@ -94,10 +100,10 @@ class InterviewModel extends Model
      *
      * @return array<string, int>
      */
-    public function hitungPerSlot(string $jenis = self::JENIS_HRD): array
+    public function hitungPerSlot(string $jenis = self::JENIS_HRD, int $jobId = 0): array
     {
         $hitung = [];
-        foreach ($this->slotTerpakai($jenis) as $waktu) {
+        foreach ($this->slotTerpakai($jenis, $jobId) as $waktu) {
             $hitung[$waktu] = ($hitung[$waktu] ?? 0) + 1;
         }
 

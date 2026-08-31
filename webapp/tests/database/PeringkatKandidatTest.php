@@ -229,6 +229,29 @@ final class PeringkatKandidatTest extends CIUnitTestCase
         $this->assertStringContainsString('Bandingkan hanya dalam satu posisi', $html);
     }
 
+    /**
+     * Lencana statusnya benar-benar BERWARNA di halaman recruiter.
+     *
+     * badge_status() sudah lama dipakai di sini, tapi aturan .badge dulu hanya
+     * ikut lewat partials/gaya_isi - yang cuma dipasang layout kandidat.
+     * Hasilnya kelasnya menempel di HTML sementara halamannya menampilkan teks
+     * polos, dan tidak ada satu pun uji yang menyadarinya karena semua memeriksa
+     * teksnya saja.
+     */
+    public function testLencanaStatusIkutGayanya(): void
+    {
+        $job = $this->lowongan();
+        $aid = $this->kandidat($job, 'Seseorang', 0.7, 70);
+        (new \App\Models\StageHistoryModel())->insert([
+            'application_id' => $aid, 'stage' => 'gate_2', 'status' => 'passed', 'actor' => 'uji',
+        ]);
+
+        $html = $this->buka();
+
+        $this->assertStringContainsString('badge badge-lolos', $html, 'lencananya dipakai');
+        $this->assertStringContainsString('.badge-lolos', $html, 'dan aturannya ikut terkirim');
+    }
+
     public function testTombolnyaAdaDiHalamanSemuaKandidat(): void
     {
         $html = (string) $this->withSession($this->sesi)->get('recruiter/kandidat')->getBody();

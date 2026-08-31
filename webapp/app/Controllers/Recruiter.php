@@ -1536,9 +1536,20 @@ class Recruiter extends BaseController
         // Tombol ulangi memakai TANGGAL YANG DIPILIH sebagai titik mulai, bukan
         // hari ini: recruiter yang menyiapkan jadwal pekan depan ingin tujuh
         // hari kerja dari pekan depan, bukan dari hari ia mengetik.
-        $tanggalIsi = $ulangi
-            ? SlotJadwal::hariKerja(SlotJadwal::HARI_KERJA, new DateTime($tanggal))
-            : [$tanggal];
+        $tanggalIsi = [$tanggal];
+        if ($ulangi) {
+            $tanggalIsi = SlotJadwal::hariKerja(SlotJadwal::HARI_KERJA, new DateTime($tanggal));
+
+            // TANGGAL YANG DIPILIH SELALU IKUT, walau ia akhir pekan.
+            // hariKerja() melompati akhir pekan, jadi recruiter yang memilih
+            // Sabtu lalu mencentang "ulangi" kehilangan Sabtu itu sendiri -
+            // slot yang justru ia minta hilang tanpa sepatah kata, sementara
+            // tanpa centang slotnya dibuat. Centang tidak boleh membatalkan
+            // permintaan yang lebih tegas.
+            if (! in_array($tanggal, $tanggalIsi, true)) {
+                array_unshift($tanggalIsi, $tanggal);
+            }
+        }
 
         $dibuat = $dilewati = 0;
         foreach ($tanggalIsi as $t) {

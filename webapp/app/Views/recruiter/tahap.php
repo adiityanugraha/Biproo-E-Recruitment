@@ -129,9 +129,9 @@
                 <span style="font-size:11px;color:#a5771a">menunggu kandidat memilih slot baru</span>
               <?php elseif ($stage === 'interview_user' && $status === 'completed'): ?>
                 <?php if ($a['gate2'] === 'passed'): ?>
-                  <span style="color:#1d6b3d;font-weight:700">✅ Diterima</span>
+                  <span class="badge badge-lolos">Diterima</span>
                 <?php elseif ($a['gate2'] === 'failed'): ?>
-                  <span style="color:#a12734;font-weight:700">❌ Tidak Diterima</span>
+                  <span class="badge badge-gagal">Tidak Diterima</span>
                 <?php else: ?>
                   <span style="font-size:11px;color:#a5771a">menunggu penilaian atasan</span>
                 <?php endif ?>
@@ -145,9 +145,9 @@
                    onclick="return bukaJendela(this.href, <?= esc(json_encode('Ruang Interview - ' . $a['nama']), 'attr') ?>)">
                   <button class="b-tanya">Interview</button></a>
                 <?php if ($a['gate2'] === 'passed'): ?>
-                  <span style="color:#1d6b3d;font-weight:700">✅ Lolos</span>
+                  <span class="badge badge-lolos">Lolos</span>
                 <?php elseif ($a['gate2'] === 'failed'): ?>
-                  <span style="color:#a12734;font-weight:700">❌ Tidak Lolos</span>
+                  <span class="badge badge-gagal">Tidak Lolos</span>
                 <?php else: ?>
                   <?php // Belum diputus. Dua sebab, keduanya berarti datanya kurang:
                         // rekamannya belum diunggah (gate2 null), atau sudah tapi

@@ -183,6 +183,83 @@ final class InterviewScheduleTest extends CIUnitTestCase
         return ['candidate_id' => $cid, 'candidate_nama' => 'Sinta'];
     }
 
+    /**
+     * Slot dari SQL Server membawa pecahan detik. Formulirnya tidak.
+     *
+     * Driver sqlsrv mengembalikan DATETIME sebagai "2026-08-28 10:00:00.000",
+     * sementara halaman jadwal menormalkannya jadi "2026-08-28 10:00:00"
+     * sebelum menaruhnya di formulir. Perbandingan ketat di ajukanInterview
+     * membandingkan keduanya apa adanya, jadi SETIAP pilihan kandidat ditolak
+     * dengan "Slot itu tidak tersedia" - padahal slotnya jelas ada di layarnya.
+     *
+     * Tidak terlihat satu pun uji karena berkas uji memakai SQLite, yang
+     * mengembalikan persis apa yang ditulis. Uji ini menuliskan bentuk sqlsrv
+     * itu sendiri supaya kelakuannya bisa ditangkap tanpa SQL Server.
+     */
+    public function testSlotBerpecahanDetikTetapBisaDipilih(): void
+    {
+        $this->fakeZoom();
+        [$cid, $aid] = $this->fixture('passed');
+
+        // 09.30 sengaja: migrasi mengisi tabel dengan 10.00-16.00 tepat jam,
+        // jadi jam bulat akan bertemu baris seeder yang bentuknya sudah bersih
+        // dan bugnya tertutupi.
+        $waktu = (new DateTimeImmutable('+3 days'))->setTime(9, 30)->format('Y-m-d H:i:s');
+        (new SlotInterviewModel())->insert([
+            'scheduled_at' => $waktu . '.000',
+            'kuota'        => 1,
+            'created_at'   => date('Y-m-d H:i:s'),
+        ]);
+
+        // Yang dikirim kandidat adalah yang tertulis di halamannya.
+        $html = (string) $this->withSession($this->sesiKandidat($cid))->get('jadwal')->getBody();
+        $this->assertStringContainsString('value="' . $waktu . '"', $html, 'halaman menawarkan bentuk tanpa pecahan detik');
+
+        $this->pilihSlot($cid, $aid, $waktu);
+
+        $this->assertSame(1, (new InterviewModel())->where('application_id', $aid)->countAllResults(),
+            'slot yang ditawarkan halaman harus bisa dipilih');
+    }
+
+    /**
+     * Recruiter belum membuka jam sama sekali: halamannya menyebut itu.
+     *
+     * Sebelum ini keadaan tersebut memakai kalimat "semua slot sudah terisi" -
+     * padahal tidak ada yang terisi, tidak ada slotnya. Kandidat disuruh
+     * kembali besok untuk sesuatu yang belum tentu dibuka siapa pun.
+     */
+    public function testTanpaSlotKandidatDiberiTahuJadwalBelumTersedia(): void
+    {
+        (new SlotInterviewModel())->truncate();
+        [$cid, ] = $this->fixture('passed');
+
+        $html = (string) $this->withSession($this->sesiKandidat($cid))->get('jadwal')->getBody();
+
+        $this->assertStringContainsString('Jadwal belum tersedia', $html);
+        $this->assertStringNotContainsString('sudah terisi', $html, 'bukan karena penuh');
+        $this->assertStringNotContainsString('name="jadwal"', $html, 'tidak ada yang bisa dipilih');
+    }
+
+    /** Slot yang ADA tapi habis tetap memakai kalimatnya sendiri. */
+    public function testSlotHabisBukanBerartiJadwalBelumTersedia(): void
+    {
+        $this->fakeZoom();
+        (new SlotInterviewModel())->truncate();
+        $waktu = (new DateTimeImmutable('+3 days'))->setTime(9, 30)->format('Y-m-d H:i:s');
+        (new SlotInterviewModel())->insert([
+            'scheduled_at' => $waktu, 'kuota' => 1, 'created_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        [$cid, $aid] = $this->fixture('passed');
+        [$cid2, ]    = $this->fixture('passed', 'budi@example.com');
+        $this->pilihSlot($cid, $aid, $waktu);
+
+        $html = (string) $this->withSession($this->sesiKandidat($cid2))->get('jadwal')->getBody();
+
+        $this->assertStringContainsString('sudah terisi', $html);
+        $this->assertStringNotContainsString('Jadwal belum tersedia', $html);
+    }
+
     public function testKandidatPilihSlotLangsungTerjadwalTanpaMenungguAcc(): void
     {
         $this->fakeZoom();

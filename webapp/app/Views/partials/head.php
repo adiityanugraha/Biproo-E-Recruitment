@@ -12,6 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<?= $this->include('partials/gaya_badge') ?>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: 'Poppins', system-ui, sans-serif; color: #2B2B2B; }
