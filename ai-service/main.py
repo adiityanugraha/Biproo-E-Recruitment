@@ -17,6 +17,7 @@ from ocr import ocr_lengkapi
 from sanitize import bersihkan
 from scoring import BIDANG, Skor, hitung
 from structure import _json_pertama, strukturkan_kontekstual
+from wawancara import nilai_giliran
 
 RETRY_ATTEMPTS = 4
 RETRY_BASE_DELAY = float(os.environ.get("RETRY_BASE_DELAY", "2"))
@@ -694,6 +695,74 @@ def vektor(req: VektorRequest) -> VektorReply:
         raise HTTPException(502, "embedding gagal")
 
     return VektorReply(vektor=dict(zip(isi, vectors)))
+
+
+# --- Wawancara suara: satu giliran (arahan 12 Agustus 2026) ---
+# Sinkron dan HARUS cepat: kandidat sedang duduk diam menunggu pewawancara
+# bersuara lagi. Beda dari /pertanyaan yang dipanggil recruiter sekali per
+# lowongan, endpoint ini dipanggil sekali per jawaban kandidat.
+
+
+class ButirRubrik(BaseModel):
+    kompetensi: str = ""
+    indikator: str | list[str] = ""
+    red_flag: str | list[str] = ""
+
+
+class GiliranSebelumnya(BaseModel):
+    pertanyaan: str
+    jawaban: str
+
+
+class GiliranRequest(BaseModel):
+    posisi: str
+    pertanyaan: str
+    jawaban: str
+    butir: ButirRubrik = ButirRubrik()
+    # Dibatasi CI4 ke beberapa giliran terakhir saja. Mengirim seluruh wawancara
+    # tiap giliran membuat prompt (dan latensinya) tumbuh sepanjang sesi.
+    riwayat: list[GiliranSebelumnya] = []
+    # false saat butir terakhir: penilaian tetap jalan, pertanyaan lanjutan tidak
+    # dipakai, jadi tidak perlu diminta.
+    minta_lanjutan: bool = True
+
+
+class GiliranReply(BaseModel):
+    tingkat: str | None
+    alasan: str
+    lanjutan: str
+    nyambung: bool
+
+
+@app.post("/wawancara/giliran", response_model=GiliranReply)
+def wawancara_giliran(req: GiliranRequest) -> GiliranReply:
+    if not req.pertanyaan.strip():
+        raise HTTPException(400, "pertanyaan kosong")
+
+    provider = getattr(app.state, "chat_provider", None) or get_chat_provider()
+    try:
+        hasil = nilai_giliran(
+            provider,
+            req.posisi,
+            req.butir.model_dump(),
+            req.pertanyaan,
+            req.jawaban,
+            [r.model_dump() for r in req.riwayat],
+        )
+    except RuntimeError:
+        # balasan tidak terbaca - sudah dicatat di wawancara.nilai_giliran
+        raise HTTPException(502, "jawaban LLM tidak bisa dibaca")
+    except Exception as e:
+        # JANGAN echo str(e): pesan httpx memuat URL Gemini + ?key=API_KEY
+        logging.getLogger("uvicorn.error").error("wawancara LLM gagal: %s", tanpa_kunci(e))
+        raise HTTPException(502, "LLM gagal")
+
+    return GiliranReply(
+        tingkat=hasil.tingkat,
+        alasan=hasil.alasan,
+        lanjutan=hasil.lanjutan if req.minta_lanjutan else "",
+        nyambung=hasil.nyambung,
+    )
 
 
 @app.get("/health")

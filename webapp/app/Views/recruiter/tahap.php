@@ -103,6 +103,11 @@
                 <a href="<?= site_url('recruiter/ruang/' . $a['id']) ?>?bingkai=1"
                    onclick="return bukaJendela(this.href, <?= esc(json_encode('Ruang Interview - ' . $a['nama']), 'attr') ?>)">
                   <button class="b-tanya">Interview</button></a>
+                <?php // Pemantau wawancara suara AI, dibuka di sebelah jendela Zoom:
+                      // transkrip dan penilaian bertambah selama kandidat bicara. ?>
+                <a href="<?= site_url('recruiter/wawancara/' . $a['id']) ?>?bingkai=1"
+                   onclick="return bukaJendela(this.href, <?= esc(json_encode('Wawancara AI - ' . $a['nama']), 'attr') ?>)">
+                  <button class="b-tanya">Pantau AI</button></a>
                 <?php // Melepas jadwal: slot kembali ke daftar, kandidat memilih ulang.
                       // Bukan menggugurkan kandidat, jadi warnanya netral bukan merah.
                       // Alasannya ditanyakan lewat prompt (lihat alasanReschedule). ?>

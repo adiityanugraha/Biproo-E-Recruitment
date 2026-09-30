@@ -11,11 +11,14 @@ use App\Libraries\KirimRekaman;
 use App\Libraries\LembarPenilaian;
 use App\Libraries\PertanyaanKandidat;
 use App\Libraries\PengaturanSlot;
+use App\Libraries\PemanduWawancara;
+use App\Libraries\PenilaianRubrik;
 use App\Libraries\StageLogger;
 use App\Libraries\ZoomException;
 use App\Models\AkunAtasanModel;
 use App\Models\ApplicationModel;
 use App\Models\EmailQueueModel;
+use App\Models\InterviewDialogModel;
 use App\Models\InterviewModel;
 use App\Models\InterviewPenilaianModel;
 use App\Models\InterviewTranskripModel;
@@ -1257,6 +1260,66 @@ class Recruiter extends BaseController
      * Bila screening belum menghasilkan skor, kembalikan null: Gate 2 lalu
      * diputuskan recruiter tanpa komponen CV, bukan memakai angka karangan.
      */
+    /**
+     * Konsol pemantau wawancara suara AI.
+     *
+     * Dibuka recruiter di layar sebelah jendela Zoom-nya. Isinya transkrip yang
+     * bertambah saat kandidat berbicara, penilaian per butir, dan skor sementara
+     * - supaya recruiter bisa mengejar hal yang tidak sempat digali AI, alih-alih
+     * menunggu wawancara selesai baru membaca hasilnya.
+     *
+     * Penilaian yang tampil di sini BELUM masuk basis data penilaian. Ia baru
+     * tercatat setelah recruiter menekan simpan di form nilai, dan boleh diubah
+     * di sana. Model tidak memutuskan sendiri.
+     */
+    public function konsolWawancara(int $appId)
+    {
+        $app = $this->lamaranDetail($appId);
+        if ($app === null) {
+            return redirect()->to('/recruiter')->with('error', 'Lamaran tidak ditemukan.');
+        }
+
+        return view('recruiter/konsol_wawancara', [
+            'judul'   => 'Pemantau Wawancara AI',
+            'app'     => $app,
+            'appId'   => $appId,
+            'bingkai' => $this->request->getGet('bingkai') === '1',
+        ] + $this->wawancara($appId, $app));
+    }
+
+    /** Umpan JSON yang di-poll konsol tiap beberapa detik. */
+    public function feedWawancara(int $appId)
+    {
+        $app = $this->lamaranDetail($appId);
+        if ($app === null) {
+            return $this->response->setStatusCode(404)->setJSON(['error' => 'Lamaran tidak ditemukan.']);
+        }
+
+        return $this->response->setJSON($this->wawancara($appId, $app));
+    }
+
+    /**
+     * Keadaan wawancara AI satu lamaran: dialog, skor sementara, dan prefill
+     * untuk form penilaian.
+     *
+     * @param array<string, mixed> $app
+     *
+     * @return array{dialog: list<array<string, mixed>>, skorAi: int|null, selesai: bool, prefill: array<int, array{tingkat: string, alasan: string}>}
+     */
+    private function wawancara(int $appId, array $app): array
+    {
+        $dialog = (new InterviewDialogModel())->untukLamaran($appId);
+        $job    = (new JobModel())->find($app['job_id']);
+        $rubrik = $job === null ? [] : $this->pertanyaanJob($job);
+
+        return [
+            'dialog'  => $dialog,
+            'skorAi'  => PemanduWawancara::skorSementara($rubrik, $dialog),
+            'selesai' => PemanduWawancara::selesai($dialog),
+            'prefill' => PemanduWawancara::tingkatPerButir($dialog),
+        ];
+    }
+
     private function skorCv(int $appId): ?float
     {
         $sr = (new ScreeningResultModel())->latestFor($appId);

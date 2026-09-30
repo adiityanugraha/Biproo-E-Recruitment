@@ -61,9 +61,17 @@ $adaSesiTerbuka = (bool) array_filter($apps, static fn (array $a): bool => $a['l
             Tautan ini berlaku sampai <b><?= esc($tutup) ?> WIB</b>, setelah itu tidak bisa dipakai lagi.</p>
           <p style="margin:6px 0 0;font-size:13px;color:#666">Masuk memakai nama lengkap Anda, pastikan kamera dan mikrofon berfungsi.
             Tautan ini khusus untuk Anda dan tidak berguna bila diteruskan ke orang lain.</p>
-          <a href="<?= site_url('interview/masuk/' . $app['id']) ?>" target="_blank" rel="noopener">
-            <button type="button" style="margin-top:12px">Gabung via Zoom</button>
-          </a>
+          <p style="margin:6px 0 0;font-size:13px;color:#666">Buka <b>keduanya</b>: Zoom untuk bertemu recruiter,
+            dan Ruang Wawancara AI di tab sebelah - asisten suara mengajukan sebagian pertanyaannya sementara
+            recruiter mengikuti. Pakai pengeras suara, bukan headset, supaya recruiter ikut mendengar.</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+            <a href="<?= site_url('interview/masuk/' . $app['id']) ?>" target="_blank" rel="noopener">
+              <button type="button" style="margin-top:0">Gabung via Zoom</button>
+            </a>
+            <a href="<?= site_url('wawancara/' . $app['id']) ?>" target="_blank" rel="noopener">
+              <button type="button" style="margin-top:0;background:linear-gradient(90deg,#B39DE0,#8b74d4);color:#fff">🎙️ Ruang Wawancara AI</button>
+            </a>
+          </div>
         <?php else: ?>
           <p style="margin:10px 0 0;font-size:13px;color:#666">Link Zoom aktif mulai 15 menit sebelum jadwal,
             dan mati 30 menit setelah jam mulai (durasi satu sesi).</p>

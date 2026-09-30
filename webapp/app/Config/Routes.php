@@ -25,6 +25,10 @@ $routes->group('', ['filter' => 'candidateauth'], static function ($routes) {
     $routes->post('assessment/(:num)', 'Lamaran::jawabAssessment/$1');
     $routes->post('interview/ajukan/(:num)', 'Lamaran::ajukanInterview/$1');
     $routes->get('interview/masuk/(:num)', 'Lamaran::masukInterview/$1');
+    // ruang wawancara suara AI, pendamping sesi Zoom (jendelanya sama)
+    $routes->get('wawancara/(:num)', 'Wawancara::ruang/$1');
+    $routes->post('wawancara/(:num)/mulai', 'Wawancara::mulai/$1');
+    $routes->post('wawancara/(:num)/jawab', 'Wawancara::jawab/$1');
     $routes->post('chat/ask', 'Chat::ask');
 });
 
@@ -57,6 +61,9 @@ $routes->group('recruiter', ['filter' => 'recruiterauth'], static function ($rou
     $routes->get('profil/(:num)', 'Recruiter::profil/$1');
     // Keputusan Gate 2 manual - satu-satunya jalan keluar manusia sejak Gate 2
     // menutup sendiri dari transkrip. Dipakai saat datanya memang kurang.
+    // konsol pemantau wawancara suara AI: halaman + umpan JSON yang di-poll
+    $routes->get('wawancara/(:num)', 'Recruiter::konsolWawancara/$1');
+    $routes->get('wawancara/(:num)/feed', 'Recruiter::feedWawancara/$1');
     $routes->post('gate2/(:num)', 'Recruiter::putusGate2/$1');
     // Settings: alur rekrutmen per posisi (18 Agustus 2026). Tiap lowongan
     // punya rangkaian tahapnya sendiri, mengikuti web recruiter BIPROO.
